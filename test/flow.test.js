@@ -129,7 +129,7 @@ test('complete flow (MOCK provider): idea -> preview -> approved config -> signe
     const html = site.body;
     assert.equal((await getWithHost(h.base, `nope.${h.cfg.projectsHost}`, '/')).status, 404);
     assert.ok(!/<script/i.test(html));
-    assert.match(html, /Launched on mock/);
+    assert.match(html, /MOCK launch: rehearsal only/);
   } finally { h.close(); }
 });
 
@@ -140,7 +140,10 @@ test('duplicate launch attempts: second transaction request and a second signed 
     const first = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
     assert.equal(first.status, 200);
     const second = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
-    assert.equal(second.status, 409);
+    assert.equal(second.status, 200);
+    assert.equal(second.json.resumed, true, 'a second request resumes the same transaction');
+    assert.equal(second.json.mint, first.json.mint);
+    assert.equal(h.db.get('SELECT COUNT(*) n FROM launch_intents').n, 1);
     const sig = owner.w.signText(mockSigningText(first.json.messageHash));
     assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/signed`, { signed: sig })).status, 200);
     assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/signed`, { signed: sig })).status, 409);
@@ -302,5 +305,101 @@ test('admin pause on launch blocks new transactions', async () => {
     const { owner, admin, slug } = await toLaunchPrepared(h);
     assert.equal((await admin.call('POST', '/api/admin/pause', { what: 'launch', paused: true })).status, 200);
     assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {})).status, 503);
+  } finally { h.close(); }
+});
+
+
+test('review #1: broadcast times out but the transaction lands -> still tracked, launched, no second mint', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await toLaunchPrepared(h);
+    setSetting(h.db, 'mock.behaviour', 'timeout_but_lands', 'test');
+    const { res } = await signAndSubmit(h, owner, slug);
+    assert.equal(res.status, 200);
+    assert.equal(res.json.uncertain, true);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'confirming');
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {})).status, 409);
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+    assert.equal(h.db.get('SELECT COUNT(*) n FROM launch_intents').n, 1);
+  } finally { h.close(); }
+});
+
+test('review #1: a failed preflight is a definite rejection; a new attempt is allowed', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await toLaunchPrepared(h);
+    setSetting(h.db, 'mock.behaviour', 'preflight_reject', 'test');
+    const { res } = await signAndSubmit(h, owner, slug);
+    assert.equal(res.status, 400);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    assert.match(h.db.get('SELECT error FROM launch_intents').error, /^preflight:/);
+    setSetting(h.db, 'mock.behaviour', 'ok', 'test');
+    assert.equal((await signAndSubmit(h, owner, slug)).res.status, 200);
+  } finally { h.close(); }
+});
+
+test('review #2: a cancelled request whose signed copy landed anyway is found and verified, not duplicated', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await toLaunchPrepared(h);
+    const tx = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    await owner.call('POST', `/api/projects/${slug}/launch/abandon`, {});
+    // someone broadcast the signed copy outside the app
+    const intent = h.db.get('SELECT * FROM launch_intents');
+    h.db.run(`INSERT INTO mock_chain (signature, mint, payload, status, visible_at) VALUES ('MOCKexternal', ?, ?, 'ok', ?)`, intent.mint, intent.config_json, Date.now());
+    const again = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    assert.equal(again.status, 409);
+    assert.equal(again.json.error, 'previous_landed');
+    assert.equal(ideaStatus(h.db, ideaId).status, 'confirming');
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+    assert.equal(h.db.get('SELECT mint FROM launches').mint, tx.json.mint);
+  } finally { h.close(); }
+});
+
+test('review #4/#5/#7: edits revoke reviewer clearance; no live-version swap or going private after approval; no self-clearance', async () => {
+  const h = await harness({ REQUIRE_ADMIN_CLEARANCE: '1' });
+  try {
+    const owner = h.client(user(h.db, 'reviewer'));
+    await owner.signIn();
+    const admin = h.client(user(h.db, 'admin'));
+    await admin.signIn();
+    const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w));
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const slug = (await owner.call('GET', `/api/ideas/${sub.json.id}`)).json.project.slug;
+    await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true });
+    assert.equal((await owner.call('POST', `/api/admin/projects/${slug}/clear`, {})).status, 403, 'reviewer cannot clear own project');
+    assert.equal((await admin.call('POST', `/api/admin/projects/${slug}/clear`, {})).status, 200);
+    // the owner edits after clearance: clearance is gone
+    const ed = await owner.call('PUT', `/api/projects/${slug}/site`, { name: 'Totally Different', ticker: 'DIFF' });
+    assert.equal(ed.status, 200, ed.text);
+    assert.equal(h.db.get('SELECT admin_cleared_at a FROM projects').a, null);
+    let p = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    await owner.call('POST', `/api/projects/${slug}/approve`, { allocationId: p.allocation.id, statement: p.allocation.statement, siteVersion: p.liveSiteVersion });
+    assert.equal(ideaStatus(h.db, sub.json.id).status, 'preview_ready', 'needs a fresh clearance');
+    await admin.call('POST', `/api/admin/projects/${slug}/clear`, {});
+    assert.equal(ideaStatus(h.db, sub.json.id).status, 'approved');
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/site/live`, { version: 1 })).status, 409);
+    assert.equal((await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: false })).status, 409);
+  } finally { h.close(); }
+});
+
+test('review #8: non-owners only get preview links for the live version; private logos are not served', async () => {
+  const h = await harness();
+  try {
+    const owner = h.client(user(h.db));
+    await owner.signIn();
+    const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w));
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const slug = (await owner.call('GET', `/api/ideas/${sub.json.id}`)).json.project.slug;
+    assert.equal((await owner.call('GET', `/meta/${slug}/logo-v1.png`)).status, 404, 'private project');
+    await owner.call('PUT', `/api/projects/${slug}/site`, { tagline: 'v2 draft text' });
+    await owner.call('POST', `/api/projects/${slug}/site/live`, { version: 1 });
+    await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true });
+    const anon = h.client(user(h.db));
+    const link = await anon.call('GET', `/api/projects/${slug}/preview-link?version=2`);
+    assert.match(link.json.url, new RegExp(`/preview/${slug}/1\\.`));
+    assert.equal((await anon.call('GET', `/meta/${slug}/logo-v1.png`)).status, 200);
   } finally { h.close(); }
 });

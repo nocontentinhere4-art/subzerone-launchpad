@@ -27,6 +27,14 @@ test('hostile text in the spec is escaped, never markup', async () => {
   assert.equal(validateHtml(html, ['https://subzerone.live']).ok, true);
 });
 
+test('validator accepts harmless words in attribute text (review #9)', async () => {
+  const { spec } = templateGenerate({ idea, brain });
+  spec.description = 'a javascript: joke with style= and onboard=x in it';
+  spec.name = 'Hop onboard=x';
+  const html = await sandboxBuild({ spec, context });
+  assert.deepEqual(validateHtml(html, ['https://subzerone.live']).problems, []);
+});
+
 test('validator rejects unsafe generated code', () => {
   for (const bad of ['<script>x</script>', '<img src=x>', '<p style="color:red">', '<img src="./logo.png" onerror="x">', '<a href="javascript:alert(1)">', '<iframe src="https://evil">',
     '<a href="https://evil.example">x</a>', '<div style="background:url(https://evil)">', '<meta http-equiv="refresh" content="0">']) {

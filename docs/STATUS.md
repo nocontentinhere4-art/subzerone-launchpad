@@ -19,6 +19,7 @@
 | | Admin dashboard (pauses, budgets, disclosed platform share, clearance, failed ideas, dead letters, intents, roles, bans, backup, audit) | Working | |
 | | Fee ledger and methodology | Working | shows "—" (unknown) rather than zero before the first observation |
 | Auth | Wallet sign-in (SIWS-style message, single-use expiring nonce, replay protection, no funds) | Working | 7 tests |
+| Review | Independent security/correctness review of launch, auth, privacy, XSS and jobs | Done | 9 findings fixed with regression tests; see TESTING.md |
 | Submissions | Validation, versions (v1 kept), receiving wallet (validated, never replaced silently), image uploads (byte-sniffed), links stored, never fetched | Working | |
 | | Private until published; what becomes public is explained on the form | Working | |
 | Brain | Signed `/api/launchpad/evaluate` in the SUB-01 repo; real brain vote on a cloned live brain | Working (demo brain) | branch `feature/launchpad-eval` in `sub-01`, 5 tests; **not deployed** to subzerone.live |
@@ -70,4 +71,3 @@ Development still worth doing:
   indexers.
 - Shared rate-limit store (Redis) before running more than one web instance.
 - Wallets that only implement `signAndSendTransaction` (not `signTransaction`) are not supported yet.
-- Re-open a pending signature request after a page reload. Today the user cancels it and builds a new one.

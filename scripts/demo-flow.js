@@ -57,7 +57,7 @@ async function until(fn, what, timeoutMs = 120_000) {
   }
 }
 
-const submitter = client(devnetKeypair('demo-submitter'));
+const submitter = client(devnetKeypair(process.env.DEMO_WALLET || 'demo-submitter'));
 const reviewer = client(devnetKeypair('demo-reviewer'));
 step('launchpad', { base: BASE, provider: cfg.launch.provider, network: cfg.launch.network, brain: cfg.brain.url });
 
@@ -69,7 +69,7 @@ step('signed in (signed messages, no transactions)', { submitter: submitter.addr
 
 const title = process.env.DEMO_TITLE || `Night Ramen Map ${new Date().toISOString().slice(11, 16)}`;
 const { id } = await submitter.call('POST', '/api/ideas', {
-  title, concept: 'A tiny community map of the best late-night ramen counters in Tokyo, drawn by hand, one bowl at a time. Sweet, warm, a little nostalgic.',
+  title, concept: process.env.DEMO_CONCEPT || 'A tiny community map of the best late-night ramen counters in Tokyo, drawn by hand, one bowl at a time. Sweet, warm, a little nostalgic.',
   tickerSuggestion: 'RAMEN', links: ['https://en.wikipedia.org/wiki/Ramen'], contacts: { x: 'ramen_fan' },
   receivingWallet: submitter.address, rightsConfirmed: true,
 });
@@ -77,11 +77,12 @@ step('idea submitted (private)', { id });
 
 const evaluated = await until(async () => { const x = await submitter.call('GET', `/api/ideas/${id}`); return x.evaluation ? x : null; }, 'the brain vote', 30 * 60_000);
 const vote = evaluated.evaluation.brain?.vote;
-step(`SUB-01 decided: ${evaluated.evaluation.decision} (by ${evaluated.evaluation.decidedBy})`, {
+const byRule = evaluated.evaluation.decidedBy.startsWith('policy:');
+step(byRule ? `declined by rule before reaching SUB-01 (${evaluated.evaluation.decidedBy})` : `SUB-01's brain vote: ${evaluated.evaluation.decision === 'selected' ? 'build' : 'pass'}`, {
   options: vote?.options?.map((o) => ({ label: o.label, p: o.p, value: o.value, response: o.response })), reason: vote?.reason,
   network: vote?.spiking?.network, networks: evaluated.evaluation.brain?.networks, demoBrain: evaluated.evaluation.brain?.demo, scores: evaluated.evaluation.scores });
 if (evaluated.evaluation.decision !== 'selected') {
-  step('he passed; the flow stops here (re-run for another vote)');
+  step(byRule ? 'the flow stops here (rule decision)' : 'he passed; the flow stops here (re-run for another vote)');
   writeTranscript();
   process.exit(0);
 }
@@ -108,7 +109,7 @@ let signed;
 if (tx.mock) {
   signed = submitter.signText(mockSigningText(tx.messageHash));
 } else {
-  const kp = devnetKeypair('demo-submitter');
+  const kp = devnetKeypair(process.env.DEMO_WALLET || 'demo-submitter');
   const vt = web3.VersionedTransaction.deserialize(Buffer.from(tx.txBase64, 'base64'));
   vt.sign([kp]);
   signed = Buffer.from(vt.serialize()).toString('base64');

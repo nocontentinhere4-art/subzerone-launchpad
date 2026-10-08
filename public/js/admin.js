@@ -45,7 +45,7 @@ export async function page(el) {
 
     <h2>Launch intents</h2>
     ${o.intents.length ? html`<div class="tablewrap"><table><tr><th>intent</th><th>status</th><th>network</th><th>mint</th><th>signature</th><th>error</th><th>updated</th></tr>${o.intents.map((i) => html`<tr>
-      <td class="tiny">${i.id}</td><td>${i.status}</td><td>${i.provider}/${i.network}</td><td class="addr tiny">${short(i.mint, 6)}</td><td class="addr tiny">${short(i.tx_signature, 6)}</td><td class="small">${i.error || ''}</td><td class="small">${ago(i.updated_at)}</td></tr>`)}</table></div>` : html`<div class="empty">No launch attempts yet.</div>`}
+      <td class="tiny">${i.id}</td><td>${i.status}</td><td>${i.provider}/${i.network}</td><td class="addr tiny">${short(i.mint, 6)}</td><td class="addr tiny">${short(i.tx_signature, 6)}</td><td class="small">${i.error || ''}${String(i.error || '').startsWith('landed:') ? html` <button class="tiny" data-reverify="${i.slug}" ${admin ? '' : 'disabled'}>re-verify on-chain</button>` : ''}</td><td class="small">${ago(i.updated_at)}</td></tr>`)}</table></div>` : html`<div class="empty">No launch attempts yet.</div>`}
 
     <div class="grid2"><div>
       <h2>Roles</h2>
@@ -56,7 +56,7 @@ export async function page(el) {
       <h2>Operations</h2>
       <p class="row"><button id="backup" ${admin ? '' : 'disabled'}>Take a database backup now</button></p>
       ${o.mockBehaviour !== undefined ? html`<p class="small">Mock provider behaviour (for testing failure paths):</p>
-        <select id="mock" style="width:auto">${['ok', 'reject_on_chain', 'never_lands', 'late', 'slow_index'].map((b) => html`<option ${b === o.mockBehaviour ? 'selected' : ''}>${b}</option>`)}</select>` : ''}
+        <select id="mock" style="width:auto">${['ok', 'reject_on_chain', 'never_lands', 'late', 'slow_index', 'preflight_reject', 'timeout_but_lands'].map((b) => html`<option ${b === o.mockBehaviour ? 'selected' : ''}>${b}</option>`)}</select>` : ''}
     </div></div>
 
     <h2>Audit log</h2>
@@ -67,6 +67,7 @@ export async function page(el) {
     el.querySelectorAll('[data-clear]').forEach((b) => { b.onclick = () => post(`/api/admin/projects/${b.dataset.clear}/clear`, {}, 'Cleared.'); });
     el.querySelectorAll('[data-cancel]').forEach((b) => { b.onclick = () => confirm('Remove this idea?') && post(`/api/admin/ideas/${b.dataset.cancel}/cancel`, {}); });
     el.querySelectorAll('[data-retry]').forEach((b) => { b.onclick = () => post(`/api/admin/ideas/${b.dataset.retry}/retry`, {}); });
+    el.querySelectorAll('[data-reverify]').forEach((b) => { b.onclick = () => post(`/api/admin/projects/${b.dataset.reverify}/reverify`, {}, 'Re-verifying.'); });
     el.querySelectorAll('[data-requeue]').forEach((b) => { b.onclick = () => post(`/api/admin/jobs/${b.dataset.requeue}/retry`, {}); });
     el.querySelector('#budget').onsubmit = (e) => { e.preventDefault(); post('/api/admin/budget', { globalDailyUsd: e.target.g.value, perProjectUsd: e.target.p.value }, 'Saved.'); };
     el.querySelector('#share').onsubmit = (e) => { e.preventDefault(); post('/api/admin/platform-share', { share: { wallet: e.target.wallet.value.trim(), bps: Number(e.target.bps.value) } }, 'Saved.'); };

@@ -158,8 +158,23 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       return { signature: b58encode(sig), raw: Buffer.from(tx.serialize()) };
     },
 
+    /**
+     * Broadcast. Only a failed preflight simulation is a definite rejection (the RPC does not forward the transaction
+     * then): that error gets `rejected = true`. Anything else (timeout, 429, 5xx) may have reached the network, so the
+     * caller must keep the intent and let the confirmation job decide.
+     */
     async submit(_intent, raw) {
-      return conn.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 5 });
+      try {
+        return await conn.sendRawTransaction(raw, { skipPreflight: false, preflightCommitment: 'confirmed', maxRetries: 5 });
+      } catch (e) {
+        const logs = e?.logs || e?.transactionLogs;
+        if (e?.name === 'SendTransactionError' && (logs || /simulation failed/i.test(e.message))) {
+          const err = new Error(String(e.message).split('\n')[0].slice(0, 200));
+          err.rejected = true;
+          throw err;
+        }
+        throw e;
+      }
     },
 
     /** -> {state: 'pending'|'confirmed'|'finalized'|'failed'|'expired', ...} */
@@ -169,9 +184,26 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         if (st.err) return { state: 'failed', err: JSON.stringify(st.err), slot: st.slot };
         return { state: st.confirmationStatus === 'finalized' ? 'finalized' : 'confirmed', slot: st.slot };
       }
-      const height = await conn.getBlockHeight('confirmed');
-      if (height > intent.last_valid_block_height) return { state: 'expired', height };
-      return { state: 'pending', height, lastValid: intent.last_valid_block_height };
+      // expired only on strong evidence: the FINALIZED height is past the blockhash window and the mint does not exist
+      const height = await conn.getBlockHeight('finalized');
+      if (height <= intent.last_valid_block_height) return { state: 'pending', height, lastValid: intent.last_valid_block_height };
+      const mint = await conn.getAccountInfo(new web3.PublicKey(intent.mint), 'confirmed');
+      if (mint) return { state: 'pending', height, note: 'the mint exists; waiting for the indexer to show the signature' };
+      return { state: 'expired', height };
+    },
+
+    /**
+     * For an intent we stopped tracking (cancelled, expired, failed): could its transaction still land, or did it?
+     * -> {state: 'open'} (blockhash still valid) | {state: 'landed', signature} | {state: 'dead'}
+     */
+    async landCheck(intent) {
+      const height = await conn.getBlockHeight('finalized');
+      if (height <= intent.last_valid_block_height) return { state: 'open', blocksLeft: intent.last_valid_block_height - height };
+      const mintKey = new web3.PublicKey(intent.mint);
+      if (!(await conn.getAccountInfo(mintKey, 'confirmed'))) return { state: 'dead' };
+      const sigs = await conn.getSignaturesForAddress(mintKey, { limit: 20 }, 'confirmed');
+      const first = sigs.filter((x) => !x.err).sort((a, b) => a.slot - b.slot)[0];
+      return { state: 'landed', signature: first?.signature ?? intent.tx_signature };
     },
 
     /** On-chain checks that make a project "launched". Every check is recorded. */
@@ -181,7 +213,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
       const tx = await conn.getTransaction(intent.tx_signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
       add('transaction found at finalized commitment', tx, intent.tx_signature);
-      if (!tx) return { ok: false, checks };
+      if (!tx) return { ok: false, retry: true, checks };          // an RPC node behind: look again later
       add('transaction succeeded', tx.meta && tx.meta.err === null, JSON.stringify(tx.meta?.err ?? null));
       const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses })
         .keySegments().flat().map((k) => k.toBase58());
@@ -198,6 +230,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       let curve = null;
       try { curve = await online.fetchBondingCurve(intent.mint); } catch { /* checked below */ }
       add('bonding curve exists', curve, curve ? 'ok' : 'missing');
+      let missing = !mintInfo.value || !curve;
       if (config.feeSharing.mode === 'sharing_config') {
         const pda = pump.feeSharingConfigPda(new web3.PublicKey(intent.mint));
         add('curve creator is the sharing config', curve && curve.creator.toBase58() === pda.toBase58(), curve?.creator?.toBase58());
@@ -205,6 +238,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         let sc = null;
         try { sc = acc && pump.PUMP_SDK.decodeSharingConfig(acc); } catch { /* checked below */ }
         add('sharing config exists', sc, pda.toBase58());
+        if (!acc) missing = true;
         if (sc) {
           const got = sc.shareholders.map((s) => `${s.address.toBase58()}:${s.shareBps}`).sort().join(',');
           const want = config.feeSharing.shareholders.map((s) => `${s.wallet}:${s.bps}`).sort().join(',');
@@ -214,7 +248,9 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       } else {
         add('curve creator is the approved recipient', curve && curve.creator.toBase58() === config.feeSharing.shareholders[0].wallet, curve?.creator?.toBase58());
       }
-      return { ok: checks.every((c) => c.ok), checks, slot: tx.slot, blockTime: tx.blockTime };
+      const ok = checks.every((c) => c.ok);
+      // a missing account on a successful finalized transaction means a lagging node, not a mismatch: retry
+      return { ok, retry: !ok && missing && tx.meta?.err === null, checks, slot: tx.slot, blockTime: tx.blockTime };
     },
 
     /**

@@ -1,0 +1,230 @@
+[
+  {
+    "t": "2026-10-08T23:34:14.937Z",
+    "msg": "launchpad",
+    "data": {
+      "base": "http://127.0.0.1:8787",
+      "provider": "mock",
+      "network": "devnet",
+      "brain": "http://127.0.0.1:8769"
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:14.980Z",
+    "msg": "signed in (signed messages, no transactions)",
+    "data": {
+      "submitter": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY",
+      "reviewer": "2z2MxGMzujGTKgn9GboW38ZCgEKj2x2r4h46vSi5ZYQm (promoted to reviewer in the local DB)"
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:14.984Z",
+    "msg": "idea submitted (private)",
+    "data": {
+      "id": "idea_WxcszDcqIYFV"
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:16.491Z",
+    "msg": "SUB-01's brain vote: build",
+    "data": {
+      "options": [
+        {
+          "label": "build: Midnight Melon Bread Club",
+          "p": 0.986,
+          "value": 1,
+          "response": 0.12082
+        },
+        {
+          "label": "pass: keep doing what he is doing",
+          "p": 0.014,
+          "value": 0.001,
+          "response": 0.00013
+        }
+      ],
+      "reason": "chose it: reward areas responded most",
+      "network": "rate model only",
+      "networks": {
+        "language": 0.083,
+        "reward": 1,
+        "somatomotor": 0.042
+      },
+      "demoBrain": true,
+      "scores": {
+        "version": "scorecard/1",
+        "originality": {
+          "score": 1,
+          "source": "rule: shingle similarity to earlier ideas",
+          "similarity": 0
+        },
+        "clarity": {
+          "score": 1,
+          "source": "rule: length and readability"
+        },
+        "feasibility": {
+          "score": 1,
+          "source": "rule: does it need running infrastructure"
+        },
+        "suitability": {
+          "score": 0.99,
+          "value": 1,
+          "response": 0.12082,
+          "source": "simulation: brain vote probability for \"build\""
+        }
+      }
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:16.498Z",
+    "msg": "built: preview ready",
+    "data": {
+      "slug": "midnight-melon-bread-club",
+      "name": "Midnight Melon Bread Club",
+      "ticker": "RAMEN",
+      "generator": "template/1",
+      "siteVersion": 1,
+      "xPlanned": "MidnightMel",
+      "xStatus": "planned",
+      "split": [
+        {
+          "label": "Idea submitter",
+          "wallet": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY",
+          "bps": 10000,
+          "role": "submitter"
+        }
+      ]
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:16.505Z",
+    "msg": "submitter published the idea and approved site + fee split",
+    "data": {
+      "statement": "I approve this split of the CREATOR FEES of this token (not trading fees, not hosting costs):\n- Idea submitter (submitter): 100.00% → BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY\nCreator fees go directly to the creator wallet above; no split is configured on-chain.\nThere is no other, undisclosed recipient. Fees depend on trading; there may be none."
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:16.508Z",
+    "msg": "reviewer cleared it for launch"
+  },
+  {
+    "t": "2026-10-08T23:34:18.014Z",
+    "msg": "launch configuration ready for review",
+    "data": {
+      "provider": "MOCK provider (no blockchain)",
+      "network": "mock",
+      "name": "Midnight Melon Bread Club",
+      "symbol": "RAMEN",
+      "uri": "http://localhost:8787/meta/midnight-melon-bread-club/2e6675e2cb5ccb0c.json",
+      "supply": "1000000000000000",
+      "decimals": 6,
+      "initialBuyLamports": 0,
+      "recipients": [
+        {
+          "label": "Idea submitter",
+          "wallet": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY",
+          "bps": 10000,
+          "role": "submitter"
+        }
+      ],
+      "irreversible": [
+        "The token name, ticker and metadata link cannot be changed after creation.",
+        "The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards."
+      ],
+      "tradingFees": {
+        "protocolFeeBps": null,
+        "creatorFeeBps": null,
+        "source": "mock provider: no fee schedule (not a real chain)"
+      }
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:18.017Z",
+    "msg": "transaction built (launch intent persisted before signing)",
+    "data": {
+      "mint": "MOCK2ymybXGSggsDsTy6zRLE1FFYixET5fYctWLXvaA",
+      "mock": true,
+      "estimate": {
+        "networkFeeLamports": 0,
+        "accountsLamports": 0,
+        "simulation": {
+          "ok": true,
+          "mock": true
+        }
+      },
+      "bytes": 633
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:18.021Z",
+    "msg": "signed by the test wallet and submitted",
+    "data": {
+      "signature": "MOCK31C1U5eEwBD2z1rW4T3KA6nxVTJpSW5w2DQN9oxSQjzJrUq6meDGaoMzzFE3UpPpS8iGm2D4pec7LWGZQF4L",
+      "uncertain": false
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:24.037Z",
+    "msg": "result: launched",
+    "data": {
+      "note": "MOCK launch recorded (no blockchain)",
+      "launch": {
+        "mint": "MOCK2ymybXGSggsDsTy6zRLE1FFYixET5fYctWLXvaA",
+        "tx": "MOCK31C1U5eEwBD2z1rW4T3KA6nxVTJpSW5w2DQN9oxSQjzJrUq6meDGaoMzzFE3UpPpS8iGm2D4pec7LWGZQF4L",
+        "network": "mock",
+        "provider": "mock",
+        "checks": [
+          {
+            "name": "mock ledger has the transaction",
+            "ok": true,
+            "detail": "mock"
+          },
+          {
+            "name": "recipients match the approved allocation",
+            "ok": true,
+            "detail": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY:10000"
+          },
+          {
+            "name": "MOCK: no blockchain was used",
+            "ok": true,
+            "detail": "mock provider"
+          }
+        ],
+        "explorer": null
+      }
+    }
+  },
+  {
+    "t": "2026-10-08T23:34:24.039Z",
+    "msg": "public fee ledger entry",
+    "data": {
+      "mode": "direct",
+      "locked": false,
+      "network": "mock",
+      "provider": "mock",
+      "mock": true,
+      "tradingFees": {
+        "protocolFeeBps": null,
+        "creatorFeeBps": null,
+        "source": "mock provider: no fee schedule (not a real chain)"
+      },
+      "verifiedUndistributedLamports": null,
+      "vaultScope": "the creator wallet's vault (all coins it created)",
+      "vaultObservedAt": null,
+      "vaultSlot": null,
+      "vaultAccounts": [],
+      "verifiedAccruedLamports": null,
+      "confirmedPayoutsLamports": 0,
+      "payouts": [],
+      "recipients": [
+        {
+          "label": "Idea submitter",
+          "wallet": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY",
+          "bps": 10000,
+          "role": "submitter",
+          "estimatedShareOfUndistributed": null,
+          "confirmedPayouts": 0
+        }
+      ]
+    }
+  }
+]

@@ -2,6 +2,7 @@ import { api, html, raw, short, when, ago, sol, pct, usd, copyButton } from './l
 import { state, toast, requireSignIn, go, every, refreshMe } from './app.js';
 import { connected } from './wallet.js';
 
+const EDITABLE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved'];
 const FLOW = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved', 'launch_prepared', 'awaiting_signature', 'confirming', 'launched'];
 const NETWORK_WORDS = { reward: 'reward', attention: 'attention', visual: 'visual', memory: 'memory', language: 'language', fear: 'threat',
   default: 'default-mode', limbic: 'limbic', control: 'control', somatomotor: 'body-movement', salience: 'salience', relay: 'thalamic relay' };
@@ -195,6 +196,19 @@ export async function idea(el, id) {
           <button id="vis">${x.visibility === 'private' ? 'Publish this idea' : 'Make private again'}</button>
           ${!['launched', 'declined', 'cancelled', 'awaiting_signature', 'confirming'].includes(x.status) ? html` <button class="danger" id="cancel">Cancel idea</button>` : ''}
         </div>` : ''}
+        ${x.owner && EDITABLE.includes(x.status) ? html`<details class="card" style="margin-top:14px" id="editbox"><summary class="small">Edit (saved as version ${x.version + 1}; version 1 stays as submitted)</summary>
+          <form id="editf">
+            <label>Title</label><input name="title" value="${x.title}" maxlength="80">
+            <label>Concept</label><textarea name="concept" maxlength="1500">${x.concept}</textarea>
+            <div class="grid2"><div><label>Name suggestion</label><input name="nameSuggestion" value="${x.nameSuggestion || ''}" maxlength="32"></div>
+              <div><label>Ticker suggestion</label><input name="tickerSuggestion" value="${x.tickerSuggestion || ''}" maxlength="11"></div></div>
+            <label>Links (one per line)</label><textarea name="links" style="min-height:60px">${x.links.join('\n')}</textarea>
+            <div class="grid2"><div><label>X handle</label><input name="x" value="${x.contacts.x || ''}"></div><div><label>Telegram</label><input name="telegram" value="${x.contacts.telegram || ''}"></div></div>
+            <label>Receiving wallet for creator fees</label><input name="receivingWallet" value="${x.receivingWallet}" spellcheck="false">
+            <p class="faint tiny">Changing it is recorded on the public timeline. If a fee split was already approved, it goes back to draft and you approve it again.</p>
+            <label class="check"><input type="checkbox" name="rightsConfirmed"> <span>I can authorize the use of this material.</span></label>
+            <button class="primary">Save new version</button>
+          </form></details>` : ''}
         ${x.versions ? html`<div class="card" style="margin-top:14px"><h3>Versions</h3><table><tr><th>v</th><th>title</th><th>receiving wallet</th><th>when</th></tr>
           ${x.versions.map((v) => html`<tr><td>${v.version}</td><td>${v.title}</td><td class="addr">${short(v.receiving_wallet, 5)}</td><td>${when(v.created_at)}</td></tr>`)}</table>
           <p class="faint tiny">Version 1 is the original submission, kept exactly as submitted.</p></div>` : ''}
@@ -210,6 +224,17 @@ export async function idea(el, id) {
     el.querySelector('#vis')?.addEventListener('click', async () => {
       try { await api(`/api/ideas/${id}/publish`, { method: 'POST', body: { public: x.visibility === 'private' } }); draw(); } catch (e) { toast(e.message, true); }
     });
+    el.querySelector('#editf')?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = e.target;
+      try {
+        await api(`/api/ideas/${id}`, { method: 'PUT', body: { title: f.title.value, concept: f.concept.value, nameSuggestion: f.nameSuggestion.value,
+          tickerSuggestion: f.tickerSuggestion.value, links: f.links.value.split('\n').map((v) => v.trim()).filter(Boolean),
+          contacts: { x: f.x.value, telegram: f.telegram.value }, receivingWallet: f.receivingWallet.value.trim(), rightsConfirmed: f.rightsConfirmed.checked } });
+        toast('Saved as a new version.');
+        draw();
+      } catch (err) { toast(err.body?.errors ? Object.entries(err.body.errors).map(([k, v]) => `${k}: ${v}`).join(' · ') : err.message, true); }
+    });
     el.querySelector('#cancel')?.addEventListener('click', async () => {
       if (!confirm('Cancel this idea? This cannot be undone.')) return;
       try { await api(`/api/ideas/${id}/cancel`, { method: 'POST', body: {} }); draw(); } catch (e) { toast(e.message, true); }
@@ -217,7 +242,9 @@ export async function idea(el, id) {
     return x;
   };
   const x = await draw();
-  if (!['launched', 'declined', 'cancelled', 'failed'].includes(x.status)) every(5000, () => draw().catch(() => {}));
+  if (!['launched', 'declined', 'cancelled', 'failed'].includes(x.status)) {
+    every(5000, () => { if (!el.querySelector('#editbox')?.open) draw().catch(() => {}); });
+  }
 }
 
 // --- how it works -------------------------------------------------------------------------------------------------

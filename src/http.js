@@ -94,6 +94,7 @@ export function sendJson(res, status, body, headers = {}) {
 
 export function sendError(res, err, reqId) {
   if (err instanceof HttpError) return sendJson(res, err.status, { error: err.code, message: err.message, ...(err.extra || {}) });
+  if (err?.constructor?.name === 'Permanent') return sendJson(res, 400, { error: 'refused', message: err.message });
   if (/UNIQUE constraint failed|constraint failed/.test(String(err?.message))) {
     return sendJson(res, 409, { error: 'conflict', message: 'that already exists or is already in progress' });
   }

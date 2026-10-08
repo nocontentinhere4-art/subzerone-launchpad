@@ -206,3 +206,15 @@ test('per-wallet daily submission cap', () => {
   submitIdea(db, cfg, w.address, IDEA(w, { title: 'Two idea here' }));
   assert.throws(() => submitIdea(db, cfg, w.address, IDEA(w, { title: 'Three idea' })), { code: 'daily_limit' });
 });
+
+test('receiving wallet changed after the build: the split is redrafted with the new wallet and needs approval again', async () => {
+  const { cfg, db } = makeEnv();
+  const w = user(db), w2 = wallet();
+  const id = submitIdea(db, cfg, w.address, IDEA(w));
+  await drain(db, cfg, fakeBrain('build').fetchImpl);
+  editIdea(db, id, w.address, IDEA(w, { receivingWallet: w2.address }));
+  const rows = db.all(`SELECT status, recipients_json FROM fee_allocations ORDER BY version`);
+  assert.deepEqual(rows.map((r) => r.status), ['superseded', 'draft']);
+  assert.equal(JSON.parse(rows[1].recipients_json)[0].wallet, w2.address);
+  assert.equal(db.get('SELECT submitter_approved_at a FROM projects').a, null);
+});

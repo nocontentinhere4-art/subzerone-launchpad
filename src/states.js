@@ -14,11 +14,11 @@ const EDGES = {
   generating: ['preview_ready', 'failed', 'cancelled'],
   preview_ready: ['generating', 'approved', 'cancelled'],         // generating again: a regeneration
   approved: ['launch_prepared', 'preview_ready', 'cancelled'],    // back to preview: the submitter edits again
-  launch_prepared: ['awaiting_signature', 'preview_ready', 'cancelled'],
+  launch_prepared: ['awaiting_signature', 'confirming', 'preview_ready', 'cancelled'],   // confirming: an earlier tx landed late
   awaiting_signature: ['confirming', 'launch_prepared', 'cancelled'],  // back: rejected or expired signature request
   confirming: ['launched', 'launch_prepared', 'failed'],           // back: the transaction failed or expired on-chain
   launched: [],
-  failed: ['evaluating', 'selected', 'launch_prepared', 'cancelled'],   // admin retry
+  failed: ['evaluating', 'selected', 'launch_prepared', 'confirming', 'cancelled'],   // admin retry / re-verify
   cancelled: [],
 };
 

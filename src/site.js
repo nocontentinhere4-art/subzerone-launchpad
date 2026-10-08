@@ -45,7 +45,10 @@ export function validateHtml(html, allowedUrls) {
   const css = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map((m) => m[1]).join('\n');
   const markup = html.replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '<style></style>');
   for (const tag of markup.match(/<[^>]*>?/g) || []) {
-    for (const [re, why] of TAG_RULES) if (re.test(tag) && !problems.includes(why)) problems.push(why);
+    // values are checked separately (URLs against the allowlist); text inside alt/content/title is escaped data
+    const shape = tag.replace(/"[^"]*"/g, '""');
+    for (const [re, why] of TAG_RULES) if (re.test(shape) && !problems.includes(why)) problems.push(why);
+    for (const m of tag.matchAll(/\b(href|src)\s*=\s*"\s*javascript:/gi)) problems.push(`javascript: URL in ${m[1]}`);
   }
   for (const [re, why] of CSS_RULES) if (re.test(css)) problems.push(why);
   const allowed = new Set(['./logo.png', './banner.svg', ...allowedUrls]);

@@ -1,7 +1,8 @@
 // MOCK launch provider: a stand-in for a blockchain, for tests and local demos. Nothing here touches any network.
 // Everything it produces is labelled "mock"; mock launches never appear as on-chain anywhere, and the provider is
 // refused in production (config.js). The "transaction" is a JSON document the wallet signs as a plain message.
-// Failure injection (settings key 'mock.behaviour'): ok | reject_on_chain | never_lands | late | slow_index.
+// Failure injection (settings key 'mock.behaviour'): ok | reject_on_chain | never_lands | late | slow_index |
+// preflight_reject | timeout_but_lands.
 import { createHash, randomBytes } from 'node:crypto';
 import { b58encode, b58decode, verifyWalletSignature, now } from '../util.js';
 import { getSetting } from '../db.js';
@@ -51,11 +52,13 @@ export function makeMockProvider(db) {
     async submit(intent, _raw) {
       const b = behaviour();
       if (b === 'never_lands') return intent.tx_signature;
+      if (b === 'preflight_reject') { const e = new Error('mock: simulation failed (insufficient funds)'); e.rejected = true; throw e; }
       const t = now();
       const visibleAt = b === 'late' ? t + (VALID_BLOCKS + 30) * SLOT_MS : b === 'slow_index' ? t + 20_000 : t + 1500;
       db.run(`INSERT INTO mock_chain (signature, mint, payload, status, visible_at) VALUES (?, ?, ?, ?, ?)
               ON CONFLICT(signature) DO NOTHING`, intent.tx_signature, intent.mint, intent.config_json,
       b === 'reject_on_chain' ? 'failed' : 'ok', visibleAt);
+      if (b === 'timeout_but_lands') throw new Error('mock: RPC timeout (the transaction was forwarded anyway)');
       return intent.tx_signature;
     },
 
@@ -66,6 +69,12 @@ export function makeMockProvider(db) {
       }
       if (height() > intent.last_valid_block_height && !row) return { state: 'expired', height: height() };
       return { state: 'pending', height: height(), lastValid: intent.last_valid_block_height };
+    },
+
+    /** Only our own submit() can put a mock transaction on the mock ledger, so nothing is ever "open". */
+    async landCheck(intent) {
+      const row = db.get(`SELECT * FROM mock_chain WHERE mint = ? AND status = 'ok'`, intent.mint);
+      return row ? { state: 'landed', signature: row.signature } : { state: 'dead' };
     },
 
     async verifyLaunch(intent, config) {

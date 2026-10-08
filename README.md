@@ -25,7 +25,7 @@ SUB-01 repo with branch `feature/launchpad-eval`.
 ```bash
 npm install --ignore-scripts
 cp .env.example .env          # then set LAUNCHPAD_BRAIN_SECRET and APP_ENCRYPTION_KEY (see the file)
-npm test                      # 48 tests, offline
+npm test                      # 58 tests, offline
 npm run dev                   # web on http://localhost:8787 + one worker
 ```
 

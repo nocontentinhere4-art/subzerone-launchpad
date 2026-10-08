@@ -141,8 +141,18 @@ export function editIdea(db, ideaId, wallet, input) {
       // an approved allocation that names the old wallet is no longer valid: back to draft, the submitter re-approves
       const p = db.get('SELECT id FROM projects WHERE idea_id = ?', ideaId);
       if (p) {
+        // a new draft with the submitter row moved to the new wallet (others kept unless they collide with it)
+        const prev = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved') ORDER BY version DESC LIMIT 1`, p.id);
+        let rows = prev ? parseJson(prev.recipients_json, []) : [];
+        rows = rows.map((r) => (r.role === 'submitter' ? { ...r, wallet: v.receivingWallet } : r));
+        if (!rows.length || rows.filter((r) => r.wallet === v.receivingWallet).length > 1) {
+          rows = [{ label: 'Idea submitter', wallet: v.receivingWallet, bps: 10000, role: 'submitter' }];
+        }
         db.run(`UPDATE fee_allocations SET status = 'superseded' WHERE project_id = ? AND status IN ('draft','approved')`, p.id);
-        db.run('UPDATE projects SET submitter_approved_at = NULL WHERE id = ?', p.id);
+        const nv = (db.get('SELECT MAX(version) n FROM fee_allocations WHERE project_id = ?', p.id)?.n || 0) + 1;
+        db.run(`INSERT INTO fee_allocations (id, project_id, version, recipients_json, total_bps, status, created_at)
+                VALUES (?, ?, ?, ?, 10000, 'draft', ?)`, id('alloc'), p.id, nv, JSON.stringify(rows), t);
+        db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL WHERE id = ?', p.id);
         if (idea.status === 'approved') {
           transition(db, ideaId, 'approved', 'preview_ready', { actor: `wallet:${wallet}`,
             note: 'receiving wallet changed: review the fee allocation again' });
@@ -161,7 +171,7 @@ export function currentVersion(db, ideaId) {
 export function publishIdea(db, ideaId, wallet, publish) {
   const idea = db.get('SELECT * FROM ideas WHERE id = ?', ideaId);
   if (!idea || idea.owner_wallet !== wallet) throw new HttpError(404, 'not_found');
-  if (!publish && ['launch_prepared', 'awaiting_signature', 'confirming', 'launched'].includes(idea.status)) {
+  if (!publish && ['approved', 'launch_prepared', 'awaiting_signature', 'confirming', 'launched', 'failed'].includes(idea.status)) {
     throw new HttpError(409, 'locked', 'a launched or launching project stays public');
   }
   db.run('UPDATE ideas SET visibility = ?, published_at = ?, updated_at = ? WHERE id = ?',

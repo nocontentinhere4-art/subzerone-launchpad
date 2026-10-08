@@ -16,7 +16,9 @@ process.stdin.on('end', () => {
   const accent = color(p.accent, '#ff6a00'), second = color(p.second, '#ff9a3c');
   const links = (context.links || []).map((l) => `<a href="${esc(l.href)}" rel="noopener noreferrer nofollow" target="_blank">${esc(l.label)}</a>`).join('');
   const sections = spec.sections.map((s) => `<section><h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p></section>`).join('\n');
-  const status = context.launched
+  const status = context.launched && context.network === 'mock'
+    ? '<p class="chip">MOCK launch: rehearsal only, no blockchain, no token exists</p>'
+    : context.launched
     ? `<p class="chip ok">Launched on ${esc(context.network)} · mint <code>${esc(context.mint)}</code></p>`
     : `<p class="chip">${esc(context.preview ? 'PREVIEW — not launched' : 'Not launched yet')}</p>`;
   const html = `<!doctype html>

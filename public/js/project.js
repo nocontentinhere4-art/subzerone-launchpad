@@ -146,12 +146,13 @@ export async function review(el, slug) {
     el.querySelector('#publish')?.addEventListener('click', async () => { try { await api(`/api/ideas/${p.ideaId}/publish`, { method: 'POST', body: { public: true } }); draw(); } catch (err) { toast(err.message, true); } });
     el.querySelector('#reopen')?.addEventListener('click', async () => { try { await api(`/api/projects/${slug}/back-to-preview`, { method: 'POST', body: {} }); draw(); } catch (err) { toast(err.message, true); } });
     el.querySelector('#gettx')?.addEventListener('click', getTransaction);
+    el.querySelector('#resume')?.addEventListener('click', () => getTransaction(true));
     el.querySelector('#abandon')?.addEventListener('click', async () => { try { await api(`/api/projects/${slug}/launch/abandon`, { method: 'POST', body: {} }); draw(); } catch (err) { toast(err.message, true); } });
   }
 
-  async function getTransaction() {
+  async function getTransaction(resume = false) {
     const box = el.querySelector('#txbox');
-    if (!el.querySelector('#ack2').checked) { toast('Confirm you checked the launch details first.', true); return; }
+    if (resume !== true && !el.querySelector('#ack2').checked) { toast('Confirm you checked the launch details first.', true); return; }
     if (!connected() || connected().address !== state.me.user.wallet) {
       toast('Reconnect the wallet you signed in with.');
       if (!(await requireSignIn())) return;
@@ -161,6 +162,7 @@ export async function review(el, slug) {
       const e = tx.estimate || {};
       box.innerHTML = html`<div class="card accent"><h3>${tx.mock ? 'MOCK transaction (nothing on-chain)' : 'Transaction ready'}</h3><div class="kv small">
         <span>new mint address</span><span class="addr">${tx.mint}</span>
+        ${tx.resumed ? html`<span>request</span><span>resumed: the same transaction you built earlier</span>` : ''}
         <span>network fee</span><span>${e.networkFeeLamports != null ? sol(e.networkFeeLamports) : 'unknown'}</span>
         <span>accounts created (rent + program costs)</span><span>${e.accountsLamports != null ? sol(e.accountsLamports) : 'unknown'} <span class="faint">${e.simulation?.ok ? '(from a simulation)' : e.simulation?.err ? `(simulation failed: ${e.simulation.err})` : ''}</span></span>
         ${e.signerBalanceLamports != null ? html`<span>your balance</span><span>${sol(e.signerBalanceLamports)}</span>` : ''}
@@ -268,7 +270,7 @@ function launchSection(p) {
   </div><div>
     <div class="irreversible"><b>Irreversible once it lands:</b><ul class="small">${c.irreversible.map((x) => html`<li>${x}</li>`)}</ul></div>
     <p class="small dim">Network and account costs are estimated when the transaction is built. You'll see them before your wallet opens.</p>
-    ${signing ? html`<div class="notice">A transaction is waiting for your signature. <button id="abandon">Cancel it</button></div>`
+    ${signing ? html`<div class="notice">A transaction is waiting for your signature. <button id="resume" class="primary">Sign it now</button> <button id="abandon">Cancel it</button></div>`
     : p.status === 'confirming' ? html`<div class="notice">Submitted ${p.intent?.tx_signature ? short(p.intent.tx_signature, 8) : ''}. Waiting for the network to finalize, then we check the result on-chain.</div>`
       : html`<label class="check"><input type="checkbox" id="ack2"> <span>I checked the name, ticker, network, supply, recipients and addresses above.</span></label>
       <p class="row"><button class="primary" id="gettx">Build the transaction</button> <button id="reopen">Back to edits</button></p>`}

@@ -137,6 +137,9 @@ export const handlers = {
     const project = db.get('SELECT * FROM projects WHERE id = ?', ctx.job.project_id);
     const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
     if (idea.status !== 'approved') return { skipped: `idea is ${idea.status}` };
+    if (!project.submitter_approved_at || (cfg.launch.requireAdminClearance && !project.admin_cleared_at)) {
+      throw new Permanent('approval or reviewer clearance was withdrawn after approval; reopen and approve again');
+    }
     if (isPaused(db, 'launch')) throw new Defer('launches paused by an admin', 10 * 60_000);
     ctx.progress('reading the launch program\'s current parameters');
     const config = await buildLaunchConfig(db, cfg, project);

@@ -146,6 +146,15 @@ export async function createIntent(db, cfg, project, wallet) {
   if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
   const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
   if (idea.owner_wallet !== wallet) throw new HttpError(403, 'not_owner');
+  if (idea.status === 'awaiting_signature') {
+    // resume (page reload, double click): the same reviewed transaction, never a second one
+    const pending = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+    if (pending && pending.signer_wallet === wallet) {
+      return { intentId: pending.id, mint: pending.mint, txBase64: pending.tx_base64, messageHash: pending.tx_message_hash,
+        estimate: null, lastValidBlockHeight: pending.last_valid_block_height, mock: getProvider(cfg, db).isMock,
+        txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true };
+    }
+  }
   if (idea.status !== 'launch_prepared') throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
   if (db.get('SELECT 1 FROM launches WHERE project_id = ?', project.id)) throw new HttpError(409, 'already_launched');
   const live = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature','submitted','confirmed')`, project.id);
@@ -153,7 +162,9 @@ export async function createIntent(db, cfg, project, wallet) {
   if (db.get(`SELECT 1 FROM launch_intents WHERE project_id = ? AND error LIKE 'landed:%'`, project.id)) {
     throw new HttpError(409, 'landed_unverified', 'an earlier transaction landed but failed verification; an admin must resolve it first');
   }
+  if (idea.visibility !== 'public') throw new HttpError(409, 'private', 'a launched token is public: publish the idea first');
   const provider = getProvider(cfg, db);
+  await settleEarlierIntents(db, cfg, provider, project);
   const config = parseJson(project.launch_config_json);
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
@@ -174,7 +185,32 @@ export async function createIntent(db, cfg, project, wallet) {
     lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes };
 }
 
-/** The wallet declined, or the user walked away: nothing was broadcast, nothing was created. */
+/**
+ * Before a new transaction exists, every earlier one for this project must be provably dead: a signed transaction
+ * can be broadcast by anyone holding it until its blockhash expires. Open -> wait; landed -> verify it instead.
+ */
+async function settleEarlierIntents(db, cfg, provider, project) {
+  const old = db.all(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('cancelled','expired','failed')
+                      AND (error IS NULL OR (error NOT LIKE '%[final]%' AND error NOT LIKE 'preflight:%'))`, project.id);
+  for (const intent of old) {
+    const c = await provider.landCheck(intent);
+    if (c.state === 'open') {
+      throw new HttpError(409, 'previous_open', `the previous transaction could still land for about ${Math.ceil((c.blocksLeft ?? 150) * 0.4)} more seconds; try again after that`);
+    }
+    if (c.state === 'landed') {
+      db.tx(() => {
+        db.run(`UPDATE launch_intents SET status = 'submitted', tx_signature = ?, error = NULL, updated_at = ? WHERE id = ?`, c.signature, now(), intent.id);
+        transition(db, project.idea_id, 'launch_prepared', 'confirming', { note: 'an earlier transaction landed after all; verifying it on-chain' });
+        enqueue(db, { type: 'confirm_launch', key: `confirm:${intent.id}:landed`, ideaId: project.idea_id, projectId: project.id, payload: { intentId: intent.id } });
+      });
+      throw new HttpError(409, 'previous_landed', 'an earlier transaction landed after all; it is being verified instead of creating a new one');
+    }
+    db.run(`UPDATE launch_intents SET error = COALESCE(error, '') || ' [final]' WHERE id = ?`, intent.id);
+  }
+}
+
+/** The wallet declined, or the user walked away. A signed copy could still be broadcast until it expires: the next
+ * transaction waits for that (settleEarlierIntents). */
 export function abandonIntent(db, project, wallet, reason = 'signature request cancelled') {
   const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature')`, project.id);
   if (!intent) throw new HttpError(409, 'no_intent');
@@ -200,19 +236,25 @@ export async function submitSigned(db, cfg, project, wallet, signed) {
       note: 'signed; broadcast and waiting for the network', data: { signature: checked.signature } });
   });
   const fresh = db.get('SELECT * FROM launch_intents WHERE id = ?', intent.id);
+  let uncertain = false;
   try {
     await provider.submit(fresh, checked.raw);
   } catch (e) {
-    // preflight rejection (e.g. not enough SOL): the network refused it; it cannot land
-    db.tx(() => {
-      db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, String(e.message).slice(0, 300), now(), intent.id);
-      transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: `the network rejected the transaction before it ran (${String(e.message).slice(0, 120)}); nothing was created` });
-    });
-    throw new HttpError(400, 'rejected', `the network rejected the transaction: ${String(e.message).slice(0, 160)}`);
+    if (e.rejected) {
+      // a failed preflight simulation: the RPC did not forward it, it cannot land
+      db.tx(() => {
+        db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, `preflight: ${String(e.message).slice(0, 280)}`, now(), intent.id);
+        transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: `the network rejected the transaction before it ran (${String(e.message).slice(0, 120)}); nothing was created` });
+      });
+      throw new HttpError(400, 'rejected', `the network rejected the transaction: ${String(e.message).slice(0, 160)}`);
+    }
+    // timeout / RPC error: it may have reached the network. Keep tracking it; the confirmation job decides.
+    uncertain = true;
+    note(db, project.idea_id, 'broadcast answer unclear; checking the network for the transaction', { actor: 'system' });
   }
   enqueue(db, { type: 'confirm_launch', key: `confirm:${intent.id}:0`, ideaId: project.idea_id, projectId: project.id,
     payload: { intentId: intent.id } });
-  return { signature: checked.signature };
+  return { signature: checked.signature, uncertain };
 }
 
 /** confirm_launch job: resolve one submitted intent. */
@@ -243,6 +285,7 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
   // finalized: verify on-chain before calling it launched
   const config = parseJson(intent.config_json);
   const v = await provider.verifyLaunch(intent, config);
+  if (!v.ok && v.retry) throw new Defer('finalized, but an account is not visible yet on this RPC node; checking again', 15_000);
   if (!v.ok) {
     db.tx(() => {
       db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, 'landed: on-chain verification failed', now(), intent.id);

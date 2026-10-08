@@ -1,0 +1,81 @@
+[
+  {
+    "t": "2026-10-08T23:32:36.101Z",
+    "msg": "launchpad",
+    "data": {
+      "base": "http://127.0.0.1:8787",
+      "provider": "mock",
+      "network": "devnet",
+      "brain": "http://127.0.0.1:8769"
+    }
+  },
+  {
+    "t": "2026-10-08T23:32:36.151Z",
+    "msg": "signed in (signed messages, no transactions)",
+    "data": {
+      "submitter": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+      "reviewer": "2z2MxGMzujGTKgn9GboW38ZCgEKj2x2r4h46vSi5ZYQm (promoted to reviewer in the local DB)"
+    }
+  },
+  {
+    "t": "2026-10-08T23:32:36.155Z",
+    "msg": "idea submitted (private)",
+    "data": {
+      "id": "idea_r0hhKpumHbVo"
+    }
+  },
+  {
+    "t": "2026-10-08T23:32:37.662Z",
+    "msg": "SUB-01's brain vote: pass",
+    "data": {
+      "options": [
+        {
+          "label": "build: Rooftop Pigeon Census",
+          "p": 0.038,
+          "value": -1,
+          "response": -0.00084
+        },
+        {
+          "label": "pass: keep doing what he is doing",
+          "p": 0.962,
+          "value": -0.27,
+          "response": -0.00023
+        }
+      ],
+      "reason": "chose it: it moved the threat area least",
+      "network": "rate model only",
+      "networks": {
+        "default": 1,
+        "language": 1,
+        "somatomotor": 0.5
+      },
+      "demoBrain": true,
+      "scores": {
+        "version": "scorecard/1",
+        "originality": {
+          "score": 0.98,
+          "source": "rule: shingle similarity to earlier ideas",
+          "similarity": 0.02
+        },
+        "clarity": {
+          "score": 1,
+          "source": "rule: length and readability"
+        },
+        "feasibility": {
+          "score": 1,
+          "source": "rule: does it need running infrastructure"
+        },
+        "suitability": {
+          "score": 0.04,
+          "value": -1,
+          "response": -0.00084,
+          "source": "simulation: brain vote probability for \"build\""
+        }
+      }
+    }
+  },
+  {
+    "t": "2026-10-08T23:32:37.662Z",
+    "msg": "he passed; the flow stops here (re-run for another vote)"
+  }
+]

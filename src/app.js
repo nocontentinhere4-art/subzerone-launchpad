@@ -195,17 +195,17 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
     const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
     setLiveVersion(db, p, site.version, `wallet:${u.wallet}`);
-    db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL, updated_at = ? WHERE id = ?', spec.name, spec.ticker, spec.description, now(), p.id);
+    db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', spec.name, spec.ticker, spec.description, now(), p.id);
     return { version: site.version };
   });
   r.post('/api/projects/:slug/site/live', async (ctx) => {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
-    if (['launch_prepared', 'awaiting_signature', 'confirming'].includes(idea.status)) throw new HttpError(409, 'locked', 'not during a launch');
+    if (!['preview_ready', 'launched'].includes(idea.status)) throw new HttpError(409, 'locked', 'the live version can change while the preview is open, or after launch');
     const b = await ctx.body();
     setLiveVersion(db, p, Number(b.version), `wallet:${u.wallet}`);
     const spec = parseJson(db.get('SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?', p.id, Number(b.version)).spec_json);
     if (!db.get('SELECT 1 FROM launches WHERE project_id = ?', p.id)) {
-      db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL WHERE id = ?', spec.name, spec.ticker, spec.description, p.id);
+      db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL WHERE id = ?', spec.name, spec.ticker, spec.description, p.id);
     }
     return { ok: true };
   });
@@ -216,7 +216,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   r.get('/api/projects/:slug/preview-link', (ctx) => {
     const v = visibleProject(ctx, ctx.params.slug);
     if (!v) throw new HttpError(404, 'not_found');
-    const version = Number(ctx.query.get('version')) || v.p.live_site_version;
+    const asked = Number(ctx.query.get('version')) || v.p.live_site_version;
+    const version = v.owner || isStaff(ctx.user) ? asked : v.p.live_site_version;     // drafts stay with the owner
     return { url: `/preview/${v.p.slug}/${previewToken(v.p.slug, version, Date.now() + 3_600_000)}/index.html` };
   });
   r.get('/preview/:slug/:token/:file', (ctx) => {
@@ -236,7 +237,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const b = await ctx.body();
     const v = currentVersion(db, idea.id);
     const recipients = validateRecipients(db, b.recipients, v.receiving_wallet);
-    db.tx(() => { draftAllocation(db, p.id, recipients, `wallet:${u.wallet}`); db.run('UPDATE projects SET submitter_approved_at = NULL WHERE id = ?', p.id); });
+    db.tx(() => { draftAllocation(db, p.id, recipients, `wallet:${u.wallet}`); db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL WHERE id = ?', p.id); });
     return { ok: true };
   });
   r.post('/api/projects/:slug/approve', async (ctx) => {
@@ -263,7 +264,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
     db.tx(() => {
       transition(db, idea.id, ['approved', 'launch_prepared'], 'preview_ready', { actor: `wallet:${u.wallet}`, note: 'reopened for edits by the submitter' });
-      db.run('UPDATE projects SET submitter_approved_at = NULL, launch_config_json = NULL, launch_config_hash = NULL WHERE id = ?', p.id);
+      db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, launch_config_json = NULL, launch_config_hash = NULL WHERE id = ?', p.id);
       db.run(`UPDATE fee_allocations SET status = 'draft' WHERE project_id = ? AND status = 'approved'`, p.id);
     });
     return { ok: true };
@@ -322,6 +323,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     if (!p) throw new HttpError(404, 'not_found');
     const f = ctx.params.file;
     const logo = f.match(/^logo-v(\d+)\.png$/);
+    if (db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id).visibility !== 'public') throw new HttpError(404, 'not_found');
     if (logo) {
       const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'logo' AND version = ?`, p.id, Number(logo[1]));
       if (!a) throw new HttpError(404, 'not_found');
@@ -345,7 +347,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
       WHERE i.status IN ('preview_ready','approved') ORDER BY p.updated_at DESC`);
     const failed = db.all(`SELECT i.id, i.status_note, v.title FROM ideas i JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version WHERE i.status = 'failed'`);
     const audits = db.all('SELECT at, actor, kind, message, idea_id, project_id FROM events ORDER BY id DESC LIMIT 80');
-    const intents = db.all(`SELECT id, project_id, status, mint, tx_signature, error, provider, network, updated_at FROM launch_intents ORDER BY updated_at DESC LIMIT 30`);
+    const intents = db.all(`SELECT li.id, li.project_id, p.slug, li.status, li.mint, li.tx_signature, li.error, li.provider, li.network, li.updated_at
+      FROM launch_intents li JOIN projects p ON p.id = li.project_id ORDER BY li.updated_at DESC LIMIT 30`);
     return { counts, jobs, clearance, failed, audits, intents, pauses: Object.fromEntries(PAUSES.map((p) => [p, isPaused(db, p)])),
       budget: { ...limits(db, cfg), spentToday: spentToday(db) }, platformShare: getSetting(db, 'allocation.platform', null),
       mockBehaviour: cfg.production ? undefined : getSetting(db, 'mock.behaviour', 'ok'), role: ctx.user.role,
@@ -385,6 +388,9 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const u = requireAdmin(ctx, ['admin', 'reviewer']);
     const p = projectBySlug(ctx.params.slug);
     if (!p) throw new HttpError(404, 'not_found');
+    const owner = db.get('SELECT owner_wallet, status FROM ideas WHERE id = ?', p.idea_id);
+    if (owner.owner_wallet === u.wallet) throw new HttpError(403, 'own_project', 'a reviewer cannot clear their own project');
+    if (owner.status !== 'preview_ready') throw new HttpError(409, 'bad_state', `idea is ${owner.status}`);
     db.tx(() => {
       db.run('UPDATE projects SET admin_cleared_at = ?, admin_cleared_by = ? WHERE id = ?', now(), u.wallet, p.id);
       audit(db, { actor: `admin:${u.wallet}`, kind: 'clearance', ideaId: p.idea_id, projectId: p.id, isPublic: true, message: 'Cleared for launch by a SUBZERONE reviewer' });
@@ -412,6 +418,19 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
         }
         transition(db, idea.id, 'failed', 'launch_prepared', { actor: `admin:${u.wallet}`, note: 'reopened for a new signature' });
       }
+    });
+    return { ok: true };
+  });
+  r.post('/api/admin/projects/:slug/reverify', (ctx) => {
+    const u = requireAdmin(ctx);
+    const p = projectBySlug(ctx.params.slug);
+    if (!p) throw new HttpError(404, 'not_found');
+    const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND error LIKE 'landed:%' ORDER BY updated_at DESC LIMIT 1`, p.id);
+    if (!intent) throw new HttpError(409, 'nothing_to_verify');
+    db.tx(() => {
+      db.run(`UPDATE launch_intents SET status = 'submitted', error = NULL, updated_at = ? WHERE id = ?`, now(), intent.id);
+      transition(db, p.idea_id, 'failed', 'confirming', { actor: `admin:${u.wallet}`, note: 're-verifying the landed transaction on-chain' });
+      enqueue(db, { type: 'confirm_launch', key: `confirm:${intent.id}:reverify:${now()}`, ideaId: p.idea_id, projectId: p.id, payload: { intentId: intent.id } });
     });
     return { ok: true };
   });
@@ -444,7 +463,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const u = requireAdmin(ctx);
     if (cfg.production) throw new HttpError(404, 'not_found');
     const b = await ctx.body();
-    if (!['ok', 'reject_on_chain', 'never_lands', 'late', 'slow_index'].includes(b.behaviour)) throw new HttpError(400, 'bad_behaviour');
+    if (!['ok', 'reject_on_chain', 'never_lands', 'late', 'slow_index', 'preflight_reject', 'timeout_but_lands'].includes(b.behaviour)) throw new HttpError(400, 'bad_behaviour');
     setSetting(db, 'mock.behaviour', b.behaviour, u.wallet);
     return { ok: true };
   });
