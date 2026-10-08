@@ -1,0 +1,97 @@
+# Deployment
+
+The launchpad is one Node process for the web and one or more worker processes, sharing a SQLite database on a
+persistent volume. It fits the SUB-01 setup (Railway + a custom domain) and needs no other services.
+
+## 1. The brain side (SUB-01 repo)
+
+1. Merge `feature/launchpad-eval` in `nocontentinhere4-art/sub-01`. It adds `launchpad_eval.py`, one route and
+   its tests. The route is off until a secret is set.
+2. Set `LAUNCHPAD_BRAIN_SECRET` on the live server (Railway variable). Use the same value on the launchpad. Generate it
+   with `openssl rand -hex 32`.
+3. Check it: `POST https://subzerone.live/api/launchpad/evaluate` without a signature must answer `401`, and `503`
+   while the secret is unset.
+
+The endpoint never runs a language model. It clones the live brain, votes, and stores each answer per `request_id`
+(`data/launchpad_evals.jsonl`), so retries never vote twice.
+
+## 2. The launchpad service (Railway)
+
+- **Source**: this repo. Start command `npm start`. Add a second service (same repo, same volume) with `npm run worker`.
+- **Volume**: mounted at `/data`, with `DATA_DIR=/data`. It holds the database, uploads and backups.
+- **Node**: ≥ 22.13 (`engines` in package.json). Install with `npm ci --ignore-scripts`. The pump SDK's optional native
+  `bigint` binding falls back to pure JS.
+- **Instances**: one web instance (rate limits are in-memory) and one or more workers (leases make that safe).
+- **Environment** (see `.env.example`):
+
+```
+DEPLOY_ENV=production
+HOST=0.0.0.0
+PORT=8080
+PUBLIC_ORIGIN=https://launchpad.subzerone.live
+PROJECTS_HOST=projects.subzerone.live
+PROJECTS_SCHEME=https
+TRUST_PROXY=1
+DATA_DIR=/data
+APP_ENCRYPTION_KEY=<openssl rand -base64 32>
+ADMIN_WALLETS=<your wallet>
+BRAIN_URL=https://subzerone.live
+LAUNCHPAD_BRAIN_SECRET=<same as on SUB-01>
+LAUNCH_PROVIDER=none            # until the devnet run and the ToS question are done; then pumpfun
+SOLANA_NETWORK=devnet           # mainnet-beta only after STATUS.md "Still required" is cleared
+SOLANA_RPC_URL=<provider URL>
+LAUNCH_LOOKUP_TABLE=<from npm run lookup-table on that network>
+```
+
+Production refuses to start with the mock provider, without `APP_ENCRYPTION_KEY`, or without an https origin.
+
+## 3. Domains
+
+- `launchpad.subzerone.live` → the web service.
+- Wildcard `*.projects.subzerone.live` → the **same** web service. The app routes by `Host`, so each project gets its
+  own origin and can never read launchpad cookies.
+  - Railway supports wildcard custom domains: add `*.projects.subzerone.live` as a custom domain and create the CNAME
+    record it shows.
+  - Behind Cloudflare: proxied wildcard records work on all plans for DNS. Edge certificates for a second-level
+    wildcard (`*.projects.…`) need Advanced Certificate Manager. Otherwise use DNS-only (grey cloud) and let Railway
+    issue the certificate.
+- Token metadata is served at `https://launchpad.subzerone.live/meta/...`. Keep this URL stable: it is written into
+  every token at launch.
+
+## 4. X developer app
+
+Create an app in the X developer portal:
+
+- OAuth 2.0;
+- type "Web App" (confidential) or "Native" (public);
+- callback `https://launchpad.subzerone.live/api/x/callback`;
+- scopes `tweet.read tweet.write users.read offline.access`.
+
+Set `X_CLIENT_ID` (+ `X_CLIENT_SECRET` for a confidential client) and `X_REDIRECT_URI`. Posting needs an X API tier
+that allows `POST /2/tweets`.
+
+## 5. Operations
+
+- **Migrations**: applied automatically at start (`schema_migrations` table). Manually: `npm run migrate`.
+- **Backups**: the worker writes `VACUUM INTO /data/backups/launchpad-<time>.db` every `BACKUP_EVERY_HOURS` and keeps
+  `BACKUP_KEEP`. You can also back up from admin, or with `npm run backup`. Copy them off the volume regularly (Railway
+  volume backups or a cron to object storage).
+- **Restore**: stop both services, replace `/data/launchpad.db` with a backup (delete `-wal`/`-shm`), start.
+- **Monitoring**:
+  - `GET /healthz` for the uptime check.
+  - Logs are JSON lines (`level`, `msg`, `reqId`), with secrets, tokens, signatures and cookies redacted by key.
+  - Watch for `job not done` warnings and dead jobs in admin.
+- **Emergency**: admin → pause `launch`, `generation`, `deployment`, `evaluation`, `submissions` or `x_publishing`.
+  Pausing `launch` stops new transactions immediately. Transactions already signed keep being confirmed (they can't be
+  recalled).
+- **Budgets**: admin → global daily USD cap and per-project cap. They count only generation spend (the template
+  generator costs $0). Network fees are paid by the submitter's wallet, never by the platform.
+
+## 6. Going to mainnet (checklist)
+
+1. A devnet launch, recorded end to end (`LAUNCH_PROVIDER=pumpfun SOLANA_NETWORK=devnet npm run demo:flow`), including
+   a two-recipient split with the lookup table.
+2. pump.fun ToS §21(c): legal review or written confirmation.
+3. A mainnet lookup table: `SOLANA_NETWORK=mainnet-beta SOLANA_RPC_URL=… npm run lookup-table -- --keypair <operator file>`.
+4. The reviewer clearance flow staffed (`REQUIRE_ADMIN_CLEARANCE=1`).
+5. Switch `SOLANA_NETWORK=mainnet-beta`, then re-read the banner, the token page and the fee methodology.

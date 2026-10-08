@@ -1,0 +1,7 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "launchpad", "runtimeExecutable": "npm", "runtimeArgs": ["run", "dev"], "port": 8787 },
+    { "name": "sub01-brain-demo", "runtimeExecutable": "sh", "runtimeArgs": ["scripts/brain-demo.sh"], "port": 8769 }
+  ]
+}

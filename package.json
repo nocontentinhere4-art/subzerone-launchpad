@@ -1,0 +1,27 @@
+{
+  "name": "subzerone-launchpad",
+  "version": "0.1.0",
+  "private": true,
+  "description": "You drop an idea. SUB-01 becomes your dev. The SUBZERONE launchpad.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "worker": "node --disable-warning=ExperimentalWarning src/worker.js",
+    "dev": "node --disable-warning=ExperimentalWarning src/dev.js",
+    "migrate": "node --disable-warning=ExperimentalWarning scripts/migrate.js",
+    "backup": "node --disable-warning=ExperimentalWarning scripts/backup.js",
+    "test": "node --disable-warning=ExperimentalWarning --test --test-concurrency=1 test/*.test.js",
+    "demo:flow": "node --disable-warning=ExperimentalWarning scripts/demo-flow.js",
+    "lookup-table": "node --disable-warning=ExperimentalWarning scripts/lookup-table.js",
+    "devnet-wallet": "node --disable-warning=ExperimentalWarning scripts/devnet-wallet.js"
+  },
+  "dependencies": {
+    "@pump-fun/pump-sdk": "4.0.0",
+    "@solana/spl-token": "0.4.14",
+    "@solana/web3.js": "1.98.4",
+    "bn.js": "5.2.2"
+  }
+}

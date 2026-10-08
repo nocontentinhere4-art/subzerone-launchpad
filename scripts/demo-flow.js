@@ -1,0 +1,132 @@
+// End-to-end demonstration against a RUNNING launchpad (npm run dev) and SUB-01 brain (scripts/brain-demo.sh):
+// test wallet signs in -> submits an idea -> the brain votes -> preview -> publish + approve -> reviewer clears ->
+// launch configuration -> transaction signed by the test wallet -> confirmation -> verification -> fee ledger.
+// Development only: test wallets live in data/devnet/ and the demo reviewer is promoted directly in the local DB.
+// With LAUNCH_PROVIDER=mock the "transaction" is the clearly labelled mock; with pumpfun on devnet it is a real devnet
+// transaction (the test wallet needs devnet SOL). Never run against production.
+import { createRequire } from 'node:module';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { sign } from 'node:crypto';
+import { loadConfig, ROOT } from '../src/config.js';
+import { openDb } from '../src/db.js';
+import { b58encode } from '../src/util.js';
+import { mockSigningText } from '../src/launch/mock.js';
+import { devnetKeypair } from './devnet-wallet.js';
+
+const require = createRequire(import.meta.url);
+const web3 = require('@solana/web3.js');
+const cfg = loadConfig();
+if (cfg.production) throw new Error('demo-flow refuses to run with DEPLOY_ENV=production');
+const BASE = process.env.LAUNCHPAD_URL || `http://127.0.0.1:${cfg.port}`;
+const log = [];
+const step = (msg, data) => { const row = { t: new Date().toISOString(), msg, ...(data ? { data } : {}) }; log.push(row); console.log(`• ${msg}`, data ? JSON.stringify(data).slice(0, 400) : ''); };
+
+function client(kp) {
+  let cookie = '';
+  const address = kp.publicKey.toBase58();
+  const signText = (text) => b58encode(web3.Keypair.fromSecretKey(kp.secretKey) && signDetached(Buffer.from(text, 'utf8'), kp));
+  const call = async (method, path, body) => {
+    const res = await fetch(BASE + path, { method, headers: { origin: cfg.publicOrigin, cookie, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const set = res.headers.get('set-cookie');
+    if (set) cookie = set.split(';')[0];
+    const json = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(`${method} ${path} -> ${res.status} ${json?.message || json?.error || ''}`);
+    return json;
+  };
+  return { address, call, signText,
+    async signIn() { const n = await call('POST', '/api/auth/nonce', { wallet: address }); await call('POST', '/api/auth/verify', { wallet: address, nonce: n.nonce, signature: signText(n.message) }); } };
+}
+
+function signDetached(msg, kp) {
+  // ed25519 over the message with the keypair's 32-byte seed
+  const { createPrivateKey } = require('node:crypto');
+  const seed = Buffer.from(kp.secretKey.slice(0, 32));
+  const pkcs8 = Buffer.concat([Buffer.from('302e020100300506032b657004220420', 'hex'), seed]);
+  return sign(null, msg, createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' }));
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+async function until(fn, what, timeoutMs = 120_000) {
+  const t0 = Date.now();
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() - t0 > timeoutMs) throw new Error(`timed out waiting for ${what}`);
+    await wait(1500);
+  }
+}
+
+const submitter = client(devnetKeypair('demo-submitter'));
+const reviewer = client(devnetKeypair('demo-reviewer'));
+step('launchpad', { base: BASE, provider: cfg.launch.provider, network: cfg.launch.network, brain: cfg.brain.url });
+
+await submitter.signIn();
+await reviewer.signIn();
+const db = openDb(join(cfg.dataDir, 'launchpad.db'));
+db.run("UPDATE users SET role = 'reviewer' WHERE wallet = ?", reviewer.address);          // local demo only
+step('signed in (signed messages, no transactions)', { submitter: submitter.address, reviewer: `${reviewer.address} (promoted to reviewer in the local DB)` });
+
+const title = process.env.DEMO_TITLE || `Night Ramen Map ${new Date().toISOString().slice(11, 16)}`;
+const { id } = await submitter.call('POST', '/api/ideas', {
+  title, concept: 'A tiny community map of the best late-night ramen counters in Tokyo, drawn by hand, one bowl at a time. Sweet, warm, a little nostalgic.',
+  tickerSuggestion: 'RAMEN', links: ['https://en.wikipedia.org/wiki/Ramen'], contacts: { x: 'ramen_fan' },
+  receivingWallet: submitter.address, rightsConfirmed: true,
+});
+step('idea submitted (private)', { id });
+
+const evaluated = await until(async () => { const x = await submitter.call('GET', `/api/ideas/${id}`); return x.evaluation ? x : null; }, 'the brain vote', 30 * 60_000);
+const vote = evaluated.evaluation.brain?.vote;
+step(`SUB-01 decided: ${evaluated.evaluation.decision} (by ${evaluated.evaluation.decidedBy})`, {
+  options: vote?.options?.map((o) => ({ label: o.label, p: o.p, value: o.value, response: o.response })), reason: vote?.reason,
+  network: vote?.spiking?.network, networks: evaluated.evaluation.brain?.networks, demoBrain: evaluated.evaluation.brain?.demo, scores: evaluated.evaluation.scores });
+if (evaluated.evaluation.decision !== 'selected') {
+  step('he passed; the flow stops here (re-run for another vote)');
+  writeTranscript();
+  process.exit(0);
+}
+
+const preview = await until(async () => { const x = await submitter.call('GET', `/api/ideas/${id}`); return x.status === 'preview_ready' ? x : null; }, 'the build');
+const slug = preview.project.slug;
+let p = await submitter.call('GET', `/api/projects/${slug}`);
+step('built: preview ready', { slug, name: p.name, ticker: p.ticker, generator: p.generator, siteVersion: p.liveSiteVersion, xPlanned: p.x?.planned_handle, xStatus: p.x?.status, split: p.allocation?.recipients });
+
+await submitter.call('POST', `/api/ideas/${id}/publish`, { public: true });
+await submitter.call('POST', `/api/projects/${slug}/approve`, { allocationId: p.allocation.id, statement: p.allocation.statement, siteVersion: p.liveSiteVersion });
+step('submitter published the idea and approved site + fee split', { statement: p.allocation.statement });
+await reviewer.call('POST', `/api/admin/projects/${slug}/clear`, {});
+step('reviewer cleared it for launch');
+
+p = await until(async () => { const x = await submitter.call('GET', `/api/projects/${slug}`); return x.status === 'launch_prepared' ? x : null; }, 'the launch configuration');
+const c = p.launchConfig;
+step('launch configuration ready for review', { provider: c.providerLabel, network: c.network, name: c.token.name, symbol: c.token.symbol, uri: c.token.uri,
+  supply: c.token.totalSupplyBase, decimals: c.token.decimals, initialBuyLamports: c.initialBuyLamports, recipients: c.feeSharing.recipients, irreversible: c.irreversible, tradingFees: c.tradingFees });
+
+const tx = await submitter.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+step('transaction built (launch intent persisted before signing)', { mint: tx.mint, mock: tx.mock, estimate: tx.estimate, bytes: tx.txBytes });
+let signed;
+if (tx.mock) {
+  signed = submitter.signText(mockSigningText(tx.messageHash));
+} else {
+  const kp = devnetKeypair('demo-submitter');
+  const vt = web3.VersionedTransaction.deserialize(Buffer.from(tx.txBase64, 'base64'));
+  vt.sign([kp]);
+  signed = Buffer.from(vt.serialize()).toString('base64');
+}
+const sub = await submitter.call('POST', `/api/projects/${slug}/launch/signed`, { signed });
+step('signed by the test wallet and submitted', sub);
+
+p = await until(async () => { const x = await submitter.call('GET', `/api/projects/${slug}`); return ['launched', 'launch_prepared', 'failed'].includes(x.status) ? x : null; }, 'confirmation', 240_000);
+step(`result: ${p.status}`, { note: p.statusNote, launch: p.launch && { mint: p.launch.mint, tx: p.launch.tx_signature, network: p.launch.network, provider: p.launch.provider,
+  checks: p.launch.verification, explorer: p.launch.explorerTx } });
+const ledger = await submitter.call('GET', '/api/ledger');
+step('public fee ledger entry', ledger.projects.find((x) => x.slug === slug)?.ledger);
+writeTranscript();
+
+function writeTranscript() {
+  const dir = join(ROOT, 'docs', 'demo');
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `flow-${cfg.launch.provider}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.json`);
+  writeFileSync(file, JSON.stringify(log, null, 2));
+  console.log(`\ntranscript: ${file}`);
+}

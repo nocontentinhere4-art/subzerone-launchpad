@@ -1,0 +1,331 @@
+// Fee allocation and launch orchestration. A launch goes: approved allocation -> reviewed launch configuration ->
+// launch intent (exact transaction, persisted BEFORE the signature is requested) -> wallet signature -> broadcast ->
+// on-chain verification -> launched. A provider's answer alone never marks a project launched.
+import { createHash } from 'node:crypto';
+import { audit, getSetting, isPaused } from './db.js';
+import { enqueue, Permanent, Defer } from './jobs.js';
+import { transition, note } from './states.js';
+import { currentVersion, validateReceivingWallet } from './ideas.js';
+import { makeMockProvider } from './launch/mock.js';
+import { makePumpfunProvider } from './launch/pumpfun.js';
+import { id, now, HttpError, parseJson, isSolanaAddress } from './util.js';
+
+export const MAX_RECIPIENTS = 8;
+let cached = null;
+
+export function getProvider(cfg, db) {
+  if (cfg.launch.provider === 'none') return null;
+  if (cached && cached.db === db && cached.key === cfg.launch.provider + cfg.launch.rpcUrl) return cached.p;
+  const p = cfg.launch.provider === 'pumpfun' ? makePumpfunProvider(cfg) : makeMockProvider(db);
+  cached = { db, key: cfg.launch.provider + cfg.launch.rpcUrl, p };
+  return p;
+}
+export const setProviderForTests = (db, p, cfg) => { cached = { db, key: cfg.launch.provider + cfg.launch.rpcUrl, p }; };
+
+// --- allocation --------------------------------------------------------------------------------------------------
+/** Default: 100% of creator fees to the submitter's receiving wallet, plus any platform share an admin disclosed. */
+export function defaultRecipients(db, receivingWallet) {
+  const platform = getSetting(db, 'allocation.platform', null);   // {wallet, bps, label} or null; disclosed on every page
+  if (platform && platform.bps > 0) {
+    return [{ label: 'Idea submitter', wallet: receivingWallet, bps: 10000 - platform.bps, role: 'submitter' },
+      { label: platform.label || 'SUBZERONE platform', wallet: platform.wallet, bps: platform.bps, role: 'platform' }];
+  }
+  return [{ label: 'Idea submitter', wallet: receivingWallet, bps: 10000, role: 'submitter' }];
+}
+
+export function validateRecipients(db, recipients, receivingWallet) {
+  if (!Array.isArray(recipients) || recipients.length < 1 || recipients.length > MAX_RECIPIENTS) {
+    throw new HttpError(400, 'bad_allocation', `1–${MAX_RECIPIENTS} recipients`);
+  }
+  const seen = new Set();
+  let total = 0;
+  const out = recipients.map((r) => {
+    const wallet = validateReceivingWallet(r.wallet);
+    const bps = Number(r.bps);
+    if (!Number.isInteger(bps) || bps <= 0 || bps > 10000) throw new HttpError(400, 'bad_allocation', 'each share must be 1–10000 bps');
+    if (seen.has(wallet)) throw new HttpError(400, 'bad_allocation', 'duplicate recipient');
+    seen.add(wallet);
+    total += bps;
+    const role = ['submitter', 'platform', 'collaborator'].includes(r.role) ? r.role : 'collaborator';
+    return { label: String(r.label || role).slice(0, 40).replace(/[<>`]/g, ''), wallet, bps, role };
+  });
+  if (total !== 10000) throw new HttpError(400, 'bad_allocation', `shares must total 100% (got ${total / 100}%)`);
+  const sub = out.find((r) => r.role === 'submitter');
+  if (!sub || sub.wallet !== receivingWallet) throw new HttpError(400, 'bad_allocation', 'the submitter row must be the idea\'s receiving wallet');
+  const platform = getSetting(db, 'allocation.platform', null);
+  const plat = out.filter((r) => r.role === 'platform');
+  if (plat.length && (!platform || plat.length > 1 || plat[0].wallet !== platform.wallet || plat[0].bps !== platform.bps)) {
+    throw new HttpError(400, 'bad_allocation', 'a platform row must match the disclosed platform share exactly');
+  }
+  if (platform && platform.bps > 0 && !plat.length) {
+    // the platform share is disclosed but optional: dropping it is the submitter's call, recorded as such
+  }
+  return out;
+}
+
+export function draftAllocation(db, projectId, recipients, createdBy) {
+  const last = db.get('SELECT MAX(version) v FROM fee_allocations WHERE project_id = ?', projectId);
+  const version = (last?.v || 0) + 1;
+  db.run(`UPDATE fee_allocations SET status = 'superseded' WHERE project_id = ? AND status IN ('draft','approved')`, projectId);
+  const aid = id('alloc');
+  db.run(`INSERT INTO fee_allocations (id, project_id, version, recipients_json, total_bps, status, created_at)
+          VALUES (?, ?, ?, ?, 10000, 'draft', ?)`, aid, projectId, version, JSON.stringify(recipients), now());
+  audit(db, { actor: createdBy, kind: 'allocation', projectId, message: `Fee allocation draft v${version}`, data: recipients });
+  return aid;
+}
+
+export function allocationStatement(recipients, mode) {
+  const lines = recipients.map((r) => `- ${r.label} (${r.role}): ${(r.bps / 100).toFixed(2)}% → ${r.wallet}`);
+  return [
+    'I approve this split of the CREATOR FEES of this token (not trading fees, not hosting costs):',
+    ...lines,
+    mode === 'sharing_config'
+      ? 'This split is written on-chain at launch and LOCKED: it cannot be changed afterwards by me or by SUBZERONE.'
+      : 'Creator fees go directly to the creator wallet above; no split is configured on-chain.',
+    'There is no other, undisclosed recipient. Fees depend on trading; there may be none.',
+  ].join('\n');
+}
+
+export function feeMode(recipients, signer) {
+  return recipients.length === 1 && recipients[0].wallet === signer ? 'direct' : 'sharing_config';
+}
+
+// --- launch configuration (prepare_launch job) ---------------------------------------------------------------------
+export async function buildLaunchConfig(db, cfg, project) {
+  const provider = getProvider(cfg, db);
+  if (!provider) throw new Permanent('launching is disabled (LAUNCH_PROVIDER=none)');
+  const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
+  const v = currentVersion(db, idea.id);
+  const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status = 'approved' ORDER BY version DESC LIMIT 1`, project.id);
+  if (!alloc) throw new Permanent('no approved fee allocation');
+  const recipients = parseJson(alloc.recipients_json);
+  validateRecipients(db, recipients, v.receiving_wallet);           // re-checked against the current receiving wallet
+  const signer = idea.owner_wallet;
+  const mode = feeMode(recipients, signer);
+  if (alloc.approval_statement !== allocationStatement(recipients, mode)) throw new Permanent('approval statement does not match the allocation');
+  const params = await provider.chainParams();
+  const site = db.get('SELECT * FROM site_versions WHERE project_id = ? AND version = ?', project.id, project.live_site_version);
+  const logo = db.get(`SELECT version, sha256 FROM assets WHERE project_id = ? AND kind = 'logo' ORDER BY version DESC LIMIT 1`, project.id);
+  const spec = parseJson(site.spec_json);
+  const metadata = {
+    name: project.name, symbol: project.ticker, description: spec.description,
+    image: `${cfg.publicOrigin}/meta/${project.slug}/logo-v${logo.version}.png`,
+    external_url: `${cfg.projectsScheme}://${project.slug}.${cfg.projectsHost}/`,
+    attributes: [{ trait_type: 'built_by', value: 'SUB-01 (SUBZERONE launchpad)' }],
+  };
+  const metaHash = createHash('sha256').update(JSON.stringify(metadata)).digest('hex').slice(0, 16);
+  const uri = `${cfg.publicOrigin}/meta/${project.slug}/${metaHash}.json`;
+  if (uri.length > 200) throw new Permanent('metadata URI longer than 200 characters');
+  const irreversible = [
+    'The token name, ticker and metadata link cannot be changed after creation.',
+    'The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.',
+  ];
+  if (mode === 'sharing_config') irreversible.push('The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
+  const config = {
+    version: 'launch-config/1',
+    provider: provider.name, providerLabel: provider.label, network: provider.network, mock: provider.isMock,
+    token: { name: project.name, symbol: project.ticker, uri, metadata, decimals: params.decimals,
+      totalSupplyBase: params.totalSupplyBase, tokenProgram: params.tokenProgram,
+      authorities: { mint: 'none after creation', freeze: 'none' } },
+    signer, payer: signer, creator: mode === 'sharing_config' ? 'per-mint sharing config (holds the split)' : signer,
+    initialBuyLamports: 0,
+    feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })), recipients, locked: mode === 'sharing_config',
+      allocationId: alloc.id, allocationVersion: alloc.version },
+    tradingFees: params.fees,
+    irreversible,
+    preparedAt: now(),
+  };
+  return config;
+}
+
+export const configHash = (config) => createHash('sha256').update(JSON.stringify(config)).digest('hex');
+
+// --- signature request -> broadcast -> confirmation ---------------------------------------------------------------
+/** Owner asks for the transaction. Builds a fresh launch intent. Only one live intent per project (DB-enforced). */
+export async function createIntent(db, cfg, project, wallet) {
+  if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
+  const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
+  if (idea.owner_wallet !== wallet) throw new HttpError(403, 'not_owner');
+  if (idea.status !== 'launch_prepared') throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
+  if (db.get('SELECT 1 FROM launches WHERE project_id = ?', project.id)) throw new HttpError(409, 'already_launched');
+  const live = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature','submitted','confirmed')`, project.id);
+  if (live) throw new HttpError(409, 'intent_exists', 'a launch attempt is already in progress');
+  if (db.get(`SELECT 1 FROM launch_intents WHERE project_id = ? AND error LIKE 'landed:%'`, project.id)) {
+    throw new HttpError(409, 'landed_unverified', 'an earlier transaction landed but failed verification; an admin must resolve it first');
+  }
+  const provider = getProvider(cfg, db);
+  const config = parseJson(project.launch_config_json);
+  if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
+  if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
+  const built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
+    signer: config.signer, feeSharing: config.feeSharing });
+  const intentId = id('intent');
+  const t = now();
+  db.tx(() => {
+    db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint,
+              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?)`,
+    intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
+    config.feeSharing.allocationId, built.mint, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight, t, t);
+    transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
+      note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
+  });
+  return { intentId, mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
+    lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes };
+}
+
+/** The wallet declined, or the user walked away: nothing was broadcast, nothing was created. */
+export function abandonIntent(db, project, wallet, reason = 'signature request cancelled') {
+  const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature')`, project.id);
+  if (!intent) throw new HttpError(409, 'no_intent');
+  db.tx(() => {
+    db.run(`UPDATE launch_intents SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ?`, reason, now(), intent.id);
+    transition(db, project.idea_id, 'awaiting_signature', 'launch_prepared', { actor: `wallet:${wallet}`, note: `${reason}; nothing was created` });
+  });
+}
+
+/** Signed transaction comes back: verify it is exactly the reviewed one, persist the signature, then broadcast. */
+export async function submitSigned(db, cfg, project, wallet, signed) {
+  const provider = getProvider(cfg, db);
+  const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!intent) throw new HttpError(409, 'no_intent', 'no transaction is waiting for a signature');
+  if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  let checked;
+  try { checked = provider.verifySigned(intent, signed); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
+  // persist first: if we crash after broadcasting, reconciliation finds the signature
+  db.tx(() => {
+    db.run(`UPDATE launch_intents SET status = 'submitted', tx_signature = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
+      checked.signature, now(), intent.id);
+    transition(db, project.idea_id, 'awaiting_signature', 'confirming', { actor: `wallet:${wallet}`,
+      note: 'signed; broadcast and waiting for the network', data: { signature: checked.signature } });
+  });
+  const fresh = db.get('SELECT * FROM launch_intents WHERE id = ?', intent.id);
+  try {
+    await provider.submit(fresh, checked.raw);
+  } catch (e) {
+    // preflight rejection (e.g. not enough SOL): the network refused it; it cannot land
+    db.tx(() => {
+      db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, String(e.message).slice(0, 300), now(), intent.id);
+      transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: `the network rejected the transaction before it ran (${String(e.message).slice(0, 120)}); nothing was created` });
+    });
+    throw new HttpError(400, 'rejected', `the network rejected the transaction: ${String(e.message).slice(0, 160)}`);
+  }
+  enqueue(db, { type: 'confirm_launch', key: `confirm:${intent.id}:0`, ideaId: project.idea_id, projectId: project.id,
+    payload: { intentId: intent.id } });
+  return { signature: checked.signature };
+}
+
+/** confirm_launch job: resolve one submitted intent. */
+export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
+  const provider = getProvider(cfg, db);
+  const intent = db.get('SELECT * FROM launch_intents WHERE id = ?', intentId);
+  if (!intent) throw new Permanent('intent not found');
+  if (intent.status === 'confirmed') return { state: 'already confirmed' };
+  if (intent.status !== 'submitted') return { state: `intent is ${intent.status}` };
+  const project = db.get('SELECT * FROM projects WHERE id = ?', intent.project_id);
+  const st = await provider.status(intent);
+  progress(`network status: ${st.state}`);
+  if (st.state === 'pending' || st.state === 'confirmed') throw new Defer(`waiting for finalization (${st.state})`, 4000);
+  if (st.state === 'expired') {
+    db.tx(() => {
+      db.run(`UPDATE launch_intents SET status = 'expired', error = 'blockhash expired before the transaction landed', updated_at = ? WHERE id = ?`, now(), intent.id);
+      transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: 'the transaction expired before it landed; nothing was created. You can sign a new one.' });
+    });
+    return { state: 'expired' };
+  }
+  if (st.state === 'failed') {
+    db.tx(() => {
+      db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, st.err, now(), intent.id);
+      transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: `the transaction failed on-chain (${st.err}); nothing was created` });
+    });
+    return { state: 'failed' };
+  }
+  // finalized: verify on-chain before calling it launched
+  const config = parseJson(intent.config_json);
+  const v = await provider.verifyLaunch(intent, config);
+  if (!v.ok) {
+    db.tx(() => {
+      db.run(`UPDATE launch_intents SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, 'landed: on-chain verification failed', now(), intent.id);
+      transition(db, project.idea_id, 'confirming', 'failed', { note: 'landed on-chain but did not match the approved configuration; an admin has been alerted', data: { checks: v.checks } });
+    });
+    return { state: 'verification_failed', checks: v.checks };
+  }
+  db.tx(() => {
+    db.run(`UPDATE launch_intents SET status = 'confirmed', updated_at = ? WHERE id = ?`, now(), intent.id);
+    db.run(`INSERT INTO launches (project_id, intent_id, provider, network, mint, tx_signature, slot, block_time, verification, verified_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
+    intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now());
+    db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
+    transition(db, project.idea_id, 'confirming', 'launched', { note: provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`,
+      data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length } });
+  });
+  enqueue(db, { type: 'build_site', key: `site:launched:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: { reason: 'launched' } });
+  enqueue(db, { type: 'reconcile_fees', key: `fees:${project.id}:first`, projectId: project.id, payload: {} });
+  return { state: 'launched' };
+}
+
+/** Worker sweep: submitted intents whose confirm job gave up get a new one (indexing delay, late confirmation). */
+export function sweepSubmitted(db, t = now()) {
+  const rows = db.all(`SELECT i.* FROM launch_intents i WHERE i.status = 'submitted' AND NOT EXISTS
+    (SELECT 1 FROM jobs j WHERE j.type = 'confirm_launch' AND j.status IN ('queued','running') AND j.payload_json LIKE '%' || i.id || '%')`);
+  for (const i of rows) {
+    const p = db.get('SELECT idea_id FROM projects WHERE id = ?', i.project_id);
+    enqueue(db, { type: 'confirm_launch', key: `confirm:${i.id}:${Math.floor(t / 300_000)}`, ideaId: p.idea_id, projectId: i.project_id, payload: { intentId: i.id } });
+  }
+  return rows.length;
+}
+
+// --- fee ledger ---------------------------------------------------------------------------------------------------
+export async function reconcileFees(db, cfg, projectId) {
+  const provider = getProvider(cfg, db);
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', projectId);
+  if (!launch) throw new Permanent('not launched');
+  if (launch.provider !== provider.name) throw new Permanent('launched with another provider');
+  const intent = db.get('SELECT * FROM launch_intents WHERE id = ?', launch.intent_id);
+  const config = parseJson(intent.config_json);
+  const obs = await provider.readFees(launch, config);
+  const t = now();
+  db.tx(() => {
+    for (const o of obs) {
+      db.run(`INSERT INTO fee_observations (id, project_id, kind, account, recipient, lamports, tx_signature, slot, block_time, source, observed_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, id('fee'), projectId, o.kind, o.account ?? null,
+      o.recipient ?? null, o.lamports, o.txSignature ?? null, o.slot ?? null, o.blockTime ?? null,
+      provider.isMock ? 'mock' : `rpc:${cfg.launch.network}`, t);
+    }
+  });
+  return { observations: obs.length };
+}
+
+/** Public ledger view for one project. Every number cites its observation; nothing is estimated from volume. */
+export function feeLedger(db, projectId) {
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', projectId);
+  if (!launch) return null;
+  const intent = db.get('SELECT config_json FROM launch_intents WHERE id = ?', launch.intent_id);
+  const config = parseJson(intent.config_json);
+  const latestVault = db.all(`SELECT * FROM fee_observations WHERE project_id = ? AND kind = 'vault_balance'
+    AND observed_at = (SELECT MAX(observed_at) FROM fee_observations WHERE project_id = ? AND kind = 'vault_balance')`, projectId, projectId);
+  const payouts = db.all(`SELECT * FROM fee_observations WHERE project_id = ? AND kind IN ('distribution','payout','claim') ORDER BY block_time DESC`, projectId);
+  const undistributed = latestVault.reduce((s, o) => s + o.lamports, 0);
+  const paidTotal = payouts.reduce((s, o) => s + o.lamports, 0);
+  const recipients = config.feeSharing.recipients.map((r) => ({
+    ...r,
+    // only meaningful when the vault belongs to this project alone
+    estimatedShareOfUndistributed: config.feeSharing.mode === 'sharing_config' ? Math.floor((undistributed * r.bps) / 10000) : null,
+    confirmedPayouts: payouts.filter((p) => p.recipient === r.wallet).reduce((s, o) => s + o.lamports, 0),
+  }));
+  return {
+    mode: config.feeSharing.mode, locked: config.feeSharing.locked, network: launch.network, provider: launch.provider,
+    mock: launch.provider === 'mock',
+    tradingFees: config.tradingFees,
+    verifiedUndistributedLamports: latestVault.length ? undistributed : null,
+    vaultScope: config.feeSharing.mode === 'sharing_config' ? 'this project only' : 'the creator wallet\'s vault (all coins it created)',
+    vaultObservedAt: latestVault[0]?.observed_at ?? null, vaultSlot: latestVault[0]?.slot ?? null,
+    vaultAccounts: latestVault.map((o) => o.account),
+    verifiedAccruedLamports: latestVault.length ? undistributed + paidTotal : null,
+    confirmedPayoutsLamports: paidTotal,
+    payouts: payouts.map((p) => ({ recipient: p.recipient, lamports: p.lamports, tx: p.tx_signature, blockTime: p.block_time, kind: p.kind })),
+    recipients,
+  };
+}
+
+export { isSolanaAddress };
