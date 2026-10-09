@@ -9,13 +9,13 @@ import { submitIdea, editIdea, publishIdea, viewIdea, readUpload, currentVersion
 import { transition, LABELS, STAGES } from './states.js';
 import { audit, getSetting, setSetting, PAUSES, isPaused, backup } from './db.js';
 import { enqueue, retryDead, cancelJobs } from './jobs.js';
-import { buildSiteVersion, setLiveVersion, SITE_CSP } from './site.js';
+import { buildSiteVersion, setLiveVersion, siteCsp } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
-  unlocksFor, postGuestbook, deleteGuestbook } from './world.js';
+  unlocksFor, postGuestbook, deleteGuestbook, deskView } from './world.js';
 import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
@@ -41,6 +41,10 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   const origin = new URL(cfg.publicOrigin);
   const roomOrigin = new URL(cfg.brain.publicRoomUrl).origin;
   const projectsHost = cfg.projectsHost.toLowerCase();
+  // every project site, for the city's desk computer: <slug>.<PROJECTS_HOST> with the same scheme as siteUrl
+  const projectsFrameSource = `${cfg.projectsScheme}://*.${projectsHost}`;
+  const appCsp = APP_CSP(roomOrigin, projectsFrameSource);
+  const SITE_CSP = siteCsp(origin.origin);
   const secureCookie = origin.protocol === 'https:';
 
   const requireUser = (ctx) => { if (!ctx.user) throw new HttpError(401, 'sign_in', 'connect and sign in with your wallet'); return ctx.user; };
@@ -222,12 +226,13 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   // session cookie, so its address carries a short-lived signed capability instead (issued to viewers who may see it).
   const previewKey = randomBytes(32);
   const previewToken = (slug, version, exp) => `${version}.${exp}.${createHmac('sha256', previewKey).update(`${slug}:${version}:${exp}`).digest('base64url').slice(0, 32)}`;
+  const previewLink = (slug, version) => `/preview/${slug}/${previewToken(slug, version, Date.now() + 3_600_000)}/index.html`;
   r.get('/api/projects/:slug/preview-link', (ctx) => {
     const v = visibleProject(ctx, ctx.params.slug);
     if (!v) throw new HttpError(404, 'not_found');
     const asked = Number(ctx.query.get('version')) || v.p.live_site_version;
     const version = v.owner || isStaff(ctx.user) ? asked : v.p.live_site_version;     // drafts stay with the owner
-    return { url: `/preview/${v.p.slug}/${previewToken(v.p.slug, version, Date.now() + 3_600_000)}/index.html` };
+    return { url: previewLink(v.p.slug, version) };
   });
   r.get('/preview/:slug/:token/:file', (ctx) => {
     const [version, exp, mac] = String(ctx.params.token).split('.');
@@ -343,7 +348,11 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   r.get('/api/rooms/:plotId', (ctx) => {
     const v = roomView(db, ctx.params.plotId);
     if (!v) throw new HttpError(404, 'not_found', 'nobody lives there (or it is private)');
-    return v;
+    const pl = db.get('SELECT wallet, idea_id FROM plots WHERE plot_id = ?', ctx.params.plotId);
+    const provider = getProvider(cfg, db);
+    const desk = deskView(db, cfg, { wallet: pl.wallet, owner: ctx.user?.wallet === pl.wallet, plotIdeaId: pl.idea_id,
+      previewLink: (p) => previewLink(p.slug, p.live_site_version), explorerTx: (sig) => provider?.explorerTx?.(sig) });
+    return { ...v, desk };
   });
   r.post('/api/rooms/:plotId/guestbook', async (ctx) => {
     const u = requireUser(ctx);
@@ -398,11 +407,18 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     if (!p) throw new HttpError(404, 'not_found');
     const f = ctx.params.file;
     const logo = f.match(/^logo-v(\d+)\.png$/);
+    const banner = f.match(/^banner-v(\d+)\.svg$/);
     if (db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id).visibility !== 'public') throw new HttpError(404, 'not_found');
     if (logo) {
       const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'logo' AND version = ?`, p.id, Number(logo[1]));
       if (!a) throw new HttpError(404, 'not_found');
       return ctx.raw(200, Buffer.from(a.body), { 'content-type': 'image/png', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
+    }
+    if (banner) {                                            // our own SVG (art.js); opened directly it is still inert
+      const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'banner' AND version = ?`, p.id, Number(banner[1]));
+      if (!a) throw new HttpError(404, 'not_found');
+      return ctx.raw(200, Buffer.from(a.body), { 'content-type': 'image/svg+xml', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
     }
     const m = f.match(/^([0-9a-f]{16})\.json$/);
     const configs = db.all('SELECT config_json FROM launch_intents WHERE project_id = ?', p.id).map((x) => parseJson(x.config_json));
@@ -547,7 +563,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
 
   // --- generated project sites ----------------------------------------------------------------------------------------
   function serveSiteFile(ctx, p, version, file, preview) {
-    const headers = { 'content-security-policy': preview ? `${SITE_CSP}; sandbox` : SITE_CSP, 'x-content-type-options': 'nosniff',
+    // both sandboxed (no scripts are allowed anyway); the public site may open its links in a new tab
+    const headers = { 'content-security-policy': `${SITE_CSP}; ${preview ? 'sandbox' : 'sandbox allow-popups allow-popups-to-escape-sandbox'}`, 'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer', 'cache-control': preview ? 'private, no-store' : 'public, max-age=60' };
     if (file === 'index.html' || file === '') {
       const s = db.get(`SELECT html FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, p.id, version);
@@ -609,7 +626,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const host = String(req.headers.host || '').toLowerCase();
     try {
       if (host.endsWith(`.${projectsHost}`)) return projectSite(req, res, host, url.pathname);
-      securityHeaders(res, APP_CSP(roomOrigin));
+      securityHeaders(res, appCsp);
       const route = r.match(req.method, url.pathname);
       if (!route) {
         if ((req.method === 'GET' || req.method === 'HEAD') && serveStatic(res, url.pathname)) return;

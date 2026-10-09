@@ -193,7 +193,8 @@ test('rooms: default room, strict validation, own room only, public read by plot
     assert.equal(r.status, 200);
     assert.deepEqual(r.json, { plotId: 'kanda-1', kind: 'apartment', owner: { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT }, room: DEFAULT_ROOM,
       guestbook: [], visits: 0, unlocks: { tier: 'resident', items: ['skateboard', 'plushPile', 'posterCustom', 'neonSign'], emotes: ['wave', 'sit', 'think', 'sleep', 'dance'],
-        accessories: ['glasses', 'sunglasses', 'cap', 'beanie', 'headphones', 'backpack', 'scarf', 'mask'], pets: ['cat', 'dog', 'duck'] } });
+        accessories: ['glasses', 'sunglasses', 'cap', 'beanie', 'headphones', 'backpack', 'scarf', 'mask'], pets: ['cat', 'dog', 'duck'] },
+      desk: { viewer: 'visitor', projects: [], ideas: null } });
     assert.equal((await anon.call('GET', '/api/rooms/kanda-2')).status, 404);
     assert.equal((await anon.call('GET', '/api/rooms/mars-1')).status, 400);
     const room = { materials: { floor: 'tatami', walls: 'sage', accent: 'rust' }, lighting: 'night', furniture: [{ item: 'bed', x: -3.5, z: 3.5, rot: 270 }, { item: 'table', x: 0.123, z: 0, rot: 0 }] };

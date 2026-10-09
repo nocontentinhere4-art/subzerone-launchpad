@@ -475,3 +475,50 @@ export function cityEvents(db, since = now() - 86_400_000) {
 }
 
 const residentPlot = (msg) => msg.match(/ (?:into|to) ([a-z]+-[1-6])$/)?.[1] ?? null;
+
+// --- the desk computer in a room: the owner's projects as tabs (site, X, launch page) ------------------------------
+const DESK_HIDDEN = ['declined', 'cancelled'];
+const progressOf = (db, ideaId, stage) => {
+  if (stage === 'generating') {
+    const j = db.get(`SELECT progress FROM jobs WHERE type = 'generate' AND status = 'running' AND idea_id = ?`, ideaId);
+    if (GEN_STEPS[j?.progress]) return GEN_STEPS[j.progress];
+  }
+  return PROGRESS[stage] ?? 0;
+};
+
+/** The room owner's projects for the desk. Visitors see public projects only and nothing owner-only (preview links,
+ * office, X drafts, ideas); never a wallet. helpers: { previewLink(projectRow) -> url|null, explorerTx(sig) -> url|null }. */
+export function deskView(db, cfg, { wallet, owner, plotIdeaId = null, previewLink, explorerTx }) {
+  const rows = db.all(`SELECT p.id, p.slug, p.name, p.ticker, p.live_site_version, i.id idea_id, i.status, i.visibility, v.title, v.ticker_suggestion,
+      l.mint, l.tx_signature, xa.status xstatus, xa.planned_handle, xa.x_handle,
+      (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
+      (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
+    FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
+    LEFT JOIN launches l ON l.project_id = p.id LEFT JOIN x_accounts xa ON xa.project_id = p.id
+    WHERE i.owner_wallet = ? AND i.status NOT IN (${inList(DESK_HIDDEN)}) ${owner ? '' : `AND i.visibility = 'public'`}
+    ORDER BY (i.id = ?) DESC, i.created_at DESC, p.id`, wallet, plotIdeaId ?? '');
+  const projects = rows.map((x) => {
+    const pub = x.visibility === 'public';
+    const launched = x.status === 'launched' && Boolean(x.mint);
+    const preview = owner && x.live_site_version ? previewLink(x) : null;
+    const asset = (kind, v, ext) => (!v ? null : pub ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : preview ? preview.replace(/index\.html$/, `${kind}.${ext}`) : null);
+    const connected = x.xstatus === 'connected' && x.x_handle;
+    const handle = connected ? x.x_handle : x.planned_handle || null;
+    return {
+      slug: x.slug, name: x.name || x.title, ticker: x.ticker || x.ticker_suggestion || null,
+      stage: x.status, stageLabel: LABELS[x.status] || x.status, progress: progressOf(db, x.idea_id, x.status),
+      launched, mint: launched ? x.mint : null, explorerTx: launched && x.tx_signature ? explorerTx(x.tx_signature) ?? null : null,
+      siteUrl: pub && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,
+      previewLink: preview,
+      logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
+      x: { handle, status: connected ? 'connected' : x.xstatus ? 'planned' : null, url: connected ? `https://x.com/${x.x_handle}` : null,
+        posts: owner ? db.all('SELECT id, text, status FROM x_posts WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 3', x.id) : null },
+      pagePath: `/projects/${x.slug}`, officePath: owner ? `/projects/${x.slug}/review` : null,
+      kind: plotIdeaId && x.idea_id === plotIdeaId ? 'project' : 'apartment-owner-project',
+    };
+  });
+  const ideas = owner ? db.all(`SELECT i.id, v.title, i.status FROM ideas i JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
+      WHERE i.owner_wallet = ? AND i.status NOT IN (${inList([...DESK_HIDDEN, 'launched'])}) AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.idea_id = i.id)
+      ORDER BY i.created_at DESC`, wallet).map((i) => ({ ...i, stageLabel: LABELS[i.status] || i.status })) : null;
+  return { viewer: owner ? 'owner' : 'visitor', projects, ideas };
+}

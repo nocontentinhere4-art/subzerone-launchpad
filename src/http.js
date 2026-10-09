@@ -73,10 +73,12 @@ export function rateLimiter() {
   };
 }
 
-export const APP_CSP = (roomOrigin) => [
+// frame-src: our own pages and previews, SUB-01's room, and the project sites (the city's desk computer frames them).
+// frame-ancestors 'self': the city may frame the launchpad's own pages; no other site may.
+export const APP_CSP = (roomOrigin, projectsFrameSource) => [
   "default-src 'self'", "script-src 'self'", "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "font-src https://fonts.gstatic.com", "img-src 'self' data: blob:", `frame-src 'self' ${roomOrigin}`, "connect-src 'self'",
-  "frame-ancestors 'none'", "base-uri 'none'", "form-action 'self'", "object-src 'none'",
+  "font-src https://fonts.gstatic.com", "img-src 'self' data: blob:", `frame-src 'self' ${roomOrigin} ${projectsFrameSource}`, "connect-src 'self'",
+  "frame-ancestors 'self'", "base-uri 'none'", "form-action 'self'", "object-src 'none'",
 ].join('; ');
 
 export function securityHeaders(res, csp) {

@@ -64,7 +64,10 @@ same-origin with the session cookie and no CORS:
    max-age=31536000, immutable` (Vite file names are content-hashed). MIME types include `.gltf model/gltf+json`,
    `.glb model/gltf-binary`, `.bin application/octet-stream`, `.png`, `.js`, `.css`. The launchpad's own home page
    moves to `/launchpad`; its header gets a "city" link back to `/`. Without `CITY_DIST` nothing changes.
-4. CSP: no change was needed. The current build (checked 2026-10-09) loads one same-origin module script and
+4. CSP: for the desk computer (CITY-API.md, "Desk computer") the app CSP now frames project sites
+   (`frame-src 'self' <room origin> <PROJECTS_SCHEME>://*.<PROJECTS_HOST>`) and allows same-origin framing
+   (`frame-ancestors 'self'`); project sites allow `<PUBLIC_ORIGIN>` as frame ancestor. Set `PROJECTS_SCHEME=https` in
+   production so `siteUrl` and `frame-src` are https. Otherwise no change was needed: the current build (checked 2026-10-09) loads one same-origin module script and
    stylesheet, fetches only `/api/*` and `/assets/*`, uses canvas/WebGL, and its only `data:`/`blob:` use is images
    (three.js feature probes, GLB textures), which `img-src 'self' data: blob:` already allows. It uses no workers,
    `eval`, external fonts or data-URI buffers. If a later build adds Draco/KTX2 decoders (blob workers) or

@@ -2,7 +2,7 @@
 
 The 3D city (`sub01-launchpad`, Vite/three.js) talks to this service. Code: `src/world.js` (plots, residents, rooms,
 world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers), routes in
-`src/app.js`. Tests: `test/city.test.js`, `test/custom.test.js`.
+`src/app.js`. Tests: `test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`.
 
 ## Conventions
 
@@ -17,7 +17,7 @@ world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/role
 - `403 locked` carries the names that are not unlocked yet: `{ "error": "locked", "message": "…", "locked": ["halo", "dragon"] }`.
 - `429 rate_limited` carries `retryAfterS` (seconds).
 - Rate limits: the same per-IP/per-wallet token buckets as every other route (reads 400/min, writes 60/min).
-- **Wallets never appear in `/api/world` or `/api/rooms/*`.** Role listings show wallets shortened to `first4…last4`.
+- **Wallets never appear in `/api/world` or `/api/rooms/*`** (the `desk` included). Role listings show wallets shortened to `first4…last4`.
 
 ## Plots
 
@@ -294,7 +294,8 @@ Public.
   "room": { … },
   "guestbook": [ { "id": 12, "name": "Yui", "text": "nice room 🍜", "at": 1760000000000 } ],
   "visits": 1,
-  "unlocks": { "tier": "founder", "items": […], "emotes": […], "accessories": […], "pets": […] }
+  "unlocks": { "tier": "founder", "items": […], "emotes": […], "accessories": […], "pets": […] },
+  "desk": { "viewer": "owner|visitor", "projects": [ … ], "ideas": [ … ] | null }
 }
 ```
 
@@ -304,9 +305,101 @@ Public.
 - `unlocks`: the owner's, same shape as `/api/me.unlocks`, but counting the owner's **public** ideas only (a visitor
   must not learn that a private project exists), so it can be lower than what the owner sees.
 
+- `desk`: the computer on the room's desk, see "Desk computer" below. It depends on who asks (the session cookie), so
+  the response is `cache-control: no-store`.
+
 For an apartment: its resident. For a project plot: the room of the idea submitter's resident, only once the idea is
 **public** and only if the submitter has a resident. Otherwise `404` (free plot, private idea, no resident);
 `400 bad_plot` for an unknown id.
+
+### Desk computer (`desk` in GET /api/rooms/:plotId)
+
+Every room's desk computer is a small desktop: one entry per project of the room's owner, each with three tabs (the
+project's website, its X presence, its launch page on the launchpad). Code: `deskView()` in `src/world.js`.
+
+```json
+{
+  "viewer": "owner",
+  "projects": [
+    {
+      "slug": "ramen-radar", "name": "Ramen Radar", "ticker": "RAMEN|null",
+      "stage": "preview_ready", "stageLabel": "Preview ready for your review", "progress": 0.65,
+      "launched": false, "mint": "<mint>|null", "explorerTx": "https://solscan.io/tx/…|null",
+      "siteUrl": "http://ramen-radar.projects.localhost:8787/|null",
+      "previewLink": "/preview/ramen-radar/<capability>/index.html|null",
+      "logoUrl": "/meta/ramen-radar/logo-v1.png|/preview/…/logo.png|null",
+      "bannerUrl": "/meta/ramen-radar/banner-v1.svg|/preview/…/banner.svg|null",
+      "x": { "handle": "ramenradar|null", "status": "connected|planned|null", "url": "https://x.com/ramenradar|null",
+             "posts": [ { "id": "xpost_…", "text": "…", "status": "draft|approved|publishing|published|failed" } ] | null },
+      "pagePath": "/projects/ramen-radar", "officePath": "/projects/ramen-radar/review|null",
+      "kind": "project|apartment-owner-project"
+    }
+  ],
+  "ideas": [ { "id": "idea_…", "title": "Soba Signal", "status": "submitted", "stageLabel": "…" } ] | null
+}
+```
+
+Who sees what:
+
+- `viewer: "owner"` when the session wallet is the plot's wallet, else `"visitor"` (signed out included).
+- **Visitors**: only the owner's **public** projects; `previewLink`, `officePath` and `x.posts` are `null`, `ideas` is
+  `null`. A private project is not there at all (not even as "Private project").
+- **Owner**: all their projects, private ones included.
+- Projects whose idea is `declined` or `cancelled` are left out. Order: the plot's own project first, then newest
+  first. `ideas` (owner only): ideas without a project yet that are still in flight (not declined, cancelled or
+  launched), newest first.
+- No wallet appears anywhere in `desk`.
+
+Fields:
+
+- `name`/`ticker`: the project's (ticker falls back to the idea's suggested one). `stage`, `stageLabel`, `progress` as
+  in `/api/world` (`progress` refined while `generating`).
+- `launched` true only with a verified launch; `mint` and `explorerTx` only then (`explorerTx` is `null` for the mock
+  provider).
+- `siteUrl`: the public site `<PROJECTS_SCHEME>://<slug>.<PROJECTS_HOST>/`, only when the idea is public **and** a
+  live site version exists; else `null`. This is the website tab: frame it.
+- `previewLink` (owner only): the same-origin sandboxed preview of the live site version, exactly what
+  `GET /api/projects/:slug/preview-link` returns. The capability in it expires after **1 hour**: refetch the room (or
+  call `preview-link`) when a tab is reopened later. `null` without a live site version.
+- `logoUrl` / `bannerUrl`: same-origin image URLs (`img-src 'self'` allows them; `access-control-allow-origin: *` on
+  `/meta/*`, so three.js can use them as textures). Public project: `/meta/<slug>/logo-v<n>.png` and
+  `/meta/<slug>/banner-v<n>.svg` (immutable). Private project, owner: the preview capability's `logo.png` /
+  `banner.svg` (same 1-hour expiry). Otherwise `null`.
+- `x`: `status: "connected"` with the handle **as X reported it** after OAuth and `url`; `"planned"` with SUB-01's
+  suggested handle and `url: null` (the account may not exist yet; do not link it); `null` when there is no X plan.
+  `posts` (owner only): the latest 3 posts of any status, newest first. Editing and approving stay on the office page
+  (`PUT /api/x-posts/:id`, `POST /api/x-posts/:id/approve`).
+- `pagePath`: the public launch page. `officePath` (owner only): the review/office page (site versions, fee split,
+  X drafts, approval, launch).
+- `kind`: `"project"` for the project whose building this plot is; `"apartment-owner-project"` for the owner's other
+  projects (on an apartment, all of them).
+
+#### Framing: what the city may put in an iframe
+
+The city page is served by this app (`CITY_DIST`) under the app CSP, whose `frame-src` is:
+
+```
+frame-src 'self' <origin of BRAIN_PUBLIC_ROOM_URL> <PROJECTS_SCHEME>://*.<PROJECTS_HOST>
+```
+
+| setting | value |
+|---|---|
+| local (defaults) | `frame-src 'self' <room origin> http://*.projects.localhost:8787` |
+| production (DEPLOY.md) | `frame-src 'self' <room origin> https://*.projects.subzerone.live` |
+
+So the desk can frame:
+
+1. `previewLink`: same origin (`'self'`). Served with the site CSP plus `sandbox` (opaque origin, no scripts, no
+   popups: its links do nothing inside the frame).
+2. `siteUrl`: the project's own origin. Its CSP has `frame-ancestors 'self' <PUBLIC_ORIGIN>` (only the launchpad/city
+   origin may frame it) and `sandbox allow-popups allow-popups-to-escape-sandbox` (opaque origin, no scripts, links
+   open in a new tab). No `X-Frame-Options` is sent.
+3. `pagePath` / `officePath` and any other launchpad page: same origin. The app CSP now has `frame-ancestors 'self'`
+   (was `'none'`): the city may frame the launchpad, other sites still cannot. The session cookie (`SameSite=Lax`)
+   is sent in a same-origin frame, so the office works signed in.
+
+X itself cannot be framed (x.com forbids it): the X tab shows `x.handle`, `x.posts` and opens `x.url` in a new tab.
+Posting to X needs an X developer app and a **paid X API tier** (see STATUS.md); until then posts stay drafts.
 
 ### PUT /api/rooms/me (auth)
 

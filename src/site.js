@@ -9,7 +9,9 @@ import { id, now, sha256, HttpError, parseJson } from './util.js';
 import { Permanent } from './jobs.js';
 
 const CHILD = join(import.meta.dirname, 'site', 'render-child.js');
-export const SITE_CSP = "default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
+/** CSP of a project site (and of its same-origin preview). frame-ancestors: the site itself and the launchpad/city
+ * origin (the desk computer in a room frames it); nothing else. The caller appends the sandbox flags. */
+export const siteCsp = (publicOrigin) => `default-src 'none'; img-src 'self' data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self' ${publicOrigin}`;
 
 /** Build in a separate, restricted process. -> html string. */
 export function sandboxBuild(input, { timeoutMs = 5000, maxBytes = 300_000 } = {}) {
