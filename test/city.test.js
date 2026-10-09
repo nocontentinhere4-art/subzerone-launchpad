@@ -199,11 +199,14 @@ test('rooms: default room, strict validation, own room only, public read by plot
     assert.equal((await bad({ furniture: [{ item: 'bed', x: 3.6, z: 0, rot: 0 }] })).json.error, 'bad_room');
     assert.equal((await bad({ furniture: [{ item: 'bed', x: 0, z: 0, rot: 45 }] })).json.error, 'bad_room');
     assert.equal((await bad({ furniture: [{ item: 'bed', x: '1', z: 0, rot: 0 }] })).json.error, 'bad_room');
-    assert.equal((await bad({ furniture: Array.from({ length: 25 }, () => ({ item: 'plant', x: 0, z: 0, rot: 0 })) })).json.error, 'bad_room');
+    assert.equal((await bad({ furniture: Array.from({ length: 41 }, () => ({ item: 'plant', x: 0, z: 0, rot: 0 })) })).json.error, 'bad_room');
+    assert.equal((await bad({ furniture: Array.from({ length: 40 }, () => ({ item: 'plant', x: 0, z: 0, rot: 0 })) })).status, 200, '40 pieces fit');
     assert.equal((await bad({ script: '<x>' })).json.error, 'bad_room');
     const ok = await a.call('PUT', '/api/rooms/me', { room });
     assert.equal(ok.status, 200, ok.text);
     assert.equal(ok.json.room.furniture[1].x, 0.12);
+    assert.deepEqual(ok.json.room.furniture.map((f) => f.item), ['bedSingle', 'tableCoffee'], 'v1 names are saved as their Kenney equivalents');
+    assert.equal(ok.json.room.window, 'city_day', 'window view defaults');
     r = await anon.call('GET', '/api/rooms/kanda-1');
     assert.equal(r.json.room.lighting, 'night');
     assert.equal((await a.call('GET', '/api/me')).json.resident.room.materials.floor, 'tatami');
@@ -357,4 +360,57 @@ test('CITY_DIST: city at /, immutable assets with model MIME types, traversal re
     assert.doesNotMatch(home.body, /The neighborhood/, 'without CITY_DIST / is the launchpad as before');
     assert.equal((await rawGet(plain.base, '/assets/index-x.js')).status, 404);
   } finally { plain.close(); }
+});
+
+test('rooms v2: Kenney catalog, stacking, wall pieces, window view; v1 rooms still load', async () => {
+  const { ROOM, ROOM_CATALOG, LEGACY_ITEMS, validateRoom, upgradeRoom } = await import('../src/world.js');
+  assert.equal(ROOM.items.length, 57);
+  assert.equal(new Set(ROOM.items).size, 57, 'no item in two categories');
+  assert.deepEqual(Object.keys(ROOM_CATALOG), ['sleep', 'work', 'sit', 'storage', 'kitchen', 'light', 'plants', 'decor', 'structure']);
+  for (const v of Object.values(LEGACY_ITEMS)) assert.ok(ROOM.items.includes(v), v);
+  assert.deepEqual(validateRoom(DEFAULT_ROOM), DEFAULT_ROOM, 'the default room is valid and stored as is');
+  assert.ok(DEFAULT_ROOM.furniture.length <= ROOM.maxFurniture);
+  const base = { materials: { floor: 'herringbone', walls: 'cream', accent: 'sakura' }, lighting: 'morning', window: 'rain' };
+  const ok = validateRoom({ ...base, furniture: [{ item: 'desk', x: 1, z: 1, rot: 0 }, { item: 'laptop', x: 1, z: 1, rot: 90, y: 0.754 },
+    { item: 'wallWindowSlide', x: -3.5, z: 0, rot: 90, wall: 'left' }, { item: 'lampWall', x: 0, z: -3.5, rot: 0, wall: 'back' }, { item: 'rugRound', x: 0, z: 0, rot: 0, y: 0 }] });
+  assert.equal(ok.furniture[1].y, 0.75);
+  assert.equal(ok.furniture[2].wall, 'left');
+  assert.equal('y' in ok.furniture[4], false, 'y 0 is not stored');
+  const bad = (furniture, extra = {}) => assert.throws(() => validateRoom({ ...base, ...extra, furniture }), (e) => e.code === 'bad_room');
+  bad([{ item: 'laptop', x: 0, z: 0, rot: 0, y: 2.6 }]);
+  bad([{ item: 'laptop', x: 0, z: 0, rot: 0, y: -0.1 }]);
+  bad([{ item: 'laptop', x: 0, z: 0, rot: 0, y: '1' }]);
+  bad([{ item: 'wallWindow', x: 0, z: 0, rot: 0 }], {});                    // a window needs a wall
+  bad([{ item: 'wallWindow', x: 0, z: 0, rot: 0, wall: 'front' }]);
+  bad([{ item: 'desk', x: 0, z: 0, rot: 0, wall: 'left' }]);              // a desk does not hang
+  bad([{ item: 'toString', x: 0, z: 0, rot: 0 }]);
+  bad([{ item: '__proto__', x: 0, z: 0, rot: 0 }]);
+  bad([], { window: 'aquarium' });
+  bad([], { daylight: 1.2 });
+  bad([], { daylight: '0.5' });
+  assert.equal(validateRoom({ ...base, daylight: 0.456, furniture: [] }).daylight, 0.46);
+  assert.equal('daylight' in validateRoom({ ...base, furniture: [] }), false, 'daylight is optional');
+  bad([{ item: 'desk', x: 0, z: 0, rot: 0, colour: 'red' }]);
+  // a v1 room stored before this schema: generic names, no window
+  const v1 = { materials: { floor: 'tatami', walls: 'sage', accent: 'rust' }, lighting: 'night',
+    furniture: [{ item: 'bed', x: -2.5, z: -2.5, rot: 0 }, { item: 'couch', x: 1, z: 1, rot: 90 }, { item: 'shelf', x: 3.2, z: 1, rot: 270 }] };
+  const up = upgradeRoom(v1);
+  assert.deepEqual(up.furniture.map((f) => f.item), ['bedSingle', 'loungeSofa', 'bookcaseOpen']);
+  assert.equal(up.window, 'city_day');
+  assert.equal(up.materials.floor, 'tatami');
+  assert.deepEqual(upgradeRoom(null), DEFAULT_ROOM);
+  assert.deepEqual(upgradeRoom({ broken: true }), DEFAULT_ROOM, 'unreadable rows fall back to the default room');
+
+  const h = await harness();
+  try {
+    const a = await signedIn(h);
+    await a.call('POST', '/api/residents', { name: 'Yui', look: LOOK, plotId: 'ueno-2' });
+    h.db.run('UPDATE residents SET room_json = ? WHERE wallet = ?', JSON.stringify(v1), a.w.address);
+    const r = await h.client(user(h.db)).call('GET', '/api/rooms/ueno-2');
+    assert.deepEqual(r.json.room.furniture.map((f) => f.item), ['bedSingle', 'loungeSofa', 'bookcaseOpen'], 'old saved room loads');
+    assert.equal((await a.call('GET', '/api/me')).json.resident.room.window, 'city_day');
+    const o = await a.call('GET', '/api/world/options');
+    assert.deepEqual(o.json.room.catalog, ROOM_CATALOG);
+    assert.equal(o.json.room.maxFurniture, 40);
+  } finally { h.close(); }
 });

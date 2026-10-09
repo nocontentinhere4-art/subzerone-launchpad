@@ -51,14 +51,22 @@ Public, `cache-control: public, max-age=3600`.
   },
   "name": { "min": 2, "max": 24 },
   "room": {
-    "floor": ["white_oak", "honey_oak", "walnut", "smoked_oak", "concrete", "tatami"],
-    "walls": ["chalk", "sand", "sage", "navy", "terracotta", "concrete"],
-    "accent": ["navy", "linen", "rust", "olive", "charcoal", "blush"],
+    "floor": ["white_oak", "honey_oak", "walnut", "smoked_oak", "concrete", "tatami", "birch", "cherry", "herringbone",
+      "black_ash", "tatami_green", "tile_white", "tile_slate", "tile_terracotta"],
+    "walls": ["chalk", "sand", "sage", "navy", "terracotta", "concrete", "cream", "blush", "sky", "forest"],
+    "accent": ["navy", "linen", "rust", "olive", "charcoal", "blush", "denim", "sakura", "mustard", "teal"],
+    "window": ["city_day", "city_night", "sakura", "rain"],
     "lighting": ["morning", "midday", "evening", "night"],
-    "items": ["bed", "desk", "chair", "couch", "shelf", "lamp", "plant", "rug", "table"],
+    "daylight": [0, 1],
+    "catalog": { "sleep": ["bedSingle", "…"], "work": […], "sit": […], "storage": […], "kitchen": […], "light": […],
+      "plants": […], "decor": […], "structure": ["wallWindow", "wallWindowSlide", "doorway", "doorwayFront"] },
+    "items": ["…all 57 catalog names, flat…"],
+    "wallItems": ["wallWindow", "wallWindowSlide", "doorway", "doorwayFront", "lampWall"],
+    "wallSides": ["left", "back"],
     "rot": [0, 90, 180, 270],
     "coord": [-3.5, 3.5],
-    "maxFurniture": 24,
+    "y": [0, 2.5],
+    "maxFurniture": 40,
     "default": { "…": "DEFAULT_ROOM, see Rooms" }
   },
   "progress": { "submitted": 0.05, "evaluating": 0.12, "selected": 0.2, "generating": 0.45, "preview_ready": 0.65,
@@ -159,24 +167,37 @@ receives). Poll every 3–5 s.
 
 ## Rooms
 
+Schema v2. Furniture is the [Kenney Furniture Kit](https://kenney.nl/assets/furniture-kit) (CC0) by model name; the
+city loads `/assets/room/<item>.glb` and scales the whole kit by one factor (a door is 1.95 m, a person 1.5 m).
+
 ```json
 {
   "materials": { "floor": "<room.floor>", "walls": "<room.walls>", "accent": "<room.accent>" },
   "lighting": "morning|midday|evening|night",
-  "furniture": [ { "item": "<room.items>", "x": -3.5..3.5, "z": -3.5..3.5, "rot": 0|90|180|270 } ]
+  "daylight": 0.42,
+  "window": "city_day|city_night|sakura|rain",
+  "furniture": [ { "item": "<room.items>", "x": -3.5..3.5, "z": -3.5..3.5, "rot": 0|90|180|270, "y": 0..2.5, "wall": "left|back" } ]
 }
 ```
 
-Strict: unknown fields anywhere are refused, at most 24 furniture entries, `x`/`z` are numbers (metres from the room
-centre, rounded to 0.01). A resident without a saved room gets `DEFAULT_ROOM`:
+- The room is a 7 × 7 m cutaway: the **left** wall is the plane x = −3.5, the **back** wall z = −3.5; x/z are metres
+  from the room centre (rounded to 0.01), the piece's footprint centre. Kenney pieces face +z at `rot: 0`.
+- `y` (optional): lift above the floor, e.g. a monitor on a desk (`y` = the desk's height). `0` is not stored.
+- `wall` is **required** for `room.wallItems` (windows, doors, wall lamp) and **refused** for everything else.
+- `accent` tints Kenney's upholstery (`carpet` materials: bedding, sofas, cushions, rugs, the gaming chair).
+- `daylight` (optional, 0 = morning … 1 = night): the editor's slider through the four presets; `lighting` stays the
+  nearest preset so older clients still read something sensible. `window` defaults to `city_day`.
+- Strict: unknown fields anywhere are refused, at most 40 entries, `400 bad_room` with a message.
 
-```json
-{ "materials": { "floor": "honey_oak", "walls": "chalk", "accent": "navy" }, "lighting": "evening",
-  "furniture": [ { "item": "bed", "x": -2.5, "z": -2.5, "rot": 0 }, { "item": "desk", "x": 2.5, "z": -3, "rot": 0 },
-    { "item": "chair", "x": 2.5, "z": -2, "rot": 180 }, { "item": "couch", "x": -2.5, "z": 2.5, "rot": 90 },
-    { "item": "shelf", "x": 3.2, "z": 1, "rot": 270 }, { "item": "lamp", "x": 3, "z": 3, "rot": 0 },
-    { "item": "plant", "x": -3.2, "z": 0, "rot": 0 }, { "item": "rug", "x": 0, "z": 0, "rot": 0 } ] }
-```
+**Backward compatibility.** v1 rooms used generic names. They are still accepted on save and every stored room is
+read through `upgradeRoom()`, so old rows come back as v2: `bed→bedSingle`, `desk→desk`, `chair→chairDesk`,
+`couch→loungeSofa`, `shelf→bookcaseOpen`, `lamp→lampRoundFloor`, `plant→pottedPlant`, `rug→rugRectangle`,
+`table→tableCoffee`, plus `window: "city_day"`. A stored row that no longer validates is served as `DEFAULT_ROOM`.
+No migration: `room_json` keeps whatever was written; the upgrade happens on read.
+
+`DEFAULT_ROOM` (a resident who never saved) is SUB-01's studio: bed under the window on the left wall, desk with
+monitor, keyboard, desk lamp and gaming chair in the corner, bookcase, small fridge with a coffee machine, coat rack
+and the door with a doormat on the back wall, a rug in the middle (see `src/world.js` for the exact entries).
 
 ### GET /api/rooms/:plotId
 

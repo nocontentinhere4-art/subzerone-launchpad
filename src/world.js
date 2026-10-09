@@ -22,45 +22,113 @@ export const FREE_COLORS = ['top', 'bottom'];          // any #rrggbb
 const HEX = /^#[0-9a-f]{6}$/;
 export const NAME = { min: 2, max: 24 };
 
+// Room schema v2: Kenney Furniture Kit pieces (CC0) by name, grouped for the editor's catalog drawer.
+export const ROOM_CATALOG = Object.freeze({
+  sleep: ['bedSingle', 'bedDouble', 'cabinetBed', 'cabinetBedDrawerTable', 'pillow', 'pillowBlue', 'bear'],
+  work: ['desk', 'deskCorner', 'chairDesk', 'computerScreen', 'computerKeyboard', 'computerMouse', 'laptop'],
+  sit: ['chair', 'chairCushion', 'loungeSofa', 'loungeChair', 'loungeDesignSofa'],
+  storage: ['bookcaseOpen', 'bookcaseOpenLow', 'bookcaseClosedWide', 'books', 'sideTableDrawers', 'cabinetTelevision',
+    'coatRackStanding', 'cardboardBoxClosed', 'cardboardBoxOpen'],
+  kitchen: ['kitchenFridgeSmall', 'kitchenFridge', 'kitchenMicrowave', 'kitchenCoffeeMachine', 'washer', 'trashcan'],
+  light: ['lampRoundFloor', 'lampSquareFloor', 'lampRoundTable', 'lampWall', 'ceilingFan'],
+  plants: ['pottedPlant', 'plantSmall1', 'plantSmall2', 'plantSmall3'],
+  decor: ['rugRectangle', 'rugRound', 'rugSquare', 'rugDoormat', 'tableCoffee', 'sideTable', 'televisionModern',
+    'speaker', 'speakerSmall', 'radio'],
+  structure: ['wallWindow', 'wallWindowSlide', 'doorway', 'doorwayFront'],
+});
+// v1 rooms stored these generic names; they are read (and still accepted on save) as their Kenney equivalents.
+export const LEGACY_ITEMS = Object.freeze({ bed: 'bedSingle', desk: 'desk', chair: 'chairDesk', couch: 'loungeSofa',
+  shelf: 'bookcaseOpen', lamp: 'lampRoundFloor', plant: 'pottedPlant', rug: 'rugRectangle', table: 'tableCoffee' });
 export const ROOM = Object.freeze({
-  floor: ['white_oak', 'honey_oak', 'walnut', 'smoked_oak', 'concrete', 'tatami'],
-  walls: ['chalk', 'sand', 'sage', 'navy', 'terracotta', 'concrete'],
-  accent: ['navy', 'linen', 'rust', 'olive', 'charcoal', 'blush'],
+  floor: ['white_oak', 'honey_oak', 'walnut', 'smoked_oak', 'concrete', 'tatami',
+    'birch', 'cherry', 'herringbone', 'black_ash', 'tatami_green', 'tile_white', 'tile_slate', 'tile_terracotta'],
+  walls: ['chalk', 'sand', 'sage', 'navy', 'terracotta', 'concrete', 'cream', 'blush', 'sky', 'forest'],
+  accent: ['navy', 'linen', 'rust', 'olive', 'charcoal', 'blush', 'denim', 'sakura', 'mustard', 'teal'],
+  window: ['city_day', 'city_night', 'sakura', 'rain'],
   lighting: ['morning', 'midday', 'evening', 'night'],
-  items: ['bed', 'desk', 'chair', 'couch', 'shelf', 'lamp', 'plant', 'rug', 'table'],
+  daylight: [0, 1],                                     // optional slider position through the four presets
+  catalog: ROOM_CATALOG,
+  items: Object.values(ROOM_CATALOG).flat(),
+  wallItems: ['wallWindow', 'wallWindowSlide', 'doorway', 'doorwayFront', 'lampWall'],   // need wall: 'left' | 'back'
+  wallSides: ['left', 'back'],
   rot: [0, 90, 180, 270],
   coord: [-3.5, 3.5],                                   // x and z, metres from the room centre
-  maxFurniture: 24,
+  y: [0, 2.5],                                          // optional lift, e.g. a monitor on a desk
+  maxFurniture: 40,
 });
+const ITEM_SET = new Set(ROOM.items), WALL_ITEMS = new Set(ROOM.wallItems);
+// The SUB-01 studio: bed under the window on the left wall, desk + gaming chair in the corner, bookcase, small fridge
+// and the front door on the back wall, rug in the middle.
 export const DEFAULT_ROOM = Object.freeze({
-  materials: { floor: 'honey_oak', walls: 'chalk', accent: 'navy' },
-  lighting: 'evening',
+  materials: { floor: 'honey_oak', walls: 'chalk', accent: 'denim' },
+  lighting: 'morning',
+  window: 'city_day',
   furniture: [
-    { item: 'bed', x: -2.5, z: -2.5, rot: 0 }, { item: 'desk', x: 2.5, z: -3, rot: 0 }, { item: 'chair', x: 2.5, z: -2, rot: 180 },
-    { item: 'couch', x: -2.5, z: 2.5, rot: 90 }, { item: 'shelf', x: 3.2, z: 1, rot: 270 }, { item: 'lamp', x: 3, z: 3, rot: 0 },
-    { item: 'plant', x: -3.2, z: 0, rot: 0 }, { item: 'rug', x: 0, z: 0, rot: 0 },
+    { item: 'wallWindow', x: -3.5, z: 1.25, rot: 90, wall: 'left' },
+    { item: 'doorway', x: 2.5, z: -3.5, rot: 0, wall: 'back' },
+    { item: 'bedDouble', x: -2.41, z: 1.3, rot: 90 },
+    { item: 'desk', x: -2.6, z: -3.06, rot: 0 },
+    { item: 'computerScreen', x: -2.6, z: -3.25, rot: 0, y: 0.74 },
+    { item: 'computerKeyboard', x: -2.6, z: -2.9, rot: 0, y: 0.74 },
+    { item: 'lampRoundTable', x: -3.1, z: -3.2, rot: 0, y: 0.74 },
+    { item: 'plantSmall2', x: -2.05, z: -3.2, rot: 0, y: 0.74 },
+    { item: 'chairDesk', x: -2.6, z: -2.25, rot: 180 },
+    { item: 'pottedPlant', x: -3.15, z: -1.55, rot: 0 },
+    { item: 'trashcan', x: -1.6, z: -3.2, rot: 0 },
+    { item: 'bookcaseOpen', x: -0.9, z: -3.24, rot: 0 },
+    { item: 'books', x: -0.95, z: -3.24, rot: 0, y: 1.7 },
+    { item: 'kitchenFridgeSmall', x: 0.15, z: -3.2, rot: 0 },
+    { item: 'kitchenCoffeeMachine', x: 0.15, z: -3.2, rot: 0, y: 1.16 },
+    { item: 'coatRackStanding', x: 1.25, z: -3.1, rot: 0 },
+    { item: 'rugDoormat', x: 2.5, z: -2.9, rot: 0 },
+    { item: 'rugRectangle', x: 0.25, z: 0.9, rot: 90 },
+    { item: 'lampRoundFloor', x: 3.15, z: 1.2, rot: 0 },
+    { item: 'cardboardBoxClosed', x: 3.1, z: -0.6, rot: 0 },
+    { item: 'cardboardBoxOpen', x: 3.05, z: -0.6, rot: 90, y: 0.54 },
   ],
 });
 
+const round2 = (v) => Math.round(v * 100) / 100;
 export function validateRoom(room) {
   const bad = (m) => new HttpError(400, 'bad_room', m);
   if (!room || typeof room !== 'object' || Array.isArray(room)) throw bad('room must be an object');
-  const extra = Object.keys(room).filter((k) => !['materials', 'lighting', 'furniture'].includes(k));
+  const extra = Object.keys(room).filter((k) => !['materials', 'lighting', 'daylight', 'window', 'furniture'].includes(k));
   if (extra.length) throw bad(`unknown room field ${extra[0].slice(0, 20)}`);
   const m = room.materials;
   if (!m || typeof m !== 'object' || Array.isArray(m) || Object.keys(m).some((k) => !['floor', 'walls', 'accent'].includes(k))) throw bad('materials: {floor, walls, accent}');
   for (const k of ['floor', 'walls', 'accent']) if (!ROOM[k].includes(m[k])) throw bad(`materials.${k}: one of ${ROOM[k].join(', ')}`);
   if (!ROOM.lighting.includes(room.lighting)) throw bad(`lighting: one of ${ROOM.lighting.join(', ')}`);
+  if (room.daylight !== undefined && (typeof room.daylight !== 'number' || !Number.isFinite(room.daylight) || room.daylight < 0 || room.daylight > 1)) throw bad('daylight: a number from 0 (morning) to 1 (night)');
+  const view = room.window ?? ROOM.window[0];
+  if (!ROOM.window.includes(view)) throw bad(`window: one of ${ROOM.window.join(', ')}`);
   if (!Array.isArray(room.furniture) || room.furniture.length > ROOM.maxFurniture) throw bad(`furniture: an array of at most ${ROOM.maxFurniture}`);
   const inRange = (v) => typeof v === 'number' && Number.isFinite(v) && v >= ROOM.coord[0] && v <= ROOM.coord[1];
   const furniture = room.furniture.map((f) => {
-    if (!f || typeof f !== 'object' || Object.keys(f).some((k) => !['item', 'x', 'z', 'rot'].includes(k))) throw bad('furniture entries: {item, x, z, rot}');
-    if (!ROOM.items.includes(f.item)) throw bad(`furniture item: one of ${ROOM.items.join(', ')}`);
+    if (!f || typeof f !== 'object' || Array.isArray(f) || Object.keys(f).some((k) => !['item', 'x', 'z', 'rot', 'y', 'wall'].includes(k))) throw bad('furniture entries: {item, x, z, rot, y?, wall?}');
+    const item = typeof f.item === 'string' && Object.hasOwn(LEGACY_ITEMS, f.item) ? LEGACY_ITEMS[f.item] : f.item;
+    if (!ITEM_SET.has(item)) throw bad('furniture item: one of room.items (see /api/world/options)');
     if (!inRange(f.x) || !inRange(f.z)) throw bad(`furniture x and z: numbers from ${ROOM.coord[0]} to ${ROOM.coord[1]}`);
     if (!ROOM.rot.includes(f.rot)) throw bad('furniture rot: 0, 90, 180 or 270');
-    return { item: f.item, x: Math.round(f.x * 100) / 100, z: Math.round(f.z * 100) / 100, rot: f.rot };
+    const out = { item, x: round2(f.x), z: round2(f.z), rot: f.rot };
+    if (f.y !== undefined) {
+      if (typeof f.y !== 'number' || !Number.isFinite(f.y) || f.y < ROOM.y[0] || f.y > ROOM.y[1]) throw bad(`furniture y: a number from ${ROOM.y[0]} to ${ROOM.y[1]}`);
+      if (round2(f.y) > 0) out.y = round2(f.y);
+    }
+    if (WALL_ITEMS.has(item)) {
+      if (!ROOM.wallSides.includes(f.wall)) throw bad(`${item} hangs on a wall: wall 'left' or 'back'`);
+      out.wall = f.wall;
+    } else if (f.wall !== undefined) throw bad(`${item} cannot hang on a wall`);
+    return out;
   });
-  return { materials: { floor: m.floor, walls: m.walls, accent: m.accent }, lighting: room.lighting, furniture };
+  return { materials: { floor: m.floor, walls: m.walls, accent: m.accent }, lighting: room.lighting,
+    ...(room.daylight !== undefined ? { daylight: round2(room.daylight) } : {}), window: view, furniture };
+}
+
+/** Stored rooms are read through this: v1 rooms (generic item names, no window) come back as v2. Anything that no
+ * longer validates falls back to the default room rather than breaking the visit. */
+export function upgradeRoom(stored) {
+  if (!stored) return DEFAULT_ROOM;
+  try { return validateRoom(stored); } catch { return DEFAULT_ROOM; }
 }
 
 export function saveRoom(db, wallet, room) {
@@ -78,7 +146,7 @@ export function roomView(db, plotId) {
   if (!pl || (pl.kind === 'project' && pl.visibility !== 'public')) return null;
   const r = db.get('SELECT * FROM residents WHERE wallet = ?', pl.wallet);
   if (!r) return null;
-  return { plotId, kind: pl.kind, owner: { name: r.name, look: parseJson(r.look_json) }, room: parseJson(r.room_json) || DEFAULT_ROOM };
+  return { plotId, kind: pl.kind, owner: { name: r.name, look: parseJson(r.look_json) }, room: upgradeRoom(parseJson(r.room_json)) };
 }
 
 export const PROGRESS = { submitted: 0.05, evaluating: 0.12, selected: 0.2, generating: 0.45, preview_ready: 0.65, approved: 0.75,
@@ -158,7 +226,7 @@ export function saveResident(db, wallet, input) {
 
 export function residentOf(db, wallet) {
   const r = db.get('SELECT * FROM residents WHERE wallet = ?', wallet);
-  return r && { name: r.name, look: parseJson(r.look_json), plotId: r.plot_id, room: parseJson(r.room_json) || DEFAULT_ROOM, createdAt: r.created_at, updatedAt: r.updated_at };
+  return r && { name: r.name, look: parseJson(r.look_json), plotId: r.plot_id, room: upgradeRoom(parseJson(r.room_json)), createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 export const plotsOf = (db, wallet) => db.all('SELECT plot_id plotId, kind, idea_id ideaId, claimed_at claimedAt FROM plots WHERE wallet = ? ORDER BY claimed_at', wallet);
