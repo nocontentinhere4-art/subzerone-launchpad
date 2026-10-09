@@ -1,6 +1,7 @@
 // All configuration comes from the environment. Secrets never have defaults; a feature without its secret is off.
 import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, isAbsolute } from 'node:path';
+import { isSolanaAddress } from './util.js';
 
 export const ROOT = resolve(import.meta.dirname, '..');
 
@@ -43,6 +44,10 @@ export function loadConfig(env = process.env) {
     sessionDays: num('SESSION_DAYS', 7),
     nonceTtlS: num('AUTH_NONCE_TTL_S', 300),
     encryptionKey: e('APP_ENCRYPTION_KEY'),           // 32 bytes, base64; protects X tokens and launch mint keys
+    // SUB-01's own wallet: the fixed 20% creator-fee row of every project (launch.js). Without it nothing launches.
+    sub01FeeWallet: e('SUB01_FEE_WALLET'),
+    // the city client's Vite build output; when set it is served at / and the launchpad home moves to /launchpad
+    cityDist: e('CITY_DIST'),
     adminWallets: e('ADMIN_WALLETS').split(',').map((s) => s.trim()).filter(Boolean),
     brain: {
       url: e('BRAIN_URL'),                              // the SUB-01 live server, e.g. https://subzerone.live
@@ -82,6 +87,8 @@ export function loadConfig(env = process.env) {
     market: { sub01RpcUrl: e('SUB01_MARKET_RPC_URL', 'https://api.mainnet-beta.solana.com') },
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
   };
+  if (cfg.sub01FeeWallet && !isSolanaAddress(cfg.sub01FeeWallet)) throw new Error('SUB01_FEE_WALLET is not a valid Solana address');
+  if (cfg.cityDist && !isAbsolute(cfg.cityDist)) throw new Error('CITY_DIST must be an absolute path');
   if (cfg.production) {
     const missing = [];
     if (!cfg.encryptionKey) missing.push('APP_ENCRYPTION_KEY');

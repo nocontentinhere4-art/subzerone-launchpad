@@ -2,7 +2,7 @@
 // launch intent (exact transaction, persisted BEFORE the signature is requested) -> wallet signature -> broadcast ->
 // on-chain verification -> launched. A provider's answer alone never marks a project launched.
 import { createHash } from 'node:crypto';
-import { audit, getSetting, isPaused } from './db.js';
+import { audit, isPaused } from './db.js';
 import { enqueue, Permanent, Defer } from './jobs.js';
 import { transition, note } from './states.js';
 import { currentVersion, validateReceivingWallet } from './ideas.js';
@@ -23,42 +23,46 @@ export function getProvider(cfg, db) {
 export const setProviderForTests = (db, p, cfg) => { cached = { db, key: cfg.launch.provider + cfg.launch.rpcUrl, p }; };
 
 // --- allocation --------------------------------------------------------------------------------------------------
-/** Default: 100% of creator fees to the submitter's receiving wallet, plus any platform share an admin disclosed. */
-export function defaultRecipients(db, receivingWallet) {
-  const platform = getSetting(db, 'allocation.platform', null);   // {wallet, bps, label} or null; disclosed on every page
-  if (platform && platform.bps > 0) {
-    return [{ label: 'Idea submitter', wallet: receivingWallet, bps: 10000 - platform.bps, role: 'submitter' },
-      { label: platform.label || 'SUBZERONE platform', wallet: platform.wallet, bps: platform.bps, role: 'platform' }];
-  }
-  return [{ label: 'Idea submitter', wallet: receivingWallet, bps: 10000, role: 'submitter' }];
+// Owner rule: 80% of every project's creator fees to the idea submitter's side, 20% to SUB-01. The SUB-01 row is
+// fixed and mandatory; the submitter may split their 80% with collaborators.
+export const SUB01_FEE_BPS = 2000;
+export const SUB01_LABEL = 'SUB-01';
+
+export function requireSub01Wallet(cfg) {
+  if (!cfg.sub01FeeWallet) throw new HttpError(409, 'sub01_wallet_missing', 'SUB01_FEE_WALLET is not configured: SUB-01\'s 20% creator-fee share has no wallet, so nothing can be approved or launched');
+  return cfg.sub01FeeWallet;
 }
 
-export function validateRecipients(db, recipients, receivingWallet) {
-  if (!Array.isArray(recipients) || recipients.length < 1 || recipients.length > MAX_RECIPIENTS) {
-    throw new HttpError(400, 'bad_allocation', `1–${MAX_RECIPIENTS} recipients`);
+/** Default: 80% to the submitter's receiving wallet, 20% to SUB-01 (wallet null until SUB01_FEE_WALLET is set). */
+export function defaultAllocation(cfg, receivingWallet) {
+  return [{ label: 'Idea submitter', wallet: receivingWallet, bps: 10000 - SUB01_FEE_BPS, role: 'submitter' },
+    { label: SUB01_LABEL, wallet: cfg.sub01FeeWallet || null, bps: SUB01_FEE_BPS, role: 'sub01' }];
+}
+
+export function validateRecipients(cfg, recipients, receivingWallet) {
+  const sub01Wallet = requireSub01Wallet(cfg);
+  if (!Array.isArray(recipients) || recipients.length < 2 || recipients.length > MAX_RECIPIENTS) {
+    throw new HttpError(400, 'bad_allocation', `2–${MAX_RECIPIENTS} recipients (the submitter and SUB-01 at least)`);
   }
   const seen = new Set();
   let total = 0;
   const out = recipients.map((r) => {
+    if (!['submitter', 'sub01', 'collaborator', undefined, null, ''].includes(r.role)) throw new HttpError(400, 'bad_allocation', `unknown role ${String(r.role).slice(0, 20)}`);
+    const role = r.role || 'collaborator';
     const wallet = validateReceivingWallet(r.wallet);
     const bps = Number(r.bps);
     if (!Number.isInteger(bps) || bps <= 0 || bps > 10000) throw new HttpError(400, 'bad_allocation', 'each share must be 1–10000 bps');
     if (seen.has(wallet)) throw new HttpError(400, 'bad_allocation', 'duplicate recipient');
     seen.add(wallet);
     total += bps;
-    const role = ['submitter', 'platform', 'collaborator'].includes(r.role) ? r.role : 'collaborator';
-    return { label: String(r.label || role).slice(0, 40).replace(/[<>`]/g, ''), wallet, bps, role };
+    return { label: role === 'sub01' ? SUB01_LABEL : String(r.label || role).slice(0, 40).replace(/[<>`]/g, ''), wallet, bps, role };
   });
   if (total !== 10000) throw new HttpError(400, 'bad_allocation', `shares must total 100% (got ${total / 100}%)`);
-  const sub = out.find((r) => r.role === 'submitter');
-  if (!sub || sub.wallet !== receivingWallet) throw new HttpError(400, 'bad_allocation', 'the submitter row must be the idea\'s receiving wallet');
-  const platform = getSetting(db, 'allocation.platform', null);
-  const plat = out.filter((r) => r.role === 'platform');
-  if (plat.length && (!platform || plat.length > 1 || plat[0].wallet !== platform.wallet || plat[0].bps !== platform.bps)) {
-    throw new HttpError(400, 'bad_allocation', 'a platform row must match the disclosed platform share exactly');
-  }
-  if (platform && platform.bps > 0 && !plat.length) {
-    // the platform share is disclosed but optional: dropping it is the submitter's call, recorded as such
+  const subs = out.filter((r) => r.role === 'submitter');
+  if (subs.length !== 1 || subs[0].wallet !== receivingWallet) throw new HttpError(400, 'bad_allocation', 'exactly one submitter row, and it must be the idea\'s receiving wallet');
+  const s1 = out.filter((r) => r.role === 'sub01');
+  if (s1.length !== 1 || s1[0].wallet !== sub01Wallet || s1[0].bps !== SUB01_FEE_BPS) {
+    throw new HttpError(400, 'bad_allocation', `the SUB-01 row is mandatory: exactly ${SUB01_FEE_BPS / 100}% to ${sub01Wallet}`);
   }
   return out;
 }
@@ -94,12 +98,13 @@ export function feeMode(recipients, signer) {
 export async function buildLaunchConfig(db, cfg, project) {
   const provider = getProvider(cfg, db);
   if (!provider) throw new Permanent('launching is disabled (LAUNCH_PROVIDER=none)');
+  if (!cfg.sub01FeeWallet) throw new Permanent('sub01_wallet_missing: SUB01_FEE_WALLET is not configured');
   const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
   const v = currentVersion(db, idea.id);
   const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status = 'approved' ORDER BY version DESC LIMIT 1`, project.id);
   if (!alloc) throw new Permanent('no approved fee allocation');
   const recipients = parseJson(alloc.recipients_json);
-  validateRecipients(db, recipients, v.receiving_wallet);           // re-checked against the current receiving wallet
+  validateRecipients(cfg, recipients, v.receiving_wallet);          // re-checked against the current receiving wallet
   const signer = idea.owner_wallet;
   const mode = feeMode(recipients, signer);
   if (alloc.approval_statement !== allocationStatement(recipients, mode)) throw new Permanent('approval statement does not match the allocation');
@@ -144,6 +149,7 @@ export const configHash = (config) => createHash('sha256').update(JSON.stringify
 /** Owner asks for the transaction. Builds a fresh launch intent. Only one live intent per project (DB-enforced). */
 export async function createIntent(db, cfg, project, wallet) {
   if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
+  requireSub01Wallet(cfg);
   const idea = db.get('SELECT * FROM ideas WHERE id = ?', project.idea_id);
   if (idea.owner_wallet !== wallet) throw new HttpError(403, 'not_owner');
   if (idea.status === 'awaiting_signature') {

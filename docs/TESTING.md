@@ -14,7 +14,7 @@
 | Duplicate job delivery | same key = one job; re-running handlers changes nothing · crashed worker: expired lease requeued, finishes once |
 | Launch tx rejected / expired / confirmed after a timeout | wallet rejects → back to `launch_prepared` · rejected on-chain → back with the reason · never landed → `expired` after the blockhash window · confirm job gave up → the sweep finds it and it becomes `launched` |
 | Duplicate launch attempts | a second transaction request resumes the same transaction (still one intent); a second signed submit is refused; a launched project can't prepare another (unique live-intent index + state checks) |
-| Incorrect fee recipients | wrong submitter wallet, totals ≠ 100%, undisclosed platform rows and duplicates refused · stale approval statement refused · on-chain recipients ≠ approved → not launched, no relaunch until resolved |
+| Incorrect fee recipients | wrong submitter wallet, totals ≠ 100%, missing/altered SUB-01 20% row, unknown roles and duplicates refused · missing SUB01_FEE_WALLET → 409 `sub01_wallet_missing` · stale approval statement refused · on-chain recipients ≠ approved → not launched, no relaunch until resolved |
 | Indexing delays and fee reconciliation | unknown (not zero) before the first read · payouts appear later · re-reading the same transactions never double counts · a direct-mode vault isn't attributed to one project |
 | Also | complete MOCK flow over HTTP · cross-site writes refused · private ideas hidden · security headers · admin gated · pause blocks launches · budget cap · daily submission cap · X: account only "connected" when X reports it, posts need approval and publish once · pump.fun: signed tx must equal the reviewed one |
 
@@ -46,7 +46,7 @@ Two runs, both against the running stack: launchpad + worker + **the real SUB-01
 1. `npm run demo:flow`, transcript in `docs/demo/flow-mock-2026-10-08T23-17-27.json`:
    - idea submitted privately;
    - **brain vote: build 98.5% vs pass 1.5%** ("reward and attention areas responded most", rate model, demo brain);
-   - template identity, art, site v1, X drafts, 100% split;
+   - template identity, art, site v1, X drafts, 80/20 split (submitter / SUB-01);
    - published, approved, reviewer cleared;
    - launch configuration: supply 1B, 6 decimals, initial buy 0;
    - MOCK transaction signed by the test wallet;

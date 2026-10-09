@@ -1,4 +1,6 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
+import { createServer } from 'node:http';
+import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,6 +10,7 @@ import { b58encode } from '../src/util.js';
 import { setLogSink } from '../src/log.js';
 import { claim, runJob } from '../src/jobs.js';
 import { handlers, onDead } from '../src/pipeline.js';
+import { createApp } from '../src/app.js';
 
 export const logs = [];
 setLogSink((l) => logs.push(l));
@@ -18,10 +21,13 @@ export function wallet() {
   return { address, signText: (text) => b58encode(sign(null, Buffer.from(text, 'utf8'), privateKey)), signBytes: (b) => sign(null, Buffer.from(b), privateKey) };
 }
 
+/** SUB-01's fee wallet in tests (the mandatory 20% row). Pass SUB01_FEE_WALLET: '' to test it missing. */
+export const SUB01_WALLET = wallet().address;
+
 export function makeEnv(env = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'lp-test-'));
   const cfg = loadConfig({ LAUNCHPAD_NO_DOTENV: '1', DATA_DIR: dir, PUBLIC_ORIGIN: 'http://localhost:8787', PORT: '8787',
-    BRAIN_URL: 'http://brain.test', LAUNCHPAD_BRAIN_SECRET: 'secret', LAUNCH_PROVIDER: 'mock', BACKUP_EVERY_HOURS: '0', ...env });
+    BRAIN_URL: 'http://brain.test', LAUNCHPAD_BRAIN_SECRET: 'secret', LAUNCH_PROVIDER: 'mock', BACKUP_EVERY_HOURS: '0', SUB01_FEE_WALLET: SUB01_WALLET, ...env });
   const db = openDb(join(dir, 'test.db'));
   migrate(db);
   return { cfg, db, dir };
@@ -75,3 +81,34 @@ export const IDEA = (w, extra = {}) => ({
 });
 
 export const ideaStatus = (db, id) => db.get('SELECT status, status_note FROM ideas WHERE id = ?', id);
+
+/** The app on a real port, with a cookie-keeping client per wallet. */
+export async function harness(env = {}) {
+  const e = makeEnv(env);
+  const brain = fakeBrain('build');
+  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl });
+  const server = createServer(app);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const client = (w) => {
+    let cookie = '';
+    const call = async (method, path, body, headers = {}) => {
+      const res = await fetch(base + path, { method, redirect: 'manual', headers: { origin: e.cfg.publicOrigin, cookie, ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
+        body: body ? JSON.stringify(body) : undefined });
+      const set = res.headers.get('set-cookie');
+      if (set) cookie = set.split(';')[0];
+      const text = await res.text();
+      let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
+      return { status: res.status, json, text, headers: res.headers };
+    };
+    return {
+      call, w,
+      async signIn() {
+        const n = await call('POST', '/api/auth/nonce', { wallet: w.address });
+        const v = await call('POST', '/api/auth/verify', { wallet: w.address, nonce: n.json.nonce, signature: w.signText(n.json.message) });
+        assert.equal(v.status, 200);
+      },
+    };
+  };
+  return { ...e, brain, server, base, client, close: () => server.close() };
+}

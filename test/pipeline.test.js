@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeEnv, wallet, user, fakeBrain, drain, IDEA, ideaStatus } from './helpers.js';
+import { makeEnv, wallet, user, fakeBrain, drain, IDEA, ideaStatus, SUB01_WALLET } from './helpers.js';
 import { submitIdea, editIdea, viewIdea } from '../src/ideas.js';
 import { enqueue, claim, runJob } from '../src/jobs.js';
 import { handlers, onDead } from '../src/pipeline.js';
@@ -24,7 +24,8 @@ test('brain says build: idea goes submitted -> evaluating -> selected -> generat
   assert.equal(db.get(`SELECT COUNT(*) n FROM assets WHERE project_id = ?`, p.id).n, 2);
   assert.equal(db.get(`SELECT COUNT(*) n FROM x_posts WHERE project_id = ? AND status = 'draft'`, p.id).n, 2);
   const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ?`, p.id);
-  assert.deepEqual(JSON.parse(alloc.recipients_json).map((r) => [r.wallet, r.bps]), [[w.address, 10000]]);
+  assert.deepEqual(JSON.parse(alloc.recipients_json).map((r) => [r.wallet, r.bps]), [[w.address, 8000], [SUB01_WALLET, 2000]]);
+  assert.equal(db.get(`SELECT wallet FROM project_roles WHERE project_id = ? AND role = 'founder'`, p.id).wallet, w.address, 'founder role granted');
   const timeline = db.all(`SELECT message FROM events WHERE idea_id = ? AND public = 1`, id).map((e) => e.message);
   assert.ok(timeline.some((m) => m.includes('brain vote: build')));
 });

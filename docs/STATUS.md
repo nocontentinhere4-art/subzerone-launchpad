@@ -16,7 +16,7 @@
 | | Launched project page (verification checks, fee ledger, brain record) | Working (mock launch) | |
 | | SUB-01 token page (official links, DexScreener and RPC data with source and time) | Working | live data read on 2026-10-09 |
 | | Submitter dashboard | Working | |
-| | Admin dashboard (pauses, budgets, disclosed platform share, clearance, failed ideas, dead letters, intents, roles, bans, backup, audit) | Working | |
+| | Admin dashboard (pauses, budgets, SUB-01 fee share (read-only), clearance, failed ideas, dead letters, intents, roles, bans, backup, audit) | Working | |
 | | Fee ledger and methodology | Working | shows "—" (unknown) rather than zero before the first observation |
 | Auth | Wallet sign-in (SIWS-style message, single-use expiring nonce, replay protection, no funds) | Working | 7 tests |
 | Review | Independent security/correctness review of launch, auth, privacy, XSS and jobs | Done | 9 findings fixed with regression tests; see TESTING.md |
@@ -35,7 +35,12 @@
 | | Pump.fun provider (official SDK 4.0.0): devnet parameters read, transaction built, fee schedule read on-chain | Working up to the signature | transaction built against devnet (860 bytes, direct mode); simulation stops at `AccountNotFound` because the payer has 0 SOL. **No devnet transaction landed yet**: both devnet faucets were rate-limited |
 | | Create + locked multi-recipient split in one transaction | Blocked | needs a lookup table (`npm run lookup-table`, needs devnet SOL) and one devnet run to verify |
 | | Mainnet | Blocked | ToS §21(c) review / written OK from pump.fun, a funded devnet run, an RPC provider, the domain |
-| Fees | Ledger: verified undistributed (vault read), confirmed payouts (distribution events), per-recipient estimates, no double counting | Mock-tested | logic tested with a fake chain; real reads only after a real launch |
+| Fees | Fixed rule: 80% submitter side / 20% SUB-01 (`SUB01_FEE_WALLET`), SUB-01 row mandatory; collaborators share the submitter's 80%; missing wallet → 409 `sub01_wallet_missing` | Working | flow tests; the old optional admin "platform share" and `/api/admin/platform-share` were removed. Every split is now on-chain `sharing_config` (pump.fun needs the lookup table) |
+| | Ledger: verified undistributed (vault read), confirmed payouts (distribution events), per-recipient estimates, no double counting | Mock-tested | logic tested with a fake chain; real reads only after a real launch |
+| City | Shared plots: 24 districts × 6, first come first served (race-safe), apartments + project plots, release on declined/cancelled | Working | `test/city.test.js`; contract in `docs/CITY-API.md` |
+| | Residents (name, whitelisted look), rooms (whitelisted interior, default room), `/api/world` (public, 3 s cache, no wallets, private ideas masked), `/api/world/options` | Working | tests incl. private-idea leak check; SUB-01 asleep/offline is derived from the brain's last answer, not a live probe |
+| | Project roles (founder / community lead / moderator) and community takeover (founder decides; admin only after 30 days of founder inactivity; fees never change) | Working | tests incl. 30-day rule |
+| | Single-origin hosting of the city client (`CITY_DIST`): city at `/`, assets immutable, launchpad at `/launchpad` | Working (local test dist) | not yet run against the real city build in a browser; CSP unchanged (see DEPLOY.md) |
 | Ops | Rate limits, origin checks, redacted structured logs, migrations, daily backups, pauses, caps, dead letters, roles | Working | rate limits are per process: use one web instance (see DEPLOY.md) |
 
 ## Still required
@@ -59,8 +64,8 @@ Decisions and approvals:
 7. **pump.fun terms §21(c)**: legal review or written confirmation that a launchpad preparing transactions which the
    submitter signs is allowed. Required before mainnet.
 8. **Domain and hosting**: `launchpad.subzerone.live` (or similar) + wildcard `*.projects.subzerone.live` with TLS.
-9. **Platform share**: none by default. If SUBZERONE ever takes one, it must be set in admin, where it is disclosed on
-   every page and in every split.
+9. **`SUB01_FEE_WALLET`**: SUB-01's wallet for the fixed 20% creator-fee share of every project. Until it is set,
+   nothing can be approved or launched.
 10. **Admin wallets** (`ADMIN_WALLETS`) and reviewers.
 11. **Licences**: the SUB-01 brain code has no licence yet. Settle the launchpad's licence too before publishing it.
 

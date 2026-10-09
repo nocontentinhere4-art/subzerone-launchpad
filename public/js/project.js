@@ -214,17 +214,16 @@ function xSection(p) {
 function allocationSection(p, editable) {
   const a = p.allocation;
   if (!a) return html`<div class="empty">No split drafted yet.</div>`;
-  const plat = state.config.platformShare;
   return html`<div class="grid2"><div>
-    ${editable ? html`<form id="split"><div id="rows">${a.recipients.map((r) => html`<div class="split-row" data-role="${r.role}"><input data-k="label" value="${r.label}" ${r.role === 'submitter' ? 'readonly' : ''}><input class="w" data-k="wallet" value="${r.wallet}" ${r.role !== 'collaborator' ? 'readonly' : ''}><input data-k="pct" type="number" min="0.01" max="100" step="0.01" value="${r.bps / 100}"><button type="button" class="ghost" data-del ${r.role === 'submitter' ? 'disabled' : ''}>×</button></div>`)}</div>
+    ${editable ? html`<form id="split"><div id="rows">${a.recipients.map((r) => html`<div class="split-row" data-role="${r.role}"><input data-k="label" value="${r.label}" ${r.role !== 'collaborator' ? 'readonly' : ''}><input class="w" data-k="wallet" value="${r.wallet || ''}" ${r.role !== 'collaborator' ? 'readonly' : ''}><input data-k="pct" type="number" min="0.01" max="100" step="0.01" value="${r.bps / 100}" ${r.role === 'sub01' ? 'readonly' : ''}><button type="button" class="ghost" data-del ${r.role !== 'collaborator' ? 'disabled' : ''}>×</button></div>`)}</div>
       <p class="row"><button type="button" id="addrow" class="tiny">+ add recipient</button><button class="tiny">save split</button></p>
-      <p class="faint tiny">Up to ${state.config.maxRecipients} recipients, totalling 100%. The first row is your receiving wallet. To change it, edit the idea (that's recorded publicly).</p></form>`
+      <p class="faint tiny">Up to ${state.config.maxRecipients} recipients, totalling 100%. The first row is your receiving wallet. To change it, edit the idea (that's recorded publicly). SUB-01's 20% row is fixed: you can share your 80% with collaborators.</p></form>`
     : html`<table><tr><th>recipient</th><th>share</th><th>address</th></tr>${a.recipients.map((r) => html`<tr><td>${r.label}</td><td>${pct(r.bps)}</td><td class="addr tiny">${r.wallet}</td></tr>`)}</table>`}
   </div><div>
     <div class="card"><h3>${a.mode === 'sharing_config' ? 'On-chain split, locked at launch' : 'Direct to you'}</h3>
       <p class="small">${a.mode === 'sharing_config' ? 'Creator fees are split on-chain by pump.fun\'s fee-sharing program. The split is set inside the launch transaction and then locked: you can\'t change it afterwards, and neither can SUBZERONE.' : 'The whole creator-fee share goes to the wallet that creates the token, which is you. Nothing is split.'}</p>
-      <p class="small dim">These are <b>creator fees</b>, a part of each trade's fee. They aren't the trading fees themselves, they aren't SUB-01 revenue, and they don't cover hosting costs. If nobody trades, there are no fees.</p>
-      <p class="small dim">${plat ? `A SUBZERONE platform share of ${pct(plat.bps)} is disclosed. It appears as its own row and you can remove it.` : 'There is no platform share. SUBZERONE takes nothing from creator fees.'}</p>
+      <p class="small dim">These are <b>creator fees</b>, a part of each trade's fee. They aren't the trading fees themselves and they don't cover hosting costs. SUB-01's 20% row is the only part SUB-01 receives. If nobody trades, there are no fees.</p>
+      <p class="small dim">Every project splits creator fees 80% to the idea submitter's side and 20% to SUB-01. ${state.config.sub01Share?.configured ? '' : html`<b>SUB-01's fee wallet is not configured yet, so this split can't be approved.</b>`}</p>
       <p class="faint tiny">Status: ${a.status} · version ${a.version}</p></div>
   </div></div>`;
 }

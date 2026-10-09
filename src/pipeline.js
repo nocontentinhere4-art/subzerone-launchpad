@@ -10,7 +10,7 @@ import { generate, estimateCostUsd } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
 import { buildSiteVersion, setLiveVersion } from './site.js';
 import { planAccount, publishPost } from './x.js';
-import { buildLaunchConfig, configHash, confirmIntent, reconcileFees, defaultRecipients, draftAllocation } from './launch.js';
+import { buildLaunchConfig, configHash, confirmIntent, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
 import { id, now, sha256, parseJson } from './util.js';
 
@@ -93,6 +93,8 @@ export const handlers = {
         db.run(`INSERT INTO projects (id, idea_id, slug, name, ticker, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           pid, ideaId, slug, spec.name, spec.ticker, spec.description, t, t);
         p = db.get('SELECT * FROM projects WHERE id = ?', pid);
+        db.run(`INSERT INTO project_roles (project_id, wallet, role, granted_by, granted_at) VALUES (?, ?, 'founder', 'system', ?)
+                ON CONFLICT DO NOTHING`, pid, idea.owner_wallet, t);
       }
       const gv = (db.get('SELECT MAX(version) v FROM generations WHERE project_id = ?', p.id)?.v || 0) + 1;
       db.run(`INSERT INTO generations (id, project_id, version, generator, input_json, output_json, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -109,7 +111,7 @@ export const handlers = {
       }
       planAccount(db, p.id, spec);
       if (!db.get(`SELECT 1 FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved')`, p.id)) {
-        draftAllocation(db, p.id, defaultRecipients(db, v.receiving_wallet), 'system');
+        draftAllocation(db, p.id, defaultAllocation(cfg, v.receiving_wallet), 'system');
       }
       audit(db, { actor: 'generator', kind: 'generation', ideaId, projectId: p.id, isPublic: true,
         message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}; art drawn from the brain record` });

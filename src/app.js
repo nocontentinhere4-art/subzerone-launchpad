@@ -1,7 +1,7 @@
 // The launchpad web application: JSON API, the single-page front end, generated project sites (by Host) and token
 // metadata. createApp() returns a node:http request handler; server.js listens.
 import { readFileSync, existsSync, statSync } from 'node:fs';
-import { join, extname, normalize } from 'node:path';
+import { join, extname, normalize, sep } from 'node:path';
 import { ROOT, SUB01 } from './config.js';
 import { router, parseCookies, readJson, clientIp, rateLimiter, securityHeaders, APP_CSP, sendJson, sendError } from './http.js';
 import { issueNonce, verifySignIn, sessionUser, signOut } from './auth.js';
@@ -12,20 +12,25 @@ import { enqueue, retryDead, cancelJobs } from './jobs.js';
 import { buildSiteVersion, setLiveVersion, SITE_CSP } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
-  abandonIntent, feeLedger, MAX_RECIPIENTS } from './launch.js';
+  abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
+import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, saveResident, residentOf,
+  plotsOf, worldView, roomView, saveRoom } from './world.js';
+import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
 import { sub01Market } from './market.js';
 import { brainStatus } from './brain.js';
 import { limits, spentToday } from './budget.js';
-import { HttpError, parseJson, now, token, isSolanaAddress } from './util.js';
+import { HttpError, parseJson, now, token } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
 
 const PUBLIC = join(ROOT, 'public');
-const PAGES = [/^\/$/, /^\/submit$/, /^\/ideas\/[^/]+$/, /^\/projects\/[^/]+(\/review)?$/, /^\/token$/, /^\/me$/, /^\/admin$/, /^\/fees$/, /^\/how$/];
+const PAGES = [/^\/$/, /^\/launchpad$/, /^\/submit$/, /^\/ideas\/[^/]+$/, /^\/projects\/[^/]+(\/review)?$/, /^\/token$/, /^\/me$/, /^\/admin$/, /^\/fees$/, /^\/how$/];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
+  '.gltf': 'model/gltf+json', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.ktx2': 'image/ktx2', '.hdr': 'application/octet-stream', '.woff2': 'font/woff2', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wasm': 'application/wasm' };
 const COOKIE = 'lp_session';
 const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved', 'launch_prepared', 'awaiting_signature', 'confirming'];
 
@@ -72,7 +77,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
       generator: cfg.generator.provider === 'anthropic' ? `language model (${cfg.generator.anthropicModel})` : 'fixed template (no AI)',
       brainConfigured: Boolean(cfg.brain.url && cfg.brain.secret), xConfigured: xConfigured(cfg),
       pauses: Object.fromEntries(PAUSES.map((p) => [p, isPaused(db, p)])),
-      platformShare: getSetting(db, 'allocation.platform', null), maxRecipients: MAX_RECIPIENTS, limits: LIMITS,
+      sub01Share: { label: SUB01_LABEL, bps: SUB01_FEE_BPS, wallet: cfg.sub01FeeWallet || null, configured: Boolean(cfg.sub01FeeWallet) },
+      city: Boolean(cfg.cityDist), maxRecipients: MAX_RECIPIENTS, limits: LIMITS,
       stages: STAGES.map((s) => ({ id: s, label: LABELS[s] })), requireAdminClearance: cfg.launch.requireAdminClearance,
     };
   });
@@ -99,7 +105,9 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
       LEFT JOIN launches l ON l.project_id = p.id
       WHERE i.owner_wallet = ? ORDER BY i.created_at DESC`, ctx.user.wallet);
     const launched = db.all(`SELECT p.slug FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN launches l ON l.project_id = p.id WHERE i.owner_wallet = ?`, ctx.user.wallet);
-    return { user: ctx.user, ideas, fees: launched.map((x) => ({ slug: x.slug, ledger: feeLedger(db, projectBySlug(x.slug).id) })) };
+    const projectRoles = db.all('SELECT p.slug, r.role FROM project_roles r JOIN projects p ON p.id = r.project_id WHERE r.wallet = ? ORDER BY r.granted_at', ctx.user.wallet);
+    return { user: ctx.user, ideas, fees: launched.map((x) => ({ slug: x.slug, ledger: feeLedger(db, projectBySlug(x.slug).id) })),
+      resident: residentOf(db, ctx.user.wallet) || null, plots: plotsOf(db, ctx.user.wallet), projectRoles };
   });
 
   // --- ideas ------------------------------------------------------------------------------------------------------
@@ -236,7 +244,9 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     if (!['preview_ready'].includes(idea.status)) throw new HttpError(409, 'locked', 'the split can change only while the preview is open');
     const b = await ctx.body();
     const v = currentVersion(db, idea.id);
-    const recipients = validateRecipients(db, b.recipients, v.receiving_wallet);
+    // the SUB-01 row's wallet is the configured one; a client may send it without the address
+    const rows = Array.isArray(b.recipients) ? b.recipients.map((x) => (x?.role === 'sub01' && !x.wallet ? { ...x, wallet: cfg.sub01FeeWallet } : x)) : b.recipients;
+    const recipients = validateRecipients(cfg, rows, v.receiving_wallet);
     db.tx(() => { draftAllocation(db, p.id, recipients, `wallet:${u.wallet}`); db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL WHERE id = ?', p.id); });
     return { ok: true };
   });
@@ -247,7 +257,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status = 'draft' ORDER BY version DESC LIMIT 1`, p.id);
     if (!alloc || alloc.id !== b.allocationId) throw new HttpError(409, 'allocation_changed', 'the split changed; review it again');
     const recipients = parseJson(alloc.recipients_json);
-    validateRecipients(db, recipients, currentVersion(db, idea.id).receiving_wallet);
+    validateRecipients(cfg, recipients, currentVersion(db, idea.id).receiving_wallet);
     const statement = allocationStatement(recipients, feeMode(recipients, idea.owner_wallet));
     if (b.statement !== statement || b.siteVersion !== p.live_site_version) throw new HttpError(409, 'changed', 'what you reviewed changed; review it again');
     if (idea.visibility !== 'public') throw new HttpError(409, 'private', 'make the idea public first: a launched token is public');
@@ -310,6 +320,62 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   });
   r.post('/api/x-posts/:id/approve', async (ctx) => { const u = requireUser(ctx); const b = await ctx.body(); approvePost(db, ctx.params.id, u.wallet, b.text); return { ok: true }; });
 
+  // --- city (world.js, roles.js; contract in docs/CITY-API.md) -------------------------------------------------------
+  r.get('/api/world/options', (ctx) => ctx.raw(200, Buffer.from(JSON.stringify({
+    districts: DISTRICTS, plotsPerDistrict: PLOTS_PER_DISTRICT, plotIds: PLOT_IDS,
+    look: { ...LOOK, freeColors: FREE_COLORS, colorPattern: '^#[0-9a-f]{6}$' }, name: NAME,
+    room: { ...ROOM, default: DEFAULT_ROOM }, progress: PROGRESS,
+  })), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=3600' }));
+  let worldCache = null;                                     // one snapshot for everyone, at most 3 s old
+  r.get('/api/world', (ctx) => {
+    if (!worldCache || Date.now() - worldCache.at > 3000) worldCache = { at: Date.now(), body: Buffer.from(JSON.stringify(worldView(db, cfg))) };
+    return ctx.raw(200, worldCache.body, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=3' });
+  });
+  r.post('/api/residents', async (ctx) => {
+    const u = requireUser(ctx);
+    limit('write', u.wallet);
+    const resident = saveResident(db, u.wallet, await ctx.body());
+    return { resident, plots: plotsOf(db, u.wallet) };
+  });
+  r.get('/api/rooms/:plotId', (ctx) => {
+    const v = roomView(db, ctx.params.plotId);
+    if (!v) throw new HttpError(404, 'not_found', 'nobody lives there (or it is private)');
+    return v;
+  });
+  r.put('/api/rooms/me', async (ctx) => {
+    const u = requireUser(ctx);
+    limit('write', u.wallet);
+    const b = await ctx.body();
+    return { room: saveRoom(db, u.wallet, b.room) };
+  });
+  r.get('/api/projects/:slug/roles', (ctx) => {
+    const v = visibleProject(ctx, ctx.params.slug);
+    if (!v) throw new HttpError(404, 'not_found', 'not found, or private');
+    return rolesView(db, v.p, ctx.user);
+  });
+  r.post('/api/projects/:slug/roles', async (ctx) => {
+    const u = requireUser(ctx);
+    const p = projectBySlug(ctx.params.slug);
+    if (!p) throw new HttpError(404, 'not_found');
+    const b = await ctx.body();
+    setRole(db, p, u.wallet, { wallet: String(b.wallet || ''), role: b.role ?? null });
+    return rolesView(db, p, u);
+  });
+  r.post('/api/projects/:slug/takeover', async (ctx) => {
+    const u = requireUser(ctx);
+    limit('write', u.wallet);
+    const v = visibleProject(ctx, ctx.params.slug);
+    if (!v) throw new HttpError(404, 'not_found');
+    return requestTakeover(db, v.p, u.wallet, (await ctx.body()).reason);
+  });
+  r.post('/api/takeover/:id/decide', async (ctx) => {
+    const u = requireUser(ctx);
+    const b = await ctx.body();
+    if (typeof b.approve !== 'boolean') throw new HttpError(400, 'bad_request', 'approve: true or false');
+    return decideTakeover(db, ctx.params.id, u, b.approve);
+  });
+  r.post('/api/takeover/:id/withdraw', (ctx) => withdrawTakeover(db, ctx.params.id, requireUser(ctx).wallet));
+
   // --- ledger & SUB-01 token -----------------------------------------------------------------------------------------
   r.get('/api/ledger', () => {
     const rows = db.all(`SELECT p.id, p.slug, p.name, p.ticker, l.mint, l.network, l.provider, l.verified_at FROM launches l JOIN projects p ON p.id = l.project_id ORDER BY l.verified_at DESC`);
@@ -350,7 +416,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const intents = db.all(`SELECT li.id, li.project_id, p.slug, li.status, li.mint, li.tx_signature, li.error, li.provider, li.network, li.updated_at
       FROM launch_intents li JOIN projects p ON p.id = li.project_id ORDER BY li.updated_at DESC LIMIT 30`);
     return { counts, jobs, clearance, failed, audits, intents, pauses: Object.fromEntries(PAUSES.map((p) => [p, isPaused(db, p)])),
-      budget: { ...limits(db, cfg), spentToday: spentToday(db) }, platformShare: getSetting(db, 'allocation.platform', null),
+      budget: { ...limits(db, cfg), spentToday: spentToday(db) }, sub01Share: { bps: SUB01_FEE_BPS, wallet: cfg.sub01FeeWallet || null },
       mockBehaviour: cfg.production ? undefined : getSetting(db, 'mock.behaviour', 'ok'), role: ctx.user.role,
       users: db.all("SELECT wallet, role, created_at, banned_at FROM users WHERE role != 'user' OR banned_at IS NOT NULL") };
   });
@@ -369,18 +435,6 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
       if (b[k] != null) { const v = Number(b[k]); if (!(v >= 0 && v < 10000)) throw new HttpError(400, 'bad_budget'); setSetting(db, `budget.${k}`, v, u.wallet); }
     }
     audit(db, { actor: `admin:${u.wallet}`, kind: 'admin', message: 'budget changed', data: b });
-    return { ok: true };
-  });
-  r.post('/api/admin/platform-share', async (ctx) => {
-    const u = requireAdmin(ctx);
-    const b = await ctx.body();
-    if (b.share === null) setSetting(db, 'allocation.platform', null, u.wallet);
-    else {
-      const bps = Number(b.share?.bps);
-      if (!isSolanaAddress(b.share?.wallet) || !Number.isInteger(bps) || bps < 1 || bps > 5000) throw new HttpError(400, 'bad_share', 'wallet + 1–5000 bps');
-      setSetting(db, 'allocation.platform', { wallet: b.share.wallet, bps, label: String(b.share.label || 'SUBZERONE platform').slice(0, 40) }, u.wallet);
-    }
-    audit(db, { actor: `admin:${u.wallet}`, kind: 'admin', isPublic: false, message: 'platform share changed (applies to new drafts only; disclosed publicly)', data: b.share });
     return { ok: true };
   });
   r.post('/api/admin/jobs/:id/retry', (ctx) => { const u = requireAdmin(ctx); if (!retryDead(db, ctx.params.id, `admin:${u.wallet}`)) throw new HttpError(409, 'not_dead'); return { ok: true }; });
@@ -508,7 +562,29 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   }
 
   // --- static files ---------------------------------------------------------------------------------------------------
+  // CITY_DIST set: the city client owns / and /assets/*; the launchpad's own home page moves to /launchpad
+  function serveCity(res, path) {
+    if (!cfg.cityDist) return false;
+    const root = normalize(cfg.cityDist);
+    let rel;
+    if (path === '/') rel = 'index.html';
+    else if (path.startsWith('/assets/')) {
+      try { rel = decodeURIComponent(path.slice(1)); } catch { return false; }
+    } else return false;
+    const file = normalize(join(root, rel));
+    const inside = path === '/' ? file === join(root, 'index.html') : file.startsWith(join(root, 'assets') + sep);
+    if (rel.includes('\0') || !inside || !existsSync(file) || !statSync(file).isFile()) {
+      if (path.startsWith('/assets/')) { sendJson(res, 404, { error: 'not_found' }); return true; }
+      return false;
+    }
+    res.writeHead(200, { 'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
+      'cache-control': path === '/' ? 'no-cache' : 'public, max-age=31536000, immutable' });
+    res.end(readFileSync(file));
+    return true;
+  }
+
   function serveStatic(res, path) {
+    if (serveCity(res, path)) return true;
     const file = normalize(join(PUBLIC, path === '/' || PAGES.some((re) => re.test(path)) ? 'index.html' : path));
     if (!file.startsWith(PUBLIC) || !existsSync(file) || !statSync(file).isFile()) return false;
     res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream',
@@ -534,6 +610,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
         // state-changing requests must come from our own pages
         const o = req.headers.origin;
         if (o !== origin.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
+        worldCache = null;                                     // a write may change the city; the next read rebuilds it
       }
       const cookies = parseCookies(req.headers.cookie);
       const ip = clientIp(req, cfg.trustProxy);

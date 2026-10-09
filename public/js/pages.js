@@ -1,5 +1,5 @@
 import { api, html, raw, short, when, ago, sol, pct, usd, copyButton } from './lib.js';
-import { state, toast, requireSignIn, go, every, refreshMe } from './app.js';
+import { state, toast, requireSignIn, go, every, refreshMe, homePath } from './app.js';
 import { connected } from './wallet.js';
 
 const EDITABLE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved'];
@@ -171,7 +171,7 @@ export async function idea(el, id) {
   const draw = async () => {
     const x = await api(`/api/ideas/${id}`);
     el.innerHTML = html`
-    <p class="small"><a href="/" data-link class="dim">← room</a></p>
+    <p class="small"><a href="${homePath()}" data-link class="dim">← room</a></p>
     <div class="row" style="justify-content:space-between"><h1>${x.title}</h1>${statusChip(x.status, x.project?.provider, x.project?.network)}</div>
     ${stages(x.status)}
     ${x.statusNote ? html`<div class="notice">${x.statusNote}${x.job && x.job.status === 'queued' && x.job.runAfter > Date.now() ? html` <span class="faint">· next try ${when(x.job.runAfter)}</span>` : ''}</div>` : ''}
@@ -333,7 +333,7 @@ export async function fees(el) {
     <h3>Four separate things</h3>
     <p class="small"><b>1. Trading fees charged by the launch provider.</b> pump.fun charges a fee on every trade. Rates are read from its on-chain fee configuration when a launch is prepared, never hardcoded. They change with market cap.</p>
     <p class="small"><b>2. Creator fees.</b> The part of trading fees the protocol routes to a coin's creator. It accrues in a creator vault on-chain.</p>
-    <p class="small"><b>3. Allocation of creator fees.</b> Who receives the creator fees and in what shares. The idea submitter approves it before launch, and it's shown on every project page. For more than one recipient, the split is written on-chain (pump.fun fee sharing) and locked at launch. There's no undisclosed platform share${state.config.platformShare ? html`. A platform share is currently disclosed: ${pct(state.config.platformShare.bps)} to ${short(state.config.platformShare.wallet, 6)}` : ''}.</p>
+    <p class="small"><b>3. Allocation of creator fees.</b> A fixed rule for every project: <b>80%</b> to the idea submitter's receiving wallet and <b>20%</b> to SUB-01${state.config.sub01Share?.wallet ? html` (${short(state.config.sub01Share.wallet, 6)})` : ''}. The SUB-01 row is mandatory and can't be removed or changed; the submitter may share their 80% with collaborators. The submitter approves the exact split before launch, it's shown on every project page, and it's written on-chain (pump.fun fee sharing) and locked at launch. There is no other recipient. A community takeover moves the founder role, never the fee recipients.</p>
     <p class="small"><b>4. Hosting and generation costs.</b> SUBZERONE's own costs. They are never taken from creator fees.</p>
   </div><div>
     <h3>What the columns mean</h3>

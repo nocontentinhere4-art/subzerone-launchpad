@@ -8,10 +8,13 @@ import * as admin from './admin.js';
 export const state = { config: null, me: null, timers: [] };
 
 const ROUTES = [
-  [/^\/$/, pages.home], [/^\/submit$/, pages.submit], [/^\/ideas\/([^/]+)$/, pages.idea], [/^\/how$/, pages.how],
+  [/^\/$/, pages.home], [/^\/launchpad$/, pages.home], [/^\/submit$/, pages.submit], [/^\/ideas\/([^/]+)$/, pages.idea], [/^\/how$/, pages.how],
   [/^\/token$/, pages.token], [/^\/fees$/, pages.fees], [/^\/me$/, pages.me], [/^\/admin$/, admin.page],
   [/^\/projects\/([^/]+)\/review$/, project.review], [/^\/projects\/([^/]+)$/, project.publicPage],
 ];
+
+/** With the city client (CITY_DIST), / is the city and the launchpad home is /launchpad. */
+export const homePath = () => (state.config?.city ? '/launchpad' : '/');
 
 export function every(ms, fn) { state.timers.push(setInterval(fn, ms)); }
 
@@ -22,7 +25,7 @@ export async function render() {
   document.querySelectorAll('#nav a').forEach((a) => a.classList.toggle('on', a.getAttribute('href') === path));
   const el = document.getElementById('app');
   const hit = ROUTES.find(([re]) => re.test(path));
-  if (!hit) { el.innerHTML = html`<h1>Not here.</h1><p class="dim">This page does not exist. <a href="/" data-link>Back to his room.</a></p>`.s; return; }
+  if (!hit) { el.innerHTML = html`<h1>Not here.</h1><p class="dim">This page does not exist. <a href="${homePath()}" data-link>Back to his room.</a></p>`.s; return; }
   const params = path.match(hit[0]).slice(1).map(decodeURIComponent);
   try {
     await hit[1](el, ...params);
@@ -114,6 +117,10 @@ async function boot() {
   if (l.mock) { b.className = 'mock'; b.textContent = 'PREVIEW · Launches here use a MOCK provider: no blockchain, no tokens, no fees. The launchpad is a planned feature and not live yet.'; b.hidden = false; }
   else if (l.network === 'devnet') { b.textContent = 'PREVIEW · Launches here happen on Solana DEVNET: test tokens with no value. The launchpad is a planned feature and not live yet.'; b.hidden = false; }
   else if (l.provider === 'none') { b.textContent = 'PREVIEW · Ideas and builds work; launching is switched off. The launchpad is a planned feature and not live yet.'; b.hidden = false; }
+  if (state.config.city) {
+    document.querySelectorAll('header a[href="/"]').forEach((a) => a.setAttribute('href', '/launchpad'));
+    document.getElementById('nav').insertAdjacentHTML('afterbegin', '<a href="/" data-external>city</a>');
+  }
   await refreshMe();
   await render();
 }

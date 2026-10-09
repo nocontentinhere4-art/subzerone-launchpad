@@ -7,6 +7,7 @@ import { enqueue } from './jobs.js';
 import { transition } from './states.js';
 import { id, now, sha256, isSolanaAddress, HttpError, parseJson, utcDay } from './util.js';
 import { SUB01 } from './config.js';
+import { claimPlot, validatePlotId } from './world.js';
 
 export const LIMITS = { title: [3, 80], concept: [20, 1500], name: 32, ticker: [2, 10], links: 5, uploads: 3,
   uploadBytes: 1_500_000 };
@@ -85,6 +86,7 @@ export function submitIdea(db, cfg, wallet, input) {
   const images = (Array.isArray(input.images) ? input.images : []).slice(0, LIMITS.uploads + 1);
   if (images.length > LIMITS.uploads) throw new HttpError(400, 'invalid', `at most ${LIMITS.uploads} images`);
   const files = images.map(sniffImage);
+  const plotId = input.plotId == null || input.plotId === '' ? null : validatePlotId(input.plotId);
   const t = now();
   const today = db.get(`SELECT COUNT(*) n FROM ideas WHERE owner_wallet = ? AND created_at >= ?`, wallet, Date.parse(utcDay(t)));
   if (today.n >= cfg.budgets.maxIdeasPerWalletPerDay) {
@@ -95,6 +97,7 @@ export function submitIdea(db, cfg, wallet, input) {
     db.run(`INSERT INTO ideas (id, owner_wallet, status, status_note, created_at, updated_at)
             VALUES (?, ?, 'submitted', 'waiting for SUB-01', ?, ?)`, ideaId, wallet, t, t);
     insertVersion(db, ideaId, 1, v, wallet, t);
+    if (plotId) claimPlot(db, { plotId, kind: 'project', wallet, ideaId });   // same transaction: no idea without its plot
     mkdirSync(join(cfg.dataDir, 'uploads'), { recursive: true });
     for (const f of files) {
       const p = uploadPath(cfg.dataDir, f.sha, f.mime);
@@ -141,12 +144,14 @@ export function editIdea(db, ideaId, wallet, input) {
       // an approved allocation that names the old wallet is no longer valid: back to draft, the submitter re-approves
       const p = db.get('SELECT id FROM projects WHERE idea_id = ?', ideaId);
       if (p) {
-        // a new draft with the submitter row moved to the new wallet (others kept unless they collide with it)
+        // a new draft with the submitter row moved to the new wallet (collaborators kept unless they collide with it;
+        // the mandatory SUB-01 row is always kept)
         const prev = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved') ORDER BY version DESC LIMIT 1`, p.id);
         let rows = prev ? parseJson(prev.recipients_json, []) : [];
         rows = rows.map((r) => (r.role === 'submitter' ? { ...r, wallet: v.receivingWallet } : r));
-        if (!rows.length || rows.filter((r) => r.wallet === v.receivingWallet).length > 1) {
-          rows = [{ label: 'Idea submitter', wallet: v.receivingWallet, bps: 10000, role: 'submitter' }];
+        if (!rows.some((r) => r.role === 'sub01') || rows.filter((r) => r.wallet === v.receivingWallet).length > 1) {
+          const sub01 = rows.find((r) => r.role === 'sub01') || { label: 'SUB-01', wallet: null, bps: 2000, role: 'sub01' };
+          rows = [{ label: 'Idea submitter', wallet: v.receivingWallet, bps: 10000 - sub01.bps, role: 'submitter' }, sub01];
         }
         db.run(`UPDATE fee_allocations SET status = 'superseded' WHERE project_id = ? AND status IN ('draft','approved')`, p.id);
         const nv = (db.get('SELECT MAX(version) n FROM fee_allocations WHERE project_id = ?', p.id)?.n || 0) + 1;

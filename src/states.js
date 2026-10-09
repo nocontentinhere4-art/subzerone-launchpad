@@ -54,6 +54,8 @@ export function transition(db, ideaId, from, to, { actor = 'system', note = null
       throw new HttpError(409, 'bad_state', `cannot move from ${idea.status} to ${to}`);
     }
     db.run('UPDATE ideas SET status = ?, status_note = ?, updated_at = ? WHERE id = ?', to, note, now(), ideaId);
+    // a passed or cancelled idea gives its reserved city plot back (world.js)
+    if (to === 'declined' || to === 'cancelled') db.run(`DELETE FROM plots WHERE idea_id = ? AND kind = 'project'`, ideaId);
     audit(db, { actor, kind: 'status', ideaId, message: `${LABELS[to]}${note ? ` — ${note}` : ''}`,
       data: { from: idea.status, to, ...(data || {}) }, isPublic: true });
     return idea.status;

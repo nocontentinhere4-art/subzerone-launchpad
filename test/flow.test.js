@@ -2,9 +2,8 @@
 // launch config -> signature -> confirmation -> launched, plus the launch failure cases.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createServer, request } from 'node:http';
-import { makeEnv, user, fakeBrain, drain, IDEA, ideaStatus } from './helpers.js';
-import { createApp } from '../src/app.js';
+import { request } from 'node:http';
+import { user, drain, IDEA, ideaStatus, SUB01_WALLET, harness } from './helpers.js';
 import { setSetting } from '../src/db.js';
 import { mockSigningText } from '../src/launch/mock.js';
 import { sweepSubmitted } from '../src/launch.js';
@@ -27,36 +26,6 @@ async function later(ms, fn) {
   const realNow = Date.now;
   Date.now = () => realNow() + ms;
   try { return await fn(); } finally { Date.now = realNow; }
-}
-
-async function harness(env = {}) {
-  const e = makeEnv(env);
-  const brain = fakeBrain('build');
-  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl });
-  const server = createServer(app);
-  await new Promise((r) => server.listen(0, '127.0.0.1', r));
-  const base = `http://127.0.0.1:${server.address().port}`;
-  const client = (w) => {
-    let cookie = '';
-    const call = async (method, path, body, headers = {}) => {
-      const res = await fetch(base + path, { method, redirect: 'manual', headers: { origin: e.cfg.publicOrigin, cookie, ...(body ? { 'content-type': 'application/json' } : {}), ...headers },
-        body: body ? JSON.stringify(body) : undefined });
-      const set = res.headers.get('set-cookie');
-      if (set) cookie = set.split(';')[0];
-      const text = await res.text();
-      let json = null; try { json = JSON.parse(text); } catch { /* not json */ }
-      return { status: res.status, json, text, headers: res.headers };
-    };
-    return {
-      call, w,
-      async signIn() {
-        const n = await call('POST', '/api/auth/nonce', { wallet: w.address });
-        const v = await call('POST', '/api/auth/verify', { wallet: w.address, nonce: n.json.nonce, signature: w.signText(n.json.message) });
-        assert.equal(v.status, 200);
-      },
-    };
-  };
-  return { ...e, brain, server, base, client, close: () => server.close() };
 }
 
 async function toLaunchPrepared(h) {
@@ -102,8 +71,8 @@ test('complete flow (MOCK provider): idea -> preview -> approved config -> signe
     const cfg = proj.json.launchConfig;
     assert.equal(cfg.mock, true);
     assert.equal(cfg.initialBuyLamports, 0);
-    assert.equal(cfg.feeSharing.mode, 'direct');
-    assert.deepEqual(cfg.feeSharing.shareholders, [{ wallet: owner.w.address, bps: 10000 }]);
+    assert.equal(cfg.feeSharing.mode, 'sharing_config', '80/20 is always an on-chain split');
+    assert.deepEqual(cfg.feeSharing.shareholders, [{ wallet: owner.w.address, bps: 8000 }, { wallet: SUB01_WALLET, bps: 2000 }]);
     assert.ok(cfg.irreversible.length >= 2);
     const { res } = await signAndSubmit(h, owner, slug);
     assert.equal(res.status, 200, res.text);
@@ -233,7 +202,7 @@ test('confirmed after the confirm job gave up: the sweep finds it and the projec
   } finally { h.close(); }
 });
 
-test('incorrect fee recipients: wrong submitter wallet, bad totals and undisclosed platform rows are refused', async () => {
+test('incorrect fee recipients: wrong submitter wallet, bad totals, missing or altered SUB-01 row are refused', async () => {
   const h = await harness();
   try {
     const owner = h.client(user(h.db));
@@ -241,21 +210,55 @@ test('incorrect fee recipients: wrong submitter wallet, bad totals and undisclos
     const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w));
     await drain(h.db, h.cfg, h.brain.fetchImpl);
     const slug = (await owner.call('GET', `/api/ideas/${sub.json.id}`)).json.project.slug;
+    const draft = (await owner.call('GET', `/api/projects/${slug}`)).json.allocation;
+    assert.deepEqual(draft.recipients.map((r) => [r.role, r.wallet, r.bps]), [['submitter', owner.w.address, 8000], ['sub01', SUB01_WALLET, 2000]], 'default 80/20');
     const other = user(h.db), third = user(h.db);
+    const S1 = { wallet: SUB01_WALLET, bps: 2000, role: 'sub01' };
     const put = (recipients) => owner.call('PUT', `/api/projects/${slug}/allocation`, { recipients });
-    assert.equal((await put([{ wallet: other.address, bps: 10000, role: 'submitter' }])).status, 400, 'submitter row must be the receiving wallet');
-    assert.equal((await put([{ wallet: owner.w.address, bps: 6000, role: 'submitter' }, { wallet: other.address, bps: 3000 }])).status, 400, 'must total 100%');
-    assert.equal((await put([{ wallet: owner.w.address, bps: 9000, role: 'submitter' }, { wallet: other.address, bps: 1000, role: 'platform' }])).status, 400, 'platform row must be disclosed');
-    assert.equal((await put([{ wallet: owner.w.address, bps: 5000, role: 'submitter' }, { wallet: owner.w.address, bps: 5000 }])).status, 400, 'duplicates');
-    const ok = await put([{ wallet: owner.w.address, bps: 7000, role: 'submitter' }, { wallet: other.address, bps: 2000, label: 'artist' }, { wallet: third.address, bps: 1000 }]);
+    assert.equal((await put([{ wallet: other.address, bps: 8000, role: 'submitter' }, S1])).status, 400, 'submitter row must be the receiving wallet');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 6000, role: 'submitter' }, { wallet: other.address, bps: 1000 }, S1])).status, 400, 'must total 100%');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 10000, role: 'submitter' }])).status, 400, 'SUB-01 row cannot be removed');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 9000, role: 'submitter' }, { ...S1, bps: 1000 }])).status, 400, 'SUB-01 row is exactly 20%');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 8000, role: 'submitter' }, { ...S1, wallet: other.address }])).status, 400, 'SUB-01 row goes to SUB01_FEE_WALLET');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 7000, role: 'submitter' }, { wallet: other.address, bps: 1000, role: 'collaborator' }, { wallet: third.address, bps: 2000, role: 'collaborator' }])).status, 400, 'SUB-01 row cannot be replaced by a collaborator');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 7000, role: 'submitter' }, { wallet: other.address, bps: 1000, role: 'platform' }, S1])).status, 400, 'no platform role any more');
+    assert.equal((await put([{ wallet: owner.w.address, bps: 4000, role: 'submitter' }, { wallet: owner.w.address, bps: 4000 }, S1])).status, 400, 'duplicates');
+    const ok = await put([{ wallet: owner.w.address, bps: 5000, role: 'submitter' }, { wallet: other.address, bps: 2000, label: 'artist' }, { wallet: third.address, bps: 1000 }, { role: 'sub01', bps: 2000 }]);
     assert.equal(ok.status, 200, ok.text);
     const proj = await owner.call('GET', `/api/projects/${slug}`);
     assert.equal(proj.json.allocation.mode, 'sharing_config');
+    assert.equal(proj.json.allocation.recipients.find((r) => r.role === 'sub01').wallet, SUB01_WALLET, 'the server fills SUB-01\'s wallet');
     assert.match(proj.json.allocation.statement, /LOCKED/);
+    assert.match(proj.json.allocation.statement, /SUB-01 \(sub01\): 20\.00%/);
     // approving with a stale statement is refused
     await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true });
     const stale = await owner.call('POST', `/api/projects/${slug}/approve`, { allocationId: proj.json.allocation.id, statement: 'something else', siteVersion: proj.json.liveSiteVersion });
     assert.equal(stale.status, 409);
+  } finally { h.close(); }
+});
+
+test('SUB01_FEE_WALLET missing: the draft is still 80/20, but approval and launch preparation fail with sub01_wallet_missing', async () => {
+  const h = await harness({ SUB01_FEE_WALLET: '' });
+  try {
+    const owner = h.client(user(h.db));
+    await owner.signIn();
+    const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w));
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true });
+    const slug = (await owner.call('GET', `/api/ideas/${sub.json.id}`)).json.project.slug;
+    const proj = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    assert.deepEqual(proj.allocation.recipients.map((r) => [r.role, r.bps, r.wallet]), [['submitter', 8000, owner.w.address], ['sub01', 2000, null]], 'never 100% to someone');
+    const ap = await owner.call('POST', `/api/projects/${slug}/approve`, { allocationId: proj.allocation.id, statement: proj.allocation.statement, siteVersion: proj.liveSiteVersion });
+    assert.equal(ap.status, 409);
+    assert.equal(ap.json.error, 'sub01_wallet_missing');
+    const put = await owner.call('PUT', `/api/projects/${slug}/allocation`, { recipients: [{ wallet: owner.w.address, bps: 10000, role: 'submitter' }] });
+    assert.equal(put.json.error, 'sub01_wallet_missing');
+    assert.equal(ideaStatus(h.db, sub.json.id).status, 'preview_ready');
+    // and the launch preparation job refuses on its own, even if an approved row slipped through
+    const { buildLaunchConfig } = await import('../src/launch.js');
+    await assert.rejects(buildLaunchConfig(h.db, h.cfg, h.db.get('SELECT * FROM projects WHERE slug = ?', slug)), /sub01_wallet_missing/);
+    assert.equal((await owner.call('GET', '/api/config')).json.sub01Share.configured, false);
+    assert.equal((await owner.call('POST', '/api/admin/platform-share', { share: null })).status, 404, 'the old platform-share endpoint is gone');
   } finally { h.close(); }
 });
 

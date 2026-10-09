@@ -35,6 +35,8 @@ TRUST_PROXY=1
 DATA_DIR=/data
 APP_ENCRYPTION_KEY=<openssl rand -base64 32>
 ADMIN_WALLETS=<your wallet>
+SUB01_FEE_WALLET=<SUB-01's own wallet: receives 20% of every project's creator fees>
+CITY_DIST=/app/city/dist        # optional: the city client's build, served at / (see below)
 BRAIN_URL=https://subzerone.live
 LAUNCHPAD_BRAIN_SECRET=<same as on SUB-01>
 LAUNCH_PROVIDER=none            # until the devnet run and the ToS question are done; then pumpfun
@@ -44,6 +46,29 @@ LAUNCH_LOOKUP_TABLE=<from npm run lookup-table on that network>
 ```
 
 Production refuses to start with the mock provider, without `APP_ENCRYPTION_KEY`, or without an https origin.
+Without `SUB01_FEE_WALLET` the service starts, but every approval, launch preparation and signature request is refused
+with `409 sub01_wallet_missing`: the 80/20 split is mandatory and is never replaced by 100% to anyone. Because every
+split now has two recipients, every pump.fun launch uses the on-chain fee-sharing config, so `LAUNCH_LOOKUP_TABLE` is
+required for any real launch.
+
+### City client on the same origin (`CITY_DIST`)
+
+The 3D city (separate Vite/three.js repo `sub01-launchpad`) can be served by this service, so it calls `/api/*`
+same-origin with the session cookie and no CORS:
+
+1. In the city repo: `npm ci && npm run build` (output `dist/`, with `index.html` and `assets/`). Vite's default
+   `base: '/'` is what this expects.
+2. Copy or mount that `dist/` next to the service and set `CITY_DIST` to its **absolute** path.
+3. Effect: `GET /` serves `CITY_DIST/index.html` (`no-cache`); `GET /assets/*` serves files under `CITY_DIST/assets`
+   only (path-normalised; `..`, encoded `..%2f` and NUL are refused with 404), with `cache-control: public,
+   max-age=31536000, immutable` (Vite file names are content-hashed). MIME types include `.gltf model/gltf+json`,
+   `.glb model/gltf-binary`, `.bin application/octet-stream`, `.png`, `.js`, `.css`. The launchpad's own home page
+   moves to `/launchpad`; its header gets a "city" link back to `/`. Without `CITY_DIST` nothing changes.
+4. CSP: no change was needed. The current build (checked 2026-10-09) loads one same-origin module script and
+   stylesheet, fetches only `/api/*` and `/assets/*`, uses canvas/WebGL, and its only `data:`/`blob:` use is images
+   (three.js feature probes, GLB textures), which `img-src 'self' data: blob:` already allows. It uses no workers,
+   `eval`, external fonts or data-URI buffers. If a later build adds Draco/KTX2 decoders (blob workers) or
+   data-URI glTF buffers, it will need `worker-src blob:` / `connect-src data:`: re-check before deploying.
 
 ## 3. Domains
 

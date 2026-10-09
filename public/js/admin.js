@@ -22,10 +22,8 @@ export async function page(el) {
           <label style="margin:0">global/day $<input name="g" type="number" step="0.01" value="${o.budget.globalDailyUsd}" style="width:90px"></label>
           <label style="margin:0">per project $<input name="p" type="number" step="0.01" value="${o.budget.perProjectUsd}" style="width:90px"></label>
           <button ${admin ? '' : 'disabled'}>save</button></form></div>
-      <div><h2>Platform share (disclosed)</h2>
-        <form id="share" class="row"><input name="wallet" placeholder="wallet" value="${o.platformShare?.wallet || ''}" style="flex:2"><input name="bps" type="number" placeholder="bps" value="${o.platformShare?.bps || ''}" style="width:90px">
-          <button ${admin ? '' : 'disabled'}>set</button><button type="button" id="noshare" ${admin ? '' : 'disabled'}>none</button></form>
-        <p class="faint tiny">Currently: ${o.platformShare ? `${pct(o.platformShare.bps)} to ${short(o.platformShare.wallet, 6)}` : 'none'}. Shown on every page and in every split, and only applies to new drafts.</p></div>
+      <div><h2>SUB-01 fee share</h2>
+        <p class="small">Fixed: ${pct(o.sub01Share.bps)} of every project's creator fees to ${o.sub01Share.wallet ? html`<span class="addr tiny">${o.sub01Share.wallet}</span>` : html`<b>nobody yet: set SUB01_FEE_WALLET, approvals are refused until then</b>`}.</p></div>
     </div>
 
     <h2>Clearance queue</h2>
@@ -70,8 +68,6 @@ export async function page(el) {
     el.querySelectorAll('[data-reverify]').forEach((b) => { b.onclick = () => post(`/api/admin/projects/${b.dataset.reverify}/reverify`, {}, 'Re-verifying.'); });
     el.querySelectorAll('[data-requeue]').forEach((b) => { b.onclick = () => post(`/api/admin/jobs/${b.dataset.requeue}/retry`, {}); });
     el.querySelector('#budget').onsubmit = (e) => { e.preventDefault(); post('/api/admin/budget', { globalDailyUsd: e.target.g.value, perProjectUsd: e.target.p.value }, 'Saved.'); };
-    el.querySelector('#share').onsubmit = (e) => { e.preventDefault(); post('/api/admin/platform-share', { share: { wallet: e.target.wallet.value.trim(), bps: Number(e.target.bps.value) } }, 'Saved.'); };
-    el.querySelector('#noshare').onclick = () => post('/api/admin/platform-share', { share: null }, 'Removed.');
     el.querySelector('#role').onsubmit = (e) => { e.preventDefault(); post(`/api/admin/users/${encodeURIComponent(e.target.wallet.value.trim())}/role`, { role: e.target.role.value }); };
     el.querySelector('#ban').onsubmit = (e) => { e.preventDefault(); post(`/api/admin/users/${encodeURIComponent(e.target.wallet.value.trim())}/ban`, { banned: e.submitter?.value === '1' }); };
     el.querySelector('#backup').onclick = () => post('/api/admin/backup', {}, 'Backup written.');
