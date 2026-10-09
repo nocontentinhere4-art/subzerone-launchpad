@@ -1,18 +1,21 @@
 # City API (contract for the city client)
 
 The 3D city (`sub01-launchpad`, Vite/three.js) talks to this service. Code: `src/world.js` (plots, residents, rooms,
-world snapshot), `src/roles.js` (roles, takeovers), routes in `src/app.js`. Tests: `test/city.test.js`.
+world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers), routes in
+`src/app.js`. Tests: `test/city.test.js`, `test/custom.test.js`.
 
 ## Conventions
 
 - JSON in and out. Times are unix **milliseconds**.
-- Writes (`POST`/`PUT`) need the session cookie from wallet sign-in (`POST /api/auth/nonce` → sign → `POST
+- Writes (`POST`/`PUT`/`DELETE`) need the session cookie from wallet sign-in (`POST /api/auth/nonce` → sign → `POST
   /api/auth/verify`) and an `Origin` header equal to the service's `PUBLIC_ORIGIN`. Serve the city from the same origin
   (`CITY_DIST`, see DEPLOY.md) and the browser does both for you.
 - Errors: `{ "error": "<code>", "message": "<human sentence>" }` with an HTTP status. Codes used here:
-  `400 bad_plot | bad_name | bad_look | bad_room | bad_wallet | bad_role | bad_reason | bad_request`,
-  `401 sign_in`, `403 forbidden | not_founder | founder_active`, `404 not_found | no_role`,
+  `400 bad_plot | bad_name | bad_look | bad_traits | bad_room | bad_text | bad_wallet | bad_role | bad_reason | bad_request`,
+  `401 sign_in`, `403 forbidden | locked | own_room | not_founder | founder_active`, `404 not_found | no_role`,
   `409 plot_taken | no_resident | not_launched | already_founder | takeover_open | not_open`, `429 rate_limited`.
+- `403 locked` carries the names that are not unlocked yet: `{ "error": "locked", "message": "…", "locked": ["halo", "dragon"] }`.
+- `429 rate_limited` carries `retryAfterS` (seconds).
 - Rate limits: the same per-IP/per-wallet token buckets as every other route (reads 400/min, writes 60/min).
 - **Wallets never appear in `/api/world` or `/api/rooms/*`.** Role listings show wallets shortened to `first4…last4`.
 
@@ -47,8 +50,15 @@ Public, `cache-control: public, max-age=3600`.
     "hairStyle": ["short", "long", "bun", "buzz", "curly"],
     "outfit": ["hoodie", "jacket", "tee", "suit"],
     "freeColors": ["top", "bottom"],
-    "colorPattern": "^#[0-9a-f]{6}$"
+    "colorPattern": "^#[0-9a-f]{6}$",
+    "accessories": ["glasses", "sunglasses", "cap", "beanie", "headphones", "backpack", "scarf", "mask", "halo", "crown",
+      "cat_ears", "antenna", "wings", "jetpack"],
+    "maxAccessories": 4,
+    "pets": ["cat", "dog", "robot", "duck", "slime", "dragon"],
+    "petName": { "min": 1, "max": 12 }
   },
+  "traits": { "keys": ["neat", "outgoing", "active", "playful", "nice"], "range": [0, 1],
+    "default": { "neat": 0.5, "outgoing": 0.5, "active": 0.5, "playful": 0.5, "nice": 0.5 } },
   "name": { "min": 2, "max": 24 },
   "room": {
     "floor": ["white_oak", "honey_oak", "walnut", "smoked_oak", "concrete", "tatami", "birch", "cherry", "herringbone",
@@ -59,49 +69,96 @@ Public, `cache-control: public, max-age=3600`.
     "lighting": ["morning", "midday", "evening", "night"],
     "daylight": [0, 1],
     "catalog": { "sleep": ["bedSingle", "…"], "work": […], "sit": […], "storage": […], "kitchen": […], "light": […],
-      "plants": […], "decor": […], "structure": ["wallWindow", "wallWindowSlide", "doorway", "doorwayFront"] },
-    "items": ["…all 57 catalog names, flat…"],
+      "plants": […], "decor": […], "structure": ["wallWindow", "wallWindowSlide", "doorway", "doorwayFront"],
+      "special": ["skateboard", "plushPile", "posterCustom", "neonSign", "consoleTv", "arcadeCabinet", "karaokeMic",
+        "discoBall", "turntable", "aquarium", "trophyIdea", "trophySite", "neonTicker", "trophyLaunch", "fireworksBox",
+        "goldToilet"] },
+    "items": ["…all 73 catalog names (57 Kenney + 16 special), flat…"],
     "wallItems": ["wallWindow", "wallWindowSlide", "doorway", "doorwayFront", "lampWall"],
     "wallSides": ["left", "back"],
     "rot": [0, 90, 180, 270],
     "coord": [-3.5, 3.5],
     "y": [0, 2.5],
     "maxFurniture": 40,
+    "textItems": ["posterCustom", "neonTicker"],
+    "textMax": 12,
     "default": { "…": "DEFAULT_ROOM, see Rooms" }
   },
   "progress": { "submitted": 0.05, "evaluating": 0.12, "selected": 0.2, "generating": 0.45, "preview_ready": 0.65,
     "approved": 0.75, "launch_prepared": 0.82, "awaiting_signature": 0.88, "confirming": 0.94, "launched": 1,
-    "failed": 0, "declined": 0, "cancelled": 0 }
+    "failed": 0, "declined": 0, "cancelled": 0 },
+  "unlocks": {
+    "tiers": ["resident", "builder", "founder", "launched"],
+    "items": { "resident": ["skateboard", "plushPile", "posterCustom", "neonSign"],
+               "builder": ["consoleTv", "arcadeCabinet", "karaokeMic", "discoBall"],
+               "founder": ["turntable", "aquarium", "trophyIdea", "trophySite"],
+               "launched": ["neonTicker", "trophyLaunch", "fireworksBox", "goldToilet"] },
+    "emotes": { "resident": ["wave", "sit", "think", "sleep", "dance"], "builder": ["facepalm", "cook", "selfie"],
+                "founder": ["karaoke", "skate"], "launched": ["celebrate", "moonwalk"] },
+    "accessories": { "resident": ["glasses", "sunglasses", "cap", "beanie", "headphones", "backpack", "scarf", "mask"],
+                     "builder": ["cat_ears", "antenna"], "founder": ["halo", "wings"], "launched": ["crown", "jetpack"] },
+    "pets": { "resident": ["cat", "dog", "duck"], "builder": ["slime", "robot"], "founder": [], "launched": ["dragon"] }
+  },
+  "guestbook": { "max": 80, "keep": 50, "perPlotSeconds": 60, "perDay": 20 }
 }
 ```
 
+`unlocks.*.<tier>` lists only what that tier **adds**; a tier includes everything from the tiers before it (see Unlocks).
+
 ## Look (character)
+
+Look v2:
 
 ```json
 { "skin": "<one of look.skin>", "hair": "<one of look.hair>", "hairStyle": "short|long|bun|buzz|curly",
-  "top": "#rrggbb", "bottom": "#rrggbb", "outfit": "hoodie|jacket|tee|suit" }
+  "top": "#rrggbb", "bottom": "#rrggbb", "outfit": "hoodie|jacket|tee|suit",
+  "accessories": ["glasses", "cap"], "accessoryColor": "#rrggbb" | null,
+  "pet": { "kind": "cat|dog|robot|duck|slime|dragon", "color": "#rrggbb", "name": "Mochi" } | null }
 ```
 
-All six fields are required; unknown fields are refused (`400 bad_look`). Hex colours are stored lowercase.
+- The six v1 fields are required. `accessories` (default `[]`): 0–4 **different** names from `look.accessories`.
+  `accessoryColor` (default `null`): one colour for all accessories. `pet` (default `null`): exactly
+  `{kind, color, name}`; `name` 1–12 characters, cleaned like a resident name.
+- Unknown fields anywhere are refused (`400 bad_look`). Hex colours are stored lowercase.
+- Accessories and pets must be unlocked (`403 locked`, see Unlocks).
+- **Reads always return all nine fields**: a look saved before v2 comes back with `accessories: []`,
+  `accessoryColor: null`, `pet: null`.
+
 Name: 2–24 characters, letters (any script), digits, spaces and `. _ ' -`; whitespace is collapsed.
+
+## Traits (personality)
+
+```json
+{ "neat": 0.5, "outgoing": 0.9, "active": 0.5, "playful": 0.33, "nice": 0.5 }
+```
+
+Each 0..1, rounded to 0.01. Only these five keys (`400 bad_traits` for any other, or for a value that is not a number in
+range); a missing key is `0.5`. Traits are **public**: they drive the resident's autonomy that everyone sees, and appear
+wherever the look does. Reads always return all five (`0.5` each for residents who never set them).
 
 ## POST /api/residents (auth)
 
 Create or update the caller's own resident.
 
-Request: `{ "name": "Kenji", "look": { …look }, "plotId": "shiba-1" }`
+Request: `{ "name": "Kenji", "look": { …look v2 }, "traits": { …traits }, "plotId": "shiba-1" }`
 
 - First call: `plotId` required (the apartment).
 - Later calls: `plotId` optional; omitted or equal = keep the apartment; a different free plot = move (old one
   released). Name and look are replaced on every call.
+- `traits` optional: omitted = keep the current ones (`0.5` each for a new resident); given = all five replaced
+  (missing keys `0.5`).
+- Validation order: `400` (name, look, traits, plot), then `403 locked` (accessories/pet not unlocked; a wallet
+  creating its resident already counts as tier `resident`), then `409 plot_taken`. Nothing is saved on an error.
 
 Response `200`:
 
 ```json
 {
   "resident": { "name": "Kenji", "look": { "skin": "#c98e66", "hair": "#1b1b1b", "hairStyle": "bun", "top": "#ff6600",
-    "bottom": "#222222", "outfit": "hoodie" }, "plotId": "shiba-1", "room": { …room }, "createdAt": 1760000000000,
-    "updatedAt": 1760000000000 },
+    "bottom": "#222222", "outfit": "hoodie", "accessories": ["headphones"], "accessoryColor": null,
+    "pet": { "kind": "duck", "color": "#ffee00", "name": "Ahiru" } },
+    "traits": { "neat": 0.5, "outgoing": 0.9, "active": 0.5, "playful": 0.5, "nice": 0.5 },
+    "plotId": "shiba-1", "room": { …room }, "createdAt": 1760000000000, "updatedAt": 1760000000000 },
   "plots": [ { "plotId": "shiba-1", "kind": "apartment", "ideaId": null, "claimedAt": 1760000000000 } ]
 }
 ```
@@ -114,12 +171,21 @@ Unchanged fields (`user`, `ideas`, `fees`) plus:
 
 ```json
 {
-  "resident": { "name": "…", "look": { … }, "plotId": "shiba-1", "room": { … }, "createdAt": 0, "updatedAt": 0 } | null,
+  "resident": { "name": "…", "look": { …look v2 }, "traits": { …traits }, "plotId": "shiba-1", "room": { … },
+                "createdAt": 0, "updatedAt": 0 } | null,
   "plots": [ { "plotId": "shiba-1", "kind": "apartment", "ideaId": null, "claimedAt": 0 },
              { "plotId": "ginza-3", "kind": "project", "ideaId": "idea_…", "claimedAt": 0 } ],
-  "projectRoles": [ { "slug": "ramen-radar", "role": "founder" } ]
+  "projectRoles": [ { "slug": "ramen-radar", "role": "founder" } ],
+  "unlocks": { "tier": "builder",
+               "items": ["skateboard", "plushPile", "posterCustom", "neonSign", "consoleTv", "arcadeCabinet", "karaokeMic", "discoBall"],
+               "emotes": ["wave", "sit", "think", "sleep", "dance", "facepalm", "cook", "selfie"],
+               "accessories": ["glasses", "sunglasses", "cap", "beanie", "headphones", "backpack", "scarf", "mask", "cat_ears", "antenna"],
+               "pets": ["cat", "dog", "duck", "slime", "robot"] }
 }
 ```
+
+`unlocks` is cumulative (everything up to `tier`, in catalog order) and counts **all** the wallet's ideas, private
+ones included (it is the wallet's own view). See Unlocks.
 
 Signed out: `{ "user": null }` as before.
 
@@ -139,13 +205,16 @@ receives). Poll every 3–5 s.
   "sub01": { "state": "idle|working|asleep|offline", "ideaId": "idea_…|null", "plotId": "ginza-3|null",
              "stage": "generating|null", "text": "Building Ramen Radar (building)" },
   "plots": [
-    { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { … } }, "project": null },
+    { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits } },
+      "project": null },
     { "plotId": "ginza-3", "kind": "project", "resident": null,
       "project": { "slug": "ramen-radar|null", "name": "Ramen Radar", "ticker": "RAMEN|null", "stage": "preview_ready",
                    "stageLabel": "Preview ready for your review", "progress": 0.65, "launched": false, "mint": null } }
   ],
   "news": [ { "at": 1760000000000, "text": "Ramen Radar: Launched — verified on devnet", "plotId": "ginza-3|null",
-              "kind": "status|resident|role|takeover|approval|clearance|site|generation|edit|visibility|progress|x" } ]
+              "kind": "status|resident|role|takeover|approval|clearance|site|generation|edit|visibility|progress|x" } ],
+  "events": [ { "kind": "accepted|site_live|launched", "plotId": "ginza-3|null", "name": "Ramen Radar", "ticker": "RAMEN|null",
+                "at": 1760000000000 } ]
 }
 ```
 
@@ -164,6 +233,12 @@ receives). Poll every 3–5 s.
   followed by a stage word in brackets.
 - `news`: the last 20 **public** events, never from a private idea. Any address-like string in a text is shortened to
   `first4…last4`.
+- `events`: what the city celebrates (fireworks, street parties on the building). From the status history: an idea
+  reaching `selected` → `accepted`, `preview_ready` (the site is built) → `site_live`, `launched` → `launched`. Only the
+  **first** time an idea reaches each (a regeneration does not repeat `site_live`), only in the **last 24 hours**,
+  newest first, at most **30**, and only for ideas that are **public now** (a private idea never appears; one published
+  later shows its events of the last 24 h). `name`/`ticker` follow the same rules as `project` (current project name
+  or idea title; project ticker or the suggested one). `plotId` is null when the idea has no building.
 
 ## Rooms
 
@@ -188,6 +263,15 @@ city loads `/assets/room/<item>.glb` and scales the whole kit by one factor (a d
 - `daylight` (optional, 0 = morning … 1 = night): the editor's slider through the four presets; `lighting` stays the
   nearest preset so older clients still read something sensible. `window` defaults to `city_day`.
 - Strict: unknown fields anywhere are refused, at most 40 entries, `400 bad_room` with a message.
+- `room.catalog.special` items are placed like any piece (`{item, x, z, rot, y?}`, never `wall`) but must be
+  unlocked: saving a room with a locked one is `403 locked` with `locked: [names]` (see Unlocks).
+- `text` (optional) only on `room.textItems`, refused elsewhere: at most 12 characters after cleaning (NFKC, control
+  and bidi characters, `<`, `>` and backticks removed, whitespace collapsed; an empty result is not stored).
+  - `posterCustom`: free text.
+  - `neonTicker`: uppercased and must equal the ticker of one of **your own public** projects (`400 bad_room`, the
+    message lists yours). Omitted = your first launched project's ticker. A private ticker is refused, so a room never
+    shows one; if a project is made private later, `GET /api/rooms/:plotId` drops the neonTicker showing its ticker
+    (your own `/api/me` still has it).
 
 **Backward compatibility.** v1 rooms used generic names. They are still accepted on save and every stored room is
 read through `upgradeRoom()`, so old rows come back as v2: `bed→bedSingle`, `desk→desk`, `chair→chairDesk`,
@@ -201,8 +285,25 @@ and the door with a doormat on the back wall, a rug in the middle (see `src/worl
 
 ### GET /api/rooms/:plotId
 
-Public. `200 { "plotId": "shiba-1", "kind": "apartment|project", "owner": { "name": "Kenji", "look": { … } },
-"room": { … } }`.
+Public.
+
+```json
+{
+  "plotId": "shiba-1", "kind": "apartment|project",
+  "owner": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits } },
+  "room": { … },
+  "guestbook": [ { "id": 12, "name": "Yui", "text": "nice room 🍜", "at": 1760000000000 } ],
+  "visits": 1,
+  "unlocks": { "tier": "founder", "items": […], "emotes": […], "accessories": […], "pets": […] }
+}
+```
+
+- `guestbook`: newest first, at most 50; `name` is the visitor's resident name **now**, never a wallet. Notes written
+  before the current owner claimed the plot are not shown (a new tenant starts with an empty guestbook).
+- `visits`: the number of different residents among those notes.
+- `unlocks`: the owner's, same shape as `/api/me.unlocks`, but counting the owner's **public** ideas only (a visitor
+  must not learn that a private project exists), so it can be lower than what the owner sees.
+
 For an apartment: its resident. For a project plot: the room of the idea submitter's resident, only once the idea is
 **public** and only if the submitter has a resident. Otherwise `404` (free plot, private idea, no resident);
 `400 bad_plot` for an unknown id.
@@ -210,6 +311,44 @@ For an apartment: its resident. For a project plot: the room of the idea submitt
 ### PUT /api/rooms/me (auth)
 
 Request `{ "room": { … } }` → `200 { "room": { …as stored } }`. `409 no_resident` until `POST /api/residents`.
+Order: `400 bad_room` (shape), `409 no_resident`, `403 locked`, `400 bad_room` (neonTicker text).
+
+### POST /api/rooms/:plotId/guestbook (auth)
+
+Request `{ "text": "nice room 🍜" }` → `200 { "entry": { "id": 12, "name": "Yui", "text": "nice room 🍜", "at": 0 } }`.
+
+- The plot must be visitable (the `GET` above would answer): otherwise `404`; unknown id `400 bad_plot`.
+- `403 own_room`: the plot's owner cannot sign their own guestbook. `409 no_resident`: the writer needs a resident.
+- `text`: 1–80 characters (code points) after cleaning (as `text` above; emoji kept), else `400 bad_text`. Address-like
+  strings are shortened to `first4…last4`.
+- Limits (`429 rate_limited` + `retryAfterS`): one note per minute per room, 20 notes per **UTC day** per wallet.
+  Counted separately from the notes, so deleting a note does not give the quota back.
+- Only the latest 50 notes per plot are kept. Nothing is added to the public news.
+
+### DELETE /api/rooms/:plotId/guestbook/:id (auth)
+
+→ `200 { "ok": true }`. The plot's current owner or the note's author; anyone else `403 forbidden`; a note that is not
+on that plot `404`.
+
+## Unlocks
+
+Tiers, in order, from the wallet's own ideas (`unlocksFor(db, wallet)` in `src/world.js`):
+
+| tier | reached when |
+|---|---|
+| `resident` | the wallet has a resident |
+| `builder` | any of its ideas reached `selected` or later |
+| `founder` | any reached `preview_ready` or later, or has a built site |
+| `launched` | any project launched (verified launch) |
+
+- `tier` is the highest reached (`null` with empty lists: no resident and no progress). Progress counts even before
+  the resident exists, so a new resident may start with builder items.
+- **Reached once = kept**: the status history is on record, so a later `cancelled`/`failed` does not take an unlock
+  back.
+- Lists are cumulative: everything from `/api/world/options.unlocks` up to and including `tier`.
+- Enforced on `POST /api/residents` (accessories, pet kind) and `PUT /api/rooms/me` (special items): `403 locked`.
+  Emotes are not sent to the server; the client offers only `unlocks.emotes`.
+
 
 ## Creator fees (what the city should say)
 

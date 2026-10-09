@@ -3,7 +3,7 @@
 // key makes a double claim impossible even across processes. Everything returned by worldView() is public.
 import { audit } from './db.js';
 import { LABELS } from './states.js';
-import { now, HttpError, parseJson } from './util.js';
+import { now, HttpError, parseJson, utcDay } from './util.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
   'asakusa', 'ueno', 'ikebukuro', 'nakano', 'kanda', 'tsukiji', 'odaiba', 'yoyogi', 'meguro', 'shinagawa', 'sumida',
@@ -21,6 +21,27 @@ export const LOOK = Object.freeze({
 export const FREE_COLORS = ['top', 'bottom'];          // any #rrggbb
 const HEX = /^#[0-9a-f]{6}$/;
 export const NAME = { min: 2, max: 24 };
+// look v2: up to 4 accessories (one shared colour) and an optional pet; traits drive the resident's public autonomy
+export const ACCESSORIES = ['glasses', 'sunglasses', 'cap', 'beanie', 'headphones', 'backpack', 'scarf', 'mask', 'halo', 'crown',
+  'cat_ears', 'antenna', 'wings', 'jetpack'];
+export const MAX_ACCESSORIES = 4;
+export const PETS = ['cat', 'dog', 'robot', 'duck', 'slime', 'dragon'];
+export const PET_NAME = { min: 1, max: 12 };
+export const TRAITS = ['neat', 'outgoing', 'active', 'playful', 'nice'];
+export const DEFAULT_TRAITS = Object.freeze(Object.fromEntries(TRAITS.map((k) => [k, 0.5])));
+
+// Unlock tiers, earned through the project pipeline. Each tier lists what it adds; a tier includes all lower ones.
+export const TIERS = ['resident', 'builder', 'founder', 'launched'];
+export const UNLOCKS = Object.freeze({
+  tiers: TIERS,
+  items: { resident: ['skateboard', 'plushPile', 'posterCustom', 'neonSign'], builder: ['consoleTv', 'arcadeCabinet', 'karaokeMic', 'discoBall'],
+    founder: ['turntable', 'aquarium', 'trophyIdea', 'trophySite'], launched: ['neonTicker', 'trophyLaunch', 'fireworksBox', 'goldToilet'] },
+  emotes: { resident: ['wave', 'sit', 'think', 'sleep', 'dance'], builder: ['facepalm', 'cook', 'selfie'], founder: ['karaoke', 'skate'],
+    launched: ['celebrate', 'moonwalk'] },
+  accessories: { resident: ['glasses', 'sunglasses', 'cap', 'beanie', 'headphones', 'backpack', 'scarf', 'mask'], builder: ['cat_ears', 'antenna'],
+    founder: ['halo', 'wings'], launched: ['crown', 'jetpack'] },
+  pets: { resident: ['cat', 'dog', 'duck'], builder: ['slime', 'robot'], founder: [], launched: ['dragon'] },
+});
 
 // Room schema v2: Kenney Furniture Kit pieces (CC0) by name, grouped for the editor's catalog drawer.
 export const ROOM_CATALOG = Object.freeze({
@@ -35,6 +56,7 @@ export const ROOM_CATALOG = Object.freeze({
   decor: ['rugRectangle', 'rugRound', 'rugSquare', 'rugDoormat', 'tableCoffee', 'sideTable', 'televisionModern',
     'speaker', 'speakerSmall', 'radio'],
   structure: ['wallWindow', 'wallWindowSlide', 'doorway', 'doorwayFront'],
+  special: Object.values(UNLOCKS.items).flat(),          // unlocked by tier (unlocksFor)
 });
 // v1 rooms stored these generic names; they are read (and still accepted on save) as their Kenney equivalents.
 export const LEGACY_ITEMS = Object.freeze({ bed: 'bedSingle', desk: 'desk', chair: 'chairDesk', couch: 'loungeSofa',
@@ -57,6 +79,8 @@ export const ROOM = Object.freeze({
   maxFurniture: 40,
 });
 const ITEM_SET = new Set(ROOM.items), WALL_ITEMS = new Set(ROOM.wallItems);
+export const TEXT_ITEMS = ['posterCustom', 'neonTicker'];   // accept `text` (≤ 12 characters; neonTicker: one of your tickers)
+export const ITEM_TEXT_MAX = 12;
 // The SUB-01 studio: bed under the window on the left wall, desk + gaming chair in the corner, bookcase, small fridge
 // and the front door on the back wall, rug in the middle.
 export const DEFAULT_ROOM = Object.freeze({
@@ -104,7 +128,7 @@ export function validateRoom(room) {
   if (!Array.isArray(room.furniture) || room.furniture.length > ROOM.maxFurniture) throw bad(`furniture: an array of at most ${ROOM.maxFurniture}`);
   const inRange = (v) => typeof v === 'number' && Number.isFinite(v) && v >= ROOM.coord[0] && v <= ROOM.coord[1];
   const furniture = room.furniture.map((f) => {
-    if (!f || typeof f !== 'object' || Array.isArray(f) || Object.keys(f).some((k) => !['item', 'x', 'z', 'rot', 'y', 'wall'].includes(k))) throw bad('furniture entries: {item, x, z, rot, y?, wall?}');
+    if (!f || typeof f !== 'object' || Array.isArray(f) || Object.keys(f).some((k) => !['item', 'x', 'z', 'rot', 'y', 'wall', 'text'].includes(k))) throw bad('furniture entries: {item, x, z, rot, y?, wall?, text?}');
     const item = typeof f.item === 'string' && Object.hasOwn(LEGACY_ITEMS, f.item) ? LEGACY_ITEMS[f.item] : f.item;
     if (!ITEM_SET.has(item)) throw bad('furniture item: one of room.items (see /api/world/options)');
     if (!inRange(f.x) || !inRange(f.z)) throw bad(`furniture x and z: numbers from ${ROOM.coord[0]} to ${ROOM.coord[1]}`);
@@ -118,6 +142,12 @@ export function validateRoom(room) {
       if (!ROOM.wallSides.includes(f.wall)) throw bad(`${item} hangs on a wall: wall 'left' or 'back'`);
       out.wall = f.wall;
     } else if (f.wall !== undefined) throw bad(`${item} cannot hang on a wall`);
+    if (f.text !== undefined) {
+      if (!TEXT_ITEMS.includes(item)) throw bad(`${item} has no text`);
+      const t = typeof f.text === 'string' ? cleanText(f.text) : null;
+      if (t == null || [...t].length > ITEM_TEXT_MAX) throw bad(`${item} text: at most ${ITEM_TEXT_MAX} characters`);
+      if (t) out.text = item === 'neonTicker' ? t.toUpperCase() : t;
+    }
     return out;
   });
   return { materials: { floor: m.floor, walls: m.walls, accent: m.accent }, lighting: room.lighting,
@@ -133,10 +163,53 @@ export function upgradeRoom(stored) {
 
 export function saveRoom(db, wallet, room) {
   const v = validateRoom(room);
-  const r = db.run('UPDATE residents SET room_json = ?, updated_at = ? WHERE wallet = ?', JSON.stringify(v), now(), wallet);
-  if (!r.changes) throw new HttpError(409, 'no_resident', 'create your resident first (POST /api/residents)');
+  if (!db.get('SELECT 1 FROM residents WHERE wallet = ?', wallet)) throw new HttpError(409, 'no_resident', 'create your resident first (POST /api/residents)');
+  const u = unlocksFor(db, wallet);
+  refuseLocked(v.furniture.map((f) => f.item).filter((i) => SPECIAL.has(i) && !u.items.includes(i)));
+  const tickers = v.furniture.some((f) => f.item === 'neonTicker') ? publicTickers(db, wallet) : [];
+  for (const f of v.furniture) {
+    if (f.item !== 'neonTicker') continue;
+    f.text ??= tickers[0];                          // the oldest launched project's ticker (launched tier: there is one)
+    if (!tickers.includes(f.text)) throw new HttpError(400, 'bad_room', `neonTicker text: one of your public project tickers (${tickers.join(', ') || 'none'})`);
+  }
+  db.run('UPDATE residents SET room_json = ?, updated_at = ? WHERE wallet = ?', JSON.stringify(v), now(), wallet);
   return v;
 }
+
+const SPECIAL = new Set(ROOM_CATALOG.special);
+const refuseLocked = (names) => {
+  if (names.length) throw new HttpError(403, 'locked', `not unlocked yet: ${[...new Set(names)].join(', ')}`, { locked: [...new Set(names)] });
+};
+/** Tickers of the wallet's public projects, launched ones first (oldest first). */
+const publicTickers = (db, wallet) => db.all(`SELECT p.ticker FROM projects p JOIN ideas i ON i.id = p.idea_id LEFT JOIN launches l ON l.project_id = p.id
+  WHERE i.owner_wallet = ? AND i.visibility = 'public' ORDER BY l.verified_at IS NULL, l.verified_at, p.created_at`, wallet).map((x) => String(x.ticker).toUpperCase());
+
+// pipeline stages at or after "selected" / "preview_ready" (states.js)
+const BUILDER_STAGES = ['selected', 'generating', 'preview_ready', 'approved', 'launch_prepared', 'awaiting_signature', 'confirming', 'launched'];
+const FOUNDER_STAGES = BUILDER_STAGES.slice(2);
+const inList = (xs) => xs.map((x) => `'${x}'`).join(',');
+
+/** Index into TIERS of the highest tier the wallet reached (-1: none). Reached once = kept: a later cancel does not
+ * take it back (the status history in `events`, the built site and the launch stay on record). publicOnly counts public ideas only, for
+ * views other people see (a private idea must not be linkable to a person). */
+function tierIndex(db, wallet, { publicOnly = false } = {}) {
+  const vis = publicOnly ? `AND i.visibility = 'public'` : '';
+  const has = (sql) => Boolean(db.get(`SELECT 1 x FROM ideas i LEFT JOIN projects p ON p.idea_id = i.id WHERE i.owner_wallet = ? ${vis} AND (${sql}) LIMIT 1`, wallet));
+  if (has(`i.status = 'launched' OR EXISTS (SELECT 1 FROM launches l WHERE l.project_id = p.id)`)) return 3;
+  const reached = (stages) => `i.status IN (${inList(stages)}) OR EXISTS (SELECT 1 FROM events e WHERE e.idea_id = i.id AND e.kind = 'status'
+    AND json_extract(e.data_json, '$.to') IN (${inList(stages)}))`;
+  if (has(`${reached(FOUNDER_STAGES)} OR p.live_site_version IS NOT NULL`)) return 2;
+  if (has(reached(BUILDER_STAGES))) return 1;
+  return db.get('SELECT 1 x FROM residents WHERE wallet = ?', wallet) ? 0 : -1;
+}
+
+const unlocksAt = (idx) => {
+  const upTo = TIERS.slice(0, idx + 1);
+  const pick = (k) => upTo.flatMap((t) => UNLOCKS[k][t]);
+  return { tier: TIERS[idx] ?? null, items: pick('items'), emotes: pick('emotes'), accessories: pick('accessories'), pets: pick('pets') };
+};
+/** What the wallet has unlocked: { tier: 'resident'|'builder'|'founder'|'launched'|null, items, emotes, accessories, pets }. */
+export const unlocksFor = (db, wallet, opts) => unlocksAt(tierIndex(db, wallet, opts));
 
 /** Public: the interior behind a plot. Apartments show their resident; a project plot shows its submitter's room
  * only once the idea is public (a private idea must not be linkable to a person). */
@@ -146,7 +219,61 @@ export function roomView(db, plotId) {
   if (!pl || (pl.kind === 'project' && pl.visibility !== 'public')) return null;
   const r = db.get('SELECT * FROM residents WHERE wallet = ?', pl.wallet);
   if (!r) return null;
-  return { plotId, kind: pl.kind, owner: { name: r.name, look: parseJson(r.look_json) }, room: upgradeRoom(parseJson(r.room_json)) };
+  const room = upgradeRoom(parseJson(r.room_json));
+  if (room.furniture.some((f) => f.item === 'neonTicker')) {      // a project made private since: its ticker is not shown
+    const tickers = publicTickers(db, pl.wallet);
+    room.furniture = room.furniture.filter((f) => f.item !== 'neonTicker' || tickers.includes(f.text));
+  }
+  const guestbook = db.all(`SELECT g.id, COALESCE(r.name, 'Visitor') name, g.text, g.created_at at FROM guestbook g LEFT JOIN residents r ON r.wallet = g.wallet
+    WHERE g.plot_id = ? AND g.created_at >= ? ORDER BY g.id DESC LIMIT ?`, plotId, pl.claimed_at, GUESTBOOK.keep);
+  const visits = db.get('SELECT COUNT(DISTINCT wallet) n FROM guestbook WHERE plot_id = ? AND created_at >= ?', plotId, pl.claimed_at).n;
+  return { plotId, kind: pl.kind, owner: { name: r.name, look: readLook(r.look_json), traits: readTraits(r.traits_json) }, room,
+    guestbook, visits, unlocks: unlocksFor(db, pl.wallet, { publicOnly: true }) };
+}
+
+// --- guestbook: visitors' notes in a room (never the visitor's wallet; entries from before the current claim are hidden) -
+export const GUESTBOOK = { max: 80, keep: 50, perPlotMs: 60_000, perDay: 20 };
+
+/** The plot whose room a visitor can see (roomView rules), with its owner wallet; 404 otherwise. */
+function visitablePlot(db, plotId) {
+  validatePlotId(plotId);
+  const pl = db.get(`SELECT pl.plot_id, pl.wallet, pl.kind, pl.claimed_at, i.visibility FROM plots pl LEFT JOIN ideas i ON i.id = pl.idea_id
+    JOIN residents r ON r.wallet = pl.wallet WHERE pl.plot_id = ?`, plotId);
+  if (!pl || (pl.kind === 'project' && pl.visibility !== 'public')) throw new HttpError(404, 'not_found', 'nobody lives there (or it is private)');
+  return pl;
+}
+
+export function postGuestbook(db, wallet, plotId, text) {
+  const pl = visitablePlot(db, plotId);
+  if (pl.wallet === wallet) throw new HttpError(403, 'own_room', 'you cannot sign your own guestbook');
+  if (!db.get('SELECT 1 FROM residents WHERE wallet = ?', wallet)) throw new HttpError(409, 'no_resident', 'create your resident first (POST /api/residents)');
+  const c = typeof text === 'string' ? cleanText(text) : '';
+  if (!c || [...c].length > GUESTBOOK.max) throw new HttpError(400, 'bad_text', `1–${GUESTBOOK.max} characters`);
+  const t = scrub(c);                                // an address-like string is shortened, as in the news
+  const at = now(), day = utcDay(at);
+  return db.tx(() => {
+    const last = db.get('SELECT MAX(last_at) t FROM guestbook_quota WHERE wallet = ? AND plot_id = ?', wallet, plotId).t;
+    if (last && at - last < GUESTBOOK.perPlotMs) throw new HttpError(429, 'rate_limited', 'one note per room per minute', { retryAfterS: Math.ceil((GUESTBOOK.perPlotMs - (at - last)) / 1000) });
+    if (db.get('SELECT COALESCE(SUM(n), 0) n FROM guestbook_quota WHERE wallet = ? AND day = ?', wallet, day).n >= GUESTBOOK.perDay) {
+      throw new HttpError(429, 'rate_limited', `at most ${GUESTBOOK.perDay} notes a day`, { retryAfterS: Math.ceil((Date.parse(`${day}T00:00:00Z`) + 86_400_000 - at) / 1000) });
+    }
+    db.run(`INSERT INTO guestbook_quota (wallet, plot_id, day, n, last_at) VALUES (?, ?, ?, 1, ?)
+      ON CONFLICT(wallet, day, plot_id) DO UPDATE SET n = n + 1, last_at = excluded.last_at`, wallet, plotId, day, at);
+    db.run('DELETE FROM guestbook_quota WHERE day < ?', utcDay(at - 86_400_000));
+    const id = Number(db.run('INSERT INTO guestbook (plot_id, wallet, text, created_at) VALUES (?, ?, ?, ?)', plotId, wallet, t, at).lastInsertRowid);
+    db.run('DELETE FROM guestbook WHERE plot_id = ? AND id NOT IN (SELECT id FROM guestbook WHERE plot_id = ? ORDER BY id DESC LIMIT ?)', plotId, plotId, GUESTBOOK.keep);
+    const name = db.get('SELECT name FROM residents WHERE wallet = ?', wallet).name;
+    return { id, name, text: t, at };
+  });
+}
+
+/** The room's owner or the note's author may remove a note. */
+export function deleteGuestbook(db, wallet, plotId, id) {
+  validatePlotId(plotId);
+  const g = db.get('SELECT g.wallet, pl.wallet owner FROM guestbook g LEFT JOIN plots pl ON pl.plot_id = g.plot_id WHERE g.id = ? AND g.plot_id = ?', Number(id) || 0, plotId);
+  if (!g) throw new HttpError(404, 'not_found');
+  if (g.wallet !== wallet && g.owner !== wallet) throw new HttpError(403, 'forbidden', 'only the room\'s owner or the author can remove a note');
+  db.run('DELETE FROM guestbook WHERE id = ?', Number(id));
 }
 
 export const PROGRESS = { submitted: 0.05, evaluating: 0.12, selected: 0.2, generating: 0.45, preview_ready: 0.65, approved: 0.75,
@@ -160,31 +287,67 @@ export function validatePlotId(plotId) {
 }
 
 export function validateLook(look) {
-  if (!look || typeof look !== 'object' || Array.isArray(look)) throw new HttpError(400, 'bad_look', 'look must be an object');
-  const keys = [...Object.keys(LOOK), ...FREE_COLORS];
+  const bad = (m) => new HttpError(400, 'bad_look', m);
+  if (!look || typeof look !== 'object' || Array.isArray(look)) throw bad('look must be an object');
+  const keys = [...Object.keys(LOOK), ...FREE_COLORS, 'accessories', 'accessoryColor', 'pet'];
   const extra = Object.keys(look).filter((k) => !keys.includes(k));
-  if (extra.length) throw new HttpError(400, 'bad_look', `unknown look field ${extra[0].slice(0, 20)}`);
+  if (extra.length) throw bad(`unknown look field ${extra[0].slice(0, 20)}`);
   const out = {};
   for (const [k, allowed] of Object.entries(LOOK)) {
     const v = typeof look[k] === 'string' ? look[k].toLowerCase() : look[k];
-    if (!allowed.includes(v)) throw new HttpError(400, 'bad_look', `${k}: one of ${allowed.join(', ')}`);
+    if (!allowed.includes(v)) throw bad(`${k}: one of ${allowed.join(', ')}`);
     out[k] = v;
   }
-  for (const k of FREE_COLORS) {
-    const v = String(look[k] ?? '').toLowerCase();
-    if (!HEX.test(v)) throw new HttpError(400, 'bad_look', `${k}: a #rrggbb colour`);
-    out[k] = v;
+  const hex = (v, k) => { const c = typeof v === 'string' ? v.toLowerCase() : ''; if (!HEX.test(c)) throw bad(`${k}: a #rrggbb colour`); return c; };
+  for (const k of FREE_COLORS) out[k] = hex(look[k], k);
+  const acc = look.accessories ?? [];
+  if (!Array.isArray(acc) || acc.length > MAX_ACCESSORIES || acc.some((a) => !ACCESSORIES.includes(a)) || new Set(acc).size !== acc.length) {
+    throw bad(`accessories: up to ${MAX_ACCESSORIES} different ones of ${ACCESSORIES.join(', ')}`);
   }
+  out.accessories = [...acc];
+  out.accessoryColor = look.accessoryColor == null ? null : hex(look.accessoryColor, 'accessoryColor');
+  const pet = look.pet ?? null;
+  if (pet !== null) {
+    if (typeof pet !== 'object' || Array.isArray(pet) || Object.keys(pet).some((k) => !['kind', 'color', 'name'].includes(k))) throw bad('pet: null or {kind, color, name}');
+    if (!PETS.includes(pet.kind)) throw bad(`pet.kind: one of ${PETS.join(', ')}`);
+    out.pet = { kind: pet.kind, color: hex(pet.color, 'pet.color'), name: cleanName(pet.name, PET_NAME, 'bad_look', 'pet.name: ') };
+  } else out.pet = null;
   return out;
 }
 
-export function validateName(name) {
+/** Stored looks are read through this: looks saved before v2 get no accessories and no pet. */
+export function readLook(json) {
+  const l = parseJson(json) || {};
+  return { ...l, accessories: l.accessories ?? [], accessoryColor: l.accessoryColor ?? null, pet: l.pet ?? null };
+}
+
+/** {neat, outgoing, active, playful, nice}: numbers 0..1, rounded to 0.01; a missing key is 0.5. */
+export function validateTraits(traits) {
+  const bad = (m) => new HttpError(400, 'bad_traits', m);
+  if (!traits || typeof traits !== 'object' || Array.isArray(traits)) throw bad('traits must be an object');
+  const extra = Object.keys(traits).filter((k) => !TRAITS.includes(k));
+  if (extra.length) throw bad(`unknown trait ${extra[0].slice(0, 20)} (traits: ${TRAITS.join(', ')})`);
+  return Object.fromEntries(TRAITS.map((k) => {
+    const v = traits[k] ?? 0.5;
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 1) throw bad(`${k}: a number from 0 to 1`);
+    return [k, round2(v)];
+  }));
+}
+export const readTraits = (json) => { try { return validateTraits(parseJson(json) || {}); } catch { return { ...DEFAULT_TRAITS }; } };
+
+function cleanName(name, { min, max }, code, prefix = '') {
   const v = String(name ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
-  if (v.length < NAME.min || v.length > NAME.max || !/^[\p{L}\p{N} ._'-]+$/u.test(v)) {
-    throw new HttpError(400, 'bad_name', `${NAME.min}–${NAME.max} letters, digits, spaces or . _ ' -`);
+  if (v.length < min || v.length > max || !/^[\p{L}\p{N} ._'-]+$/u.test(v)) {
+    throw new HttpError(400, code, `${prefix}${min}–${max} letters, digits, spaces or . _ ' -`);
   }
   return v;
 }
+export const validateName = (name) => cleanName(name, NAME, 'bad_name');
+
+/** Free text (guestbook notes, poster text): NFKC, no control or bidi characters, no < > `, whitespace collapsed.
+ * Emoji stay. Length limits count code points. */
+export const cleanText = (s) => String(s).normalize('NFKC').replace(/[\u0000-\u001f\u007f-\u009f\u200b\u200e\u200f\u202a-\u202e\u2066-\u2069\ufeff<>`]/g, ' ')
+  .replace(/\s+/g, ' ').trim();
 
 /** Inside a transaction: claim a free plot or 409. The pre-check gives a clear error; the primary key is the guard. */
 export function claimPlot(db, { plotId, kind, wallet, ideaId = null }) {
@@ -202,22 +365,27 @@ export function claimPlot(db, { plotId, kind, wallet, ideaId = null }) {
 export function saveResident(db, wallet, input) {
   const name = validateName(input.name);
   const look = validateLook(input.look);
+  const traits = input.traits === undefined ? null : validateTraits(input.traits);
   const plotId = input.plotId == null ? null : validatePlotId(input.plotId);
+  // a wallet creating its resident counts as a resident already
+  const u = unlocksAt(Math.max(0, tierIndex(db, wallet)));
+  refuseLocked([...look.accessories.filter((a) => !u.accessories.includes(a)), ...(look.pet && !u.pets.includes(look.pet.kind) ? [look.pet.kind] : [])]);
   const t = now();
   return db.tx(() => {
     const cur = db.get('SELECT * FROM residents WHERE wallet = ?', wallet);
     if (!cur && !plotId) throw new HttpError(400, 'bad_plot', 'choose an apartment plot');
     const target = plotId || cur.plot_id;
+    const traitsJson = traits ? JSON.stringify(traits) : cur?.traits_json ?? JSON.stringify(DEFAULT_TRAITS);   // omitted = keep
     if (cur && target !== cur.plot_id) {
       claimPlot(db, { plotId: target, kind: 'apartment', wallet });
-      db.run('UPDATE residents SET name = ?, look_json = ?, plot_id = ?, updated_at = ? WHERE wallet = ?', name, JSON.stringify(look), target, t, wallet);
+      db.run('UPDATE residents SET name = ?, look_json = ?, traits_json = ?, plot_id = ?, updated_at = ? WHERE wallet = ?', name, JSON.stringify(look), traitsJson, target, t, wallet);
       db.run(`DELETE FROM plots WHERE plot_id = ? AND kind = 'apartment' AND wallet = ?`, cur.plot_id, wallet);
       audit(db, { actor: `wallet:${wallet}`, kind: 'resident', isPublic: true, message: `${name} moved to ${target}`, data: { from: cur.plot_id, to: target } });
     } else if (cur) {
-      db.run('UPDATE residents SET name = ?, look_json = ?, updated_at = ? WHERE wallet = ?', name, JSON.stringify(look), t, wallet);
+      db.run('UPDATE residents SET name = ?, look_json = ?, traits_json = ?, updated_at = ? WHERE wallet = ?', name, JSON.stringify(look), traitsJson, t, wallet);
     } else {
       claimPlot(db, { plotId: target, kind: 'apartment', wallet });
-      db.run('INSERT INTO residents (wallet, name, look_json, plot_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', wallet, name, JSON.stringify(look), target, t, t);
+      db.run('INSERT INTO residents (wallet, name, look_json, traits_json, plot_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', wallet, name, JSON.stringify(look), traitsJson, target, t, t);
       audit(db, { actor: `wallet:${wallet}`, kind: 'resident', isPublic: true, message: `${name} moved into ${target}`, data: { to: target } });
     }
     return residentOf(db, wallet);
@@ -226,7 +394,8 @@ export function saveResident(db, wallet, input) {
 
 export function residentOf(db, wallet) {
   const r = db.get('SELECT * FROM residents WHERE wallet = ?', wallet);
-  return r && { name: r.name, look: parseJson(r.look_json), plotId: r.plot_id, room: upgradeRoom(parseJson(r.room_json)), createdAt: r.created_at, updatedAt: r.updated_at };
+  return r && { name: r.name, look: readLook(r.look_json), traits: readTraits(r.traits_json), plotId: r.plot_id, room: upgradeRoom(parseJson(r.room_json)),
+    createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 export const plotsOf = (db, wallet) => db.all('SELECT plot_id plotId, kind, idea_id ideaId, claimed_at claimedAt FROM plots WHERE wallet = ? ORDER BY claimed_at', wallet);
@@ -253,13 +422,13 @@ export function worldView(db, cfg) {
     const launched = stage === 'launched' && Boolean(x.mint);
     return { slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null };
   };
-  const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, i.status, i.visibility, v.title, v.ticker_suggestion,
+  const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, i.status, i.visibility, v.title, v.ticker_suggestion,
       p.slug, p.name pname, p.ticker, l.mint
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
     LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`);
   const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind,
-    resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: parseJson(x.look_json) } : null,
+    resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: readLook(x.look_json), traits: readTraits(x.traits_json) } : null,
     project: x.kind === 'project' && x.status ? projectOf(x) : null }));
 
   // SUB-01: working on whatever job is running now; otherwise what the brain last answered (no network call here)
@@ -290,7 +459,19 @@ export function worldView(db, cfg) {
     WHERE e.public = 1 AND (e.idea_id IS NULL OR i.visibility = 'public') AND (e.project_id IS NULL OR i.visibility = 'public')
     ORDER BY e.id DESC LIMIT 20`).map((e) => ({ at: e.at, kind: e.kind, plotId: e.plot_id ?? (e.kind === 'resident' ? residentPlot(e.message) : null),
     text: scrub(e.name ? `${e.name}: ${e.message}` : e.message) }));
-  return { now: now(), sub01, plots, news };
+  return { now: now(), sub01, plots, news, events: cityEvents(db) };
+}
+
+// status changes the city celebrates (fireworks, street parties): the first time an idea reaches each of them
+const EVENT_KINDS = { selected: 'accepted', preview_ready: 'site_live', launched: 'launched' };
+/** Last 24 h, newest first, at most 30, public ideas only. */
+export function cityEvents(db, since = now() - 86_400_000) {
+  return db.all(`SELECT e.at, json_extract(e.data_json, '$.to') st, pl.plot_id, COALESCE(p.name, v.title) name, COALESCE(p.ticker, v.ticker_suggestion) ticker
+    FROM events e JOIN ideas i ON i.id = e.idea_id JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
+    LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN plots pl ON pl.idea_id = i.id
+    WHERE e.kind = 'status' AND e.at > ? AND i.visibility = 'public' AND json_extract(e.data_json, '$.to') IN ('selected', 'preview_ready', 'launched')
+      AND NOT EXISTS (SELECT 1 FROM events o WHERE o.idea_id = e.idea_id AND o.kind = 'status' AND o.id < e.id AND json_extract(o.data_json, '$.to') = json_extract(e.data_json, '$.to'))
+    ORDER BY e.id DESC LIMIT 30`, since).map((e) => ({ kind: EVENT_KINDS[e.st], plotId: e.plot_id ?? null, name: e.name, ticker: e.ticker || null, at: e.at }));
 }
 
 const residentPlot = (msg) => msg.match(/ (?:into|to) ([a-z]+-[1-6])$/)?.[1] ?? null;

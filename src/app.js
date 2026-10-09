@@ -13,8 +13,9 @@ import { buildSiteVersion, setLiveVersion, SITE_CSP } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
-import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, saveResident, residentOf,
-  plotsOf, worldView, roomView, saveRoom } from './world.js';
+import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
+  PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
+  unlocksFor, postGuestbook, deleteGuestbook } from './world.js';
 import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
@@ -107,7 +108,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const launched = db.all(`SELECT p.slug FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN launches l ON l.project_id = p.id WHERE i.owner_wallet = ?`, ctx.user.wallet);
     const projectRoles = db.all('SELECT p.slug, r.role FROM project_roles r JOIN projects p ON p.id = r.project_id WHERE r.wallet = ? ORDER BY r.granted_at', ctx.user.wallet);
     return { user: ctx.user, ideas, fees: launched.map((x) => ({ slug: x.slug, ledger: feeLedger(db, projectBySlug(x.slug).id) })),
-      resident: residentOf(db, ctx.user.wallet) || null, plots: plotsOf(db, ctx.user.wallet), projectRoles };
+      resident: residentOf(db, ctx.user.wallet) || null, plots: plotsOf(db, ctx.user.wallet), projectRoles, unlocks: unlocksFor(db, ctx.user.wallet) };
   });
 
   // --- ideas ------------------------------------------------------------------------------------------------------
@@ -323,8 +324,10 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   // --- city (world.js, roles.js; contract in docs/CITY-API.md) -------------------------------------------------------
   r.get('/api/world/options', (ctx) => ctx.raw(200, Buffer.from(JSON.stringify({
     districts: DISTRICTS, plotsPerDistrict: PLOTS_PER_DISTRICT, plotIds: PLOT_IDS,
-    look: { ...LOOK, freeColors: FREE_COLORS, colorPattern: '^#[0-9a-f]{6}$' }, name: NAME,
-    room: { ...ROOM, default: DEFAULT_ROOM }, progress: PROGRESS,
+    look: { ...LOOK, freeColors: FREE_COLORS, colorPattern: '^#[0-9a-f]{6}$', accessories: ACCESSORIES, maxAccessories: MAX_ACCESSORIES, pets: PETS, petName: PET_NAME },
+    traits: { keys: TRAITS, range: [0, 1], default: DEFAULT_TRAITS }, name: NAME,
+    room: { ...ROOM, textItems: TEXT_ITEMS, textMax: ITEM_TEXT_MAX, default: DEFAULT_ROOM }, progress: PROGRESS, unlocks: UNLOCKS,
+    guestbook: { max: GUESTBOOK.max, keep: GUESTBOOK.keep, perPlotSeconds: GUESTBOOK.perPlotMs / 1000, perDay: GUESTBOOK.perDay },
   })), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=3600' }));
   let worldCache = null;                                     // one snapshot for everyone, at most 3 s old
   r.get('/api/world', (ctx) => {
@@ -342,6 +345,12 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     if (!v) throw new HttpError(404, 'not_found', 'nobody lives there (or it is private)');
     return v;
   });
+  r.post('/api/rooms/:plotId/guestbook', async (ctx) => {
+    const u = requireUser(ctx);
+    limit('write', u.wallet);
+    return { entry: postGuestbook(db, u.wallet, ctx.params.plotId, (await ctx.body()).text) };
+  });
+  r.del('/api/rooms/:plotId/guestbook/:id', (ctx) => { deleteGuestbook(db, requireUser(ctx).wallet, ctx.params.plotId, ctx.params.id); return { ok: true }; });
   r.put('/api/rooms/me', async (ctx) => {
     const u = requireUser(ctx);
     limit('write', u.wallet);

@@ -12,6 +12,7 @@ export function router() {
   };
   return {
     get: (p, h, o) => add('GET', p, h, o), post: (p, h, o) => add('POST', p, h, o), put: (p, h, o) => add('PUT', p, h, o),
+    del: (p, h, o) => add('DELETE', p, h, o),
     match(method, path) {
       for (const r of routes) {
         if (r.method !== method && !(method === 'HEAD' && r.method === 'GET')) continue;

@@ -11,6 +11,9 @@ import { worldView, PLOT_IDS, DEFAULT_ROOM, claimPlot } from '../src/world.js';
 import { INACTIVE_MS } from '../src/roles.js';
 
 const LOOK = { skin: '#c98e66', hair: '#1b1b1b', hairStyle: 'bun', top: '#FF6600', bottom: '#222222', outfit: 'hoodie' };
+// how a v1 look (no accessories, no pet) reads back, and the default traits
+const LOOK_OUT = { ...LOOK, top: '#ff6600', accessories: [], accessoryColor: null, pet: null };
+const TRAITS_DEFAULT = { neat: 0.5, outgoing: 0.5, active: 0.5, playful: 0.5, nice: 0.5 };
 
 async function signedIn(h, role = 'user') {
   const c = h.client(user(h.db, role));
@@ -140,7 +143,7 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     const plot = w.json.plots.find((p) => p.plotId === 'ebisu-2');
     assert.deepEqual(plot, { plotId: 'ebisu-2', kind: 'project', resident: null,
       project: { slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null } });
-    assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: { ...LOOK, top: '#ff6600' } });
+    assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT });
     for (const secret of ['Secret Sauce', 'SAUCE', 'Ramen', a.w.address, sub.json.id, a.w.address.slice(0, 12)]) assert.ok(!w.text.includes(secret), `leaked ${secret}`);
     assert.ok(w.json.news.some((n) => n.text === 'Kenji moved into ebisu-1' && n.plotId === 'ebisu-1'));
     assert.equal(w.json.news.filter((n) => n.plotId === 'ebisu-2').length, 0, 'no news from a private idea');
@@ -188,7 +191,9 @@ test('rooms: default room, strict validation, own room only, public read by plot
     const anon = h.client(user(h.db));
     let r = await anon.call('GET', '/api/rooms/kanda-1');
     assert.equal(r.status, 200);
-    assert.deepEqual(r.json, { plotId: 'kanda-1', kind: 'apartment', owner: { name: 'Kenji', look: { ...LOOK, top: '#ff6600' } }, room: DEFAULT_ROOM });
+    assert.deepEqual(r.json, { plotId: 'kanda-1', kind: 'apartment', owner: { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT }, room: DEFAULT_ROOM,
+      guestbook: [], visits: 0, unlocks: { tier: 'resident', items: ['skateboard', 'plushPile', 'posterCustom', 'neonSign'], emotes: ['wave', 'sit', 'think', 'sleep', 'dance'],
+        accessories: ['glasses', 'sunglasses', 'cap', 'beanie', 'headphones', 'backpack', 'scarf', 'mask'], pets: ['cat', 'dog', 'duck'] } });
     assert.equal((await anon.call('GET', '/api/rooms/kanda-2')).status, 404);
     assert.equal((await anon.call('GET', '/api/rooms/mars-1')).status, 400);
     const room = { materials: { floor: 'tatami', walls: 'sage', accent: 'rust' }, lighting: 'night', furniture: [{ item: 'bed', x: -3.5, z: 3.5, rot: 270 }, { item: 'table', x: 0.123, z: 0, rot: 0 }] };
@@ -364,9 +369,9 @@ test('CITY_DIST: city at /, immutable assets with model MIME types, traversal re
 
 test('rooms v2: Kenney catalog, stacking, wall pieces, window view; v1 rooms still load', async () => {
   const { ROOM, ROOM_CATALOG, LEGACY_ITEMS, validateRoom, upgradeRoom } = await import('../src/world.js');
-  assert.equal(ROOM.items.length, 57);
-  assert.equal(new Set(ROOM.items).size, 57, 'no item in two categories');
-  assert.deepEqual(Object.keys(ROOM_CATALOG), ['sleep', 'work', 'sit', 'storage', 'kitchen', 'light', 'plants', 'decor', 'structure']);
+  assert.equal(ROOM.items.length, 73, '57 Kenney pieces + 16 special');
+  assert.equal(new Set(ROOM.items).size, 73, 'no item in two categories');
+  assert.deepEqual(Object.keys(ROOM_CATALOG), ['sleep', 'work', 'sit', 'storage', 'kitchen', 'light', 'plants', 'decor', 'structure', 'special']);
   for (const v of Object.values(LEGACY_ITEMS)) assert.ok(ROOM.items.includes(v), v);
   assert.deepEqual(validateRoom(DEFAULT_ROOM), DEFAULT_ROOM, 'the default room is valid and stored as is');
   assert.ok(DEFAULT_ROOM.furniture.length <= ROOM.maxFurniture);
