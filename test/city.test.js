@@ -377,6 +377,37 @@ test('CITY_DIST: city at /, immutable assets with model MIME types, traversal re
   } finally { plain.close(); }
 });
 
+test('CITY_DIST brand: /brand files and the manifest come from the city build with their MIME types; traversal and misses are 404', async () => {
+  const dist = mkdtempSync(join(tmpdir(), 'city-brand-'));
+  mkdirSync(join(dist, 'brand'), { recursive: true });
+  writeFileSync(join(dist, 'index.html'), '<!doctype html><title>SUB-01 · The neighborhood</title>');
+  writeFileSync(join(dist, 'brand', 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"/>');
+  writeFileSync(join(dist, 'brand', 'favicon.ico'), 'ico');
+  writeFileSync(join(dist, 'brand', 'icon-192.png'), 'png');
+  writeFileSync(join(dist, 'manifest.webmanifest'), '{"name":"SUBZERONE"}');
+  writeFileSync(join(dist, 'secret.txt'), 'nope');
+  const h = await harness({ CITY_DIST: dist });
+  try {
+    const svg = await rawGet(h.base, '/brand/favicon.svg');
+    assert.equal(svg.status, 200);
+    assert.equal(svg.headers['content-type'], 'image/svg+xml');
+    assert.equal(svg.headers['cache-control'], 'public, max-age=3600');
+    assert.equal((await rawGet(h.base, '/brand/favicon.ico')).headers['content-type'], 'image/x-icon');
+    assert.equal((await rawGet(h.base, '/brand/icon-192.png')).headers['content-type'], 'image/png');
+    const manifest = await rawGet(h.base, '/manifest.webmanifest');
+    assert.equal(manifest.status, 200);
+    assert.equal(manifest.headers['content-type'], 'application/manifest+json');
+    assert.match(manifest.body, /SUBZERONE/);
+    for (const p of ['/brand/..%2fsecret.txt', '/brand/%2e%2e/secret.txt', '/brand/../secret.txt', '/brand/missing.png', '/brand/', '/brand/favicon.svg%00', '/manifest.webmanifest%00']) {
+      const r = await rawGet(h.base, p);
+      assert.equal(r.status, 404, p);
+      assert.ok(!r.body.includes('nope'), p);
+    }
+    const home = await rawGet(h.base, '/');
+    assert.match(home.body, /The neighborhood/, 'the city home is still the city');
+  } finally { h.close(); }
+});
+
 test('rooms v2: Kenney catalog, stacking, wall pieces, window view; v1 rooms still load', async () => {
   const { ROOM, ROOM_CATALOG, LEGACY_ITEMS, validateRoom, upgradeRoom } = await import('../src/world.js');
   assert.equal(ROOM.items.length, 73, '57 Kenney pieces + 16 special');

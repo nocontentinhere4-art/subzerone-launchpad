@@ -29,7 +29,7 @@ import { log } from './log.js';
 const PUBLIC = join(ROOT, 'public');
 const PAGES = [/^\/$/, /^\/launchpad$/, /^\/submit$/, /^\/ideas\/[^/]+$/, /^\/projects\/[^/]+(\/review)?$/, /^\/token$/, /^\/me$/, /^\/admin$/, /^\/fees$/, /^\/how$/];
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
-  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json',
+  '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.webmanifest': 'application/manifest+json',
   '.gltf': 'model/gltf+json', '.glb': 'model/gltf-binary', '.bin': 'application/octet-stream', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.webp': 'image/webp', '.ktx2': 'image/ktx2', '.hdr': 'application/octet-stream', '.woff2': 'font/woff2', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.wasm': 'application/wasm' };
 const COOKIE = 'lp_session';
@@ -588,23 +588,27 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   }
 
   // --- static files ---------------------------------------------------------------------------------------------------
-  // CITY_DIST set: the city client owns / and /assets/*; the launchpad's own home page moves to /launchpad
+  // CITY_DIST set: the city client owns / (its index.html), /assets/* (hashed, immutable), and its brand files
+  // (/brand/*, /manifest.webmanifest, cached an hour). A missing owned file is a 404; the rest is the launchpad's
+  // (its home page moves to /launchpad).
   function serveCity(res, path) {
     if (!cfg.cityDist) return false;
     const root = normalize(cfg.cityDist);
-    let rel;
-    if (path === '/') rel = 'index.html';
-    else if (path.startsWith('/assets/')) {
+    const dir = ['assets', 'brand'].find((d) => path.startsWith(`/${d}/`));
+    const manifest = path === '/manifest.webmanifest';
+    if (path !== '/' && !dir && !manifest) return false;
+    let rel = 'index.html';
+    if (path !== '/') {
       try { rel = decodeURIComponent(path.slice(1)); } catch { return false; }
-    } else return false;
+    }
     const file = normalize(join(root, rel));
-    const inside = path === '/' ? file === join(root, 'index.html') : file.startsWith(join(root, 'assets') + sep);
+    const inside = dir ? file.startsWith(join(root, dir) + sep) : true;
     if (rel.includes('\0') || !inside || !existsSync(file) || !statSync(file).isFile()) {
-      if (path.startsWith('/assets/')) { sendJson(res, 404, { error: 'not_found' }); return true; }
+      if (dir || manifest) { sendJson(res, 404, { error: 'not_found' }); return true; }
       return false;
     }
-    res.writeHead(200, { 'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream',
-      'cache-control': path === '/' ? 'no-cache' : 'public, max-age=31536000, immutable' });
+    const cache = path === '/' ? 'no-cache' : dir === 'assets' ? 'public, max-age=31536000, immutable' : 'public, max-age=3600';
+    res.writeHead(200, { 'content-type': MIME[extname(file).toLowerCase()] || 'application/octet-stream', 'cache-control': cache });
     res.end(readFileSync(file));
     return true;
   }
