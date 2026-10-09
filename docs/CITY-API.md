@@ -209,7 +209,8 @@ receives). Poll every 3–5 s.
       "project": null },
     { "plotId": "ginza-3", "kind": "project", "resident": null,
       "project": { "slug": "ramen-radar|null", "name": "Ramen Radar", "ticker": "RAMEN|null", "stage": "preview_ready",
-                   "stageLabel": "Preview ready for your review", "progress": 0.65, "launched": false, "mint": null } }
+                   "stageLabel": "Preview ready for your review", "progress": 0.65, "launched": false, "mint": null,
+                   "logoUrl": "/meta/ramen-radar/logo-v1.png|null", "bannerUrl": "/meta/ramen-radar/banner-v1.svg|null" } }
   ],
   "news": [ { "at": 1760000000000, "text": "Ramen Radar: Launched — verified on devnet", "plotId": "ginza-3|null",
               "kind": "status|resident|role|takeover|approval|clearance|site|generation|edit|visibility|progress|x" } ],
@@ -220,10 +221,15 @@ receives). Poll every 3–5 s.
 
 - `plots` lists **claimed** plots only, oldest claim first.
 - `project` for an idea that is still **private**: `{ "slug": null, "name": "Private project", "ticker": null,
-  "stage", "stageLabel", "progress", "launched": false, "mint": null }`. Nothing else about it is exposed.
+  "stage", "stageLabel", "progress", "launched": false, "mint": null, "logoUrl": null, "bannerUrl": null }`. Nothing else
+  about it is exposed.
 - Public idea: `name` is the project name (or the idea title before the project exists); `ticker` is the project's
   (or the suggested one); `slug` is null until SUB-01 has built it (`/projects/<slug>` on the launchpad).
 - `mint` is set only when `launched` is true.
+- `logoUrl` / `bannerUrl`: the project's latest generated logo (PNG) and banner (SVG) as public same-origin paths
+  `/meta/<slug>/logo-v<n>.png` and `/meta/<slug>/banner-v<n>.svg` (the files the token metadata links to; immutable,
+  `access-control-allow-origin: *`, served only while the idea is public). `null` while the idea is private, before
+  SUB-01 has built the project (no slug) or when no art is stored. The city's big screens and blimp show them.
 - `progress` follows `/api/world/options.progress`; while `generating`, the job's step refines it
   (0.5 writing the identity, 0.58 building the site).
 - `sub01.state`: `working` = a pipeline job is running right now (then `ideaId` is null if that idea is private, and

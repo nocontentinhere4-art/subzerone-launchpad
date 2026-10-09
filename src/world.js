@@ -418,12 +418,17 @@ export function worldView(db, cfg) {
     let progress = PROGRESS[stage] ?? 0;
     if (stage === 'generating' && GEN_STEPS[genProgress.get(x.idea_id)]) progress = GEN_STEPS[genProgress.get(x.idea_id)];
     const base = { stage, stageLabel: LABELS[stage] || stage, progress };
-    if (x.visibility !== 'public') return { slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null };
+    if (x.visibility !== 'public') return { slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null, logoUrl: null, bannerUrl: null };
     const launched = stage === 'launched' && Boolean(x.mint);
-    return { slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null };
+    // the same public, immutable /meta/<slug>/… files the token metadata links to (app.js serves them for public ideas only)
+    const asset = (kind, v, ext) => (x.slug && v ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : null);
+    return { slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
+      logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg') };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.slug, p.name pname, p.ticker, l.mint
+      p.slug, p.name pname, p.ticker, l.mint,
+      (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
+      (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
     LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`);

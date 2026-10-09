@@ -142,7 +142,7 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     assert.equal(w.headers.get('cache-control'), 'public, max-age=3');
     const plot = w.json.plots.find((p) => p.plotId === 'ebisu-2');
     assert.deepEqual(plot, { plotId: 'ebisu-2', kind: 'project', resident: null,
-      project: { slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null } });
+      project: { slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null, logoUrl: null, bannerUrl: null } });
     assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT });
     for (const secret of ['Secret Sauce', 'SAUCE', 'Ramen', a.w.address, sub.json.id, a.w.address.slice(0, 12)]) assert.ok(!w.text.includes(secret), `leaked ${secret}`);
     assert.ok(w.json.news.some((n) => n.text === 'Kenji moved into ebisu-1' && n.plotId === 'ebisu-1'));
@@ -153,6 +153,14 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     const pub = w.json.plots.find((p) => p.plotId === 'ebisu-2').project;
     assert.equal(pub.ticker, 'SAUCE');
     assert.ok(pub.slug && pub.name !== 'Private project');
+    // the generated art is public now: same-origin /meta/<slug>/… URLs, and they serve the files
+    assert.equal(pub.logoUrl, `/meta/${pub.slug}/logo-v1.png`);
+    assert.equal(pub.bannerUrl, `/meta/${pub.slug}/banner-v1.svg`);
+    for (const [u, type] of [[pub.logoUrl, 'image/png'], [pub.bannerUrl, 'image/svg+xml']]) {
+      const r = await anon.call('GET', u);
+      assert.equal(r.status, 200);
+      assert.equal(r.headers.get('content-type'), type);
+    }
     assert.ok(w.json.news.some((n) => n.plotId === 'ebisu-2' && n.text.startsWith(`${pub.name}: `)));
     assert.ok(!w.text.includes(a.w.address), 'still no wallet');
     assert.ok(w.json.news.length <= 20);
@@ -251,7 +259,8 @@ test('roles: founder grants and revokes, others cannot; public view shortens wal
     h.db.run(`INSERT INTO plots (plot_id, kind, wallet, idea_id, claimed_at) VALUES ('roppongi-1', 'project', ?, 'idea_ramen', 1)`, founder.w.address);
     const w = await stranger.call('GET', '/api/world');
     assert.deepEqual(w.json.plots.find((x) => x.plotId === 'roppongi-1').project,
-      { slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen' });
+      { slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen',
+        logoUrl: null, bannerUrl: null }, 'no art stored: null URLs');
     assert.ok(!w.text.includes(founder.w.address) && !w.text.includes(mod.address));
   } finally { h.close(); }
 });
