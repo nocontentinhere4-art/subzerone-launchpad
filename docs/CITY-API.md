@@ -21,9 +21,14 @@ world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/role
 
 ## Plots
 
-144 plot ids: `` `${district}-${n}` `` with `n` 1..6 and district in this order:
+288 plot ids: `` `${district}-${n}` `` with `n` 1..6 and district in this order (48 districts, a 7×7 grid around the
+city's centre block):
 `shiba, shinjuku, akihabara, shibuya, harajuku, nakameguro, ebisu, roppongi, ginza, asakusa, ueno, ikebukuro, nakano,
-kanda, tsukiji, odaiba, yoyogi, meguro, shinagawa, sumida, daikanyama, nihonbashi, koenji, shimokitazawa`.
+kanda, tsukiji, odaiba, yoyogi, meguro, shinagawa, sumida, daikanyama, nihonbashi, koenji, shimokitazawa`, then the third
+ring `kiyosumi, ryogoku, oshiage, yanaka, sugamo, takadanobaba, ogikubo, kinshicho, kichijoji, ochanomizu, kagurazaka,
+toyosu, omotesando, gotanda, jiyugaoka, tsukishima, sangenjaya, kitasenju, nippori, aoyama, shinbashi, akasaka, iidabashi,
+mejiro`. The first 24 districts (144 ids) are unchanged from the 5×5 city, so saved plots and residents stay valid. The
+city client keeps the same list in `src/city-state.js` (`districts`, positions included).
 
 A plot is claimed once, first come first served, as either:
 
@@ -41,9 +46,9 @@ Public, `cache-control: public, max-age=3600`.
 
 ```json
 {
-  "districts": ["shiba", "shinjuku", "…24 names"],
+  "districts": ["shiba", "shinjuku", "…48 names"],
   "plotsPerDistrict": 6,
-  "plotIds": ["shiba-1", "shiba-2", "…144 ids"],
+  "plotIds": ["shiba-1", "shiba-2", "…288 ids"],
   "look": {
     "skin": ["#f6d5b8", "#e8b48f", "#c98e66", "#a26a45", "#7a4a2e", "#4f3020"],
     "hair": ["#1b1b1b", "#3b2a20", "#6b4428", "#a87443", "#d9b26f", "#b23a2e", "#e8e8e8", "#4a6cd4"],

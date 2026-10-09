@@ -1,13 +1,18 @@
-// The shared city: 24 Tokyo districts × 6 plots. A plot is claimed once, first come first served, either as a
-// resident's apartment or as a project's building (reserved with the idea). Claims are rows in `plots`; the primary
-// key makes a double claim impossible even across processes. Everything returned by worldView() is public.
+// The shared city: 48 Tokyo districts × 6 plots (a 7×7 grid around the hero block; the third ring was appended in
+// wave 4A so the first 24 districts and their 144 plot ids keep their order). A plot is claimed once, first come first
+// served, either as a resident's apartment or as a project's building (reserved with the idea). Claims are rows in
+// `plots`; the primary key makes a double claim impossible even across processes. Everything returned by worldView() is public.
 import { audit } from './db.js';
 import { LABELS } from './states.js';
 import { now, HttpError, parseJson, utcDay } from './util.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
   'asakusa', 'ueno', 'ikebukuro', 'nakano', 'kanda', 'tsukiji', 'odaiba', 'yoyogi', 'meguro', 'shinagawa', 'sumida',
-  'daikanyama', 'nihonbashi', 'koenji', 'shimokitazawa'];
+  'daikanyama', 'nihonbashi', 'koenji', 'shimokitazawa',
+  // third ring (wave 4A), the same order as the city client's city-state.js RING3
+  'kiyosumi', 'ryogoku', 'oshiage', 'yanaka', 'sugamo', 'takadanobaba', 'ogikubo', 'kinshicho', 'kichijoji', 'ochanomizu',
+  'kagurazaka', 'toyosu', 'omotesando', 'gotanda', 'jiyugaoka', 'tsukishima', 'sangenjaya', 'kitasenju', 'nippori', 'aoyama',
+  'shinbashi', 'akasaka', 'iidabashi', 'mejiro'];
 export const PLOTS_PER_DISTRICT = 6;
 export const PLOT_IDS = DISTRICTS.flatMap((d) => Array.from({ length: PLOTS_PER_DISTRICT }, (_, i) => `${d}-${i + 1}`));
 const PLOT_SET = new Set(PLOT_IDS);

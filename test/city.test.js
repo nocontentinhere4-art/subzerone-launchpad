@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { harness, makeEnv, user, drain, IDEA, ideaStatus, SUB01_WALLET } from './helpers.js';
-import { worldView, PLOT_IDS, DEFAULT_ROOM, claimPlot } from '../src/world.js';
+import { worldView, PLOT_IDS, DEFAULT_ROOM, claimPlot, validatePlotId } from '../src/world.js';
 import { INACTIVE_MS } from '../src/roles.js';
 
 const LOOK = { skin: '#c98e66', hair: '#1b1b1b', hairStyle: 'bun', top: '#FF6600', bottom: '#222222', outfit: 'hoodie' };
@@ -36,20 +36,28 @@ function launchedProject(db, founder, slug = 'ramen') {
   return { id: `prj_${slug}`, slug, recipients };
 }
 
-test('world options: 24 districts × 6 = 144 plot ids, look and room whitelists', async () => {
+test('world options: 48 districts × 6 = 288 plot ids, look and room whitelists', async () => {
   const h = await harness();
   try {
     const o = await h.client(user(h.db)).call('GET', '/api/world/options');
     assert.equal(o.status, 200);
-    assert.equal(o.json.plotIds.length, 144);
-    assert.equal(new Set(o.json.plotIds).size, 144);
+    assert.equal(o.json.plotIds.length, 288);
+    assert.equal(new Set(o.json.plotIds).size, 288);
     assert.ok(o.json.plotIds.includes('shimokitazawa-6') && o.json.plotIds.includes('shiba-1'));
+    // wave 4A: 48 districts; the first 24 (144 ids) keep their order, the third ring follows
+    assert.equal(o.json.districts.length, 48);
+    assert.equal(o.json.plotIds[143], 'shimokitazawa-6');
+    assert.equal(o.json.plotIds[144], 'kiyosumi-1');
+    assert.ok(o.json.plotIds.includes('kichijoji-3') && o.json.plotIds.includes('mejiro-6'));
     assert.equal(o.json.look.skin.length, 6);
     assert.equal(o.json.look.hair.length, 8);
     assert.deepEqual(o.json.look.hairStyle, ['short', 'long', 'bun', 'buzz', 'curly']);
     assert.deepEqual(o.json.room.lighting, ['morning', 'midday', 'evening', 'night']);
     assert.deepEqual(o.json.room.default, DEFAULT_ROOM);
-    assert.equal(PLOT_IDS.length, 144);
+    assert.equal(PLOT_IDS.length, 288);
+    assert.equal(validatePlotId('gotanda-6'), 'gotanda-6');
+    assert.throws(() => validatePlotId('gotanda-7'), /unknown plot/);
+    assert.throws(() => validatePlotId('kita-senju-1'), /unknown plot/);
   } finally { h.close(); }
 });
 
