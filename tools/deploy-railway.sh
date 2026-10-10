@@ -11,7 +11,7 @@
 set -euo pipefail
 
 BACKEND="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CITY_DIR="${CITY_DIR:-/Users/cn/Documents/Codex/2026-10-06/h/outputs/sub01-launchpad}"
+CITY_DIR="${CITY_DIR:-../sub01-launchpad}"   # the city client checkout (nocontentinhere4-art/sub01-launchpad)
 SERVICE="${RAILWAY_SERVICE:-launchpad}"
 
 command -v railway >/dev/null || { echo "railway CLI not installed" >&2; exit 1; }
