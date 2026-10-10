@@ -6,7 +6,8 @@ import { request } from 'node:http';
 import { user, drain, IDEA, ideaStatus, SUB01_WALLET, harness } from './helpers.js';
 import { setSetting } from '../src/db.js';
 import { mockSigningText } from '../src/launch/mock.js';
-import { sweepSubmitted } from '../src/launch.js';
+import { sweepSubmitted, setProviderForTests, getProvider, simulationMessage } from '../src/launch.js';
+import { LaunchBuildError } from '../src/launch/pumpfun.js';
 
 function getWithHost(base, host, path) {
   const u = new URL(base);
@@ -473,6 +474,7 @@ test('dev buy (launch options): owner only, cap, re-prepared config with a new h
     const check = done.json.launch.verification.find((c) => /dev buy/.test(c.name));
     assert.ok(check && check.ok, JSON.stringify(done.json.launch.verification));
     assert.equal(JSON.parse(h.db.get('SELECT payload FROM mock_chain').payload).initialBuyLamports, 500_000_000);
+    assert.match(done.json.statusNote, /dev buy: 0.5 SOL, in your wallet/);
     assert.equal((await put(owner, { initialBuySol: 0 })).status, 409, 'launched: no more changes');
   } finally { h.close(); }
 });
@@ -504,5 +506,88 @@ test('dev buy: set at preview_ready it lands in the first configuration; the har
     // the public view never shows the option
     const anon = h.client(user(h.db));
     assert.equal((await anon.call('GET', `/api/projects/${slug}`)).json.launchOptions, undefined);
+  } finally { h.close(); }
+});
+
+test('dev buy guards: minimum, wallet balance and transaction size at PUT time; a failed simulation, a coded build error or short funds never store an intent', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await toLaunchPrepared(h);
+    const put = (body) => owner.call('PUT', `/api/projects/${slug}/launch/options`, body);
+    const mock = getProvider(h.cfg, h.db);
+    const fake = { ...mock };
+    setProviderForTests(h.db, fake, h.cfg);
+    const r = await put({ initialBuySol: 0.0005 });
+    assert.equal(r.status, 400);
+    assert.match(r.json.message, /at least 0.001 SOL/);
+    // balance: 0.03 SOL covers 0.01 + the 0.02 reserve, not 0.5
+    fake.balance = async () => 30_000_000;
+    const poor = await put({ initialBuySol: 0.5 });
+    assert.equal(poor.status, 400);
+    assert.equal(poor.json.error, 'insufficient_funds');
+    assert.match(poor.json.message, /your wallet holds 0.03 SOL; the dev buy of 0.5 SOL plus about 0.02 SOL of rent and fees needs 0.52 SOL/);
+    assert.equal(h.db.get('SELECT initial_buy_lamports b FROM projects WHERE slug = ?', slug).b, 0, 'nothing stored');
+    // size: the provider says a bigger buy does not fit (the real check is offline in pumpfun.js)
+    fake.txBytes = async (c) => (c.initialBuyLamports > 10_000_000 ? { bytes: null, fits: false } : { bytes: 1202, fits: true });
+    const big = await put({ initialBuySol: 0.011 });
+    assert.equal(big.status, 409);
+    assert.equal(big.json.error, 'tx_too_large');
+    assert.match(big.json.message, /shorten the name or the ticker, keep the fee split to 2 recipients/);
+    assert.equal((await put({ initialBuySol: 0.01 })).status, 200);
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    assert.match((await owner.call('GET', `/api/projects/${slug}`)).json.launchConfig.irreversible.at(-1), /You buy 0.01 SOL of your own coin in the creation transaction, pump.fun's fees included/);
+    const tx = () => owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    const intents = () => h.db.get('SELECT COUNT(*) n FROM launch_intents').n;
+    // 1. the simulation failed: the author reads why, nothing is stored, the state stays launch_prepared
+    fake.prepare = async (c) => ({ ...(await mock.prepare(c)), estimate: { networkFeeLamports: 10_000, accountsLamports: null, initialBuyLamports: 10_000_000, signerBalanceLamports: 5_000_000,
+      simulation: { ok: false, err: '{"InstructionError":[4,{"Custom":1}]}', logs: ['Program 6EF8 invoke [1]', 'Program log: Error: insufficient lamports 5000000, need 10500000', 'Program 6EF8 failed: custom program error: 0x1'] } } });
+    let res = await tx();
+    assert.equal(res.status, 409, res.text);
+    assert.equal(res.json.error, 'simulation_failed');
+    assert.match(res.json.message, /your wallet cannot cover it: your wallet holds 0.005 SOL; the dev buy of 0.01 SOL plus about 0.02 SOL of rent and fees needs 0.03 SOL/);
+    assert.equal(intents(), 0);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    fake.prepare = async (c) => ({ ...(await mock.prepare(c)), estimate: { simulation: { ok: false, err: '{"InstructionError":[1,"ProgramFailedToComplete"]}', logs: ['Program pfee invoke [1]', 'Program log: AnchorError: ConstraintSeeds', 'Program pfee failed: custom program error: 0x7d6'] } } });
+    res = await tx();
+    assert.equal(res.json.error, 'simulation_failed');
+    assert.match(res.json.message, /rejected the transaction \(AnchorError: ConstraintSeeds\); nothing was created/);
+    // 2. a coded build error (does not fit, would complete the curve)
+    fake.prepare = async () => { throw new LaunchBuildError('buy_completes_curve', 'the dev buy would buy the whole bonding curve and complete it; choose a smaller amount'); };
+    res = await tx();
+    assert.deepEqual([res.status, res.json.error], [409, 'buy_completes_curve']);
+    // 3. the simulation passed but the balance is short of fee + rent + buy
+    fake.prepare = async (c) => ({ ...(await mock.prepare(c)), estimate: { networkFeeLamports: 10_000, accountsLamports: 15_133_320, initialBuyLamports: 10_000_000, initialBuyTokensBase: '5000000', signerBalanceLamports: 25_000_000, simulation: { ok: true } } });
+    res = await tx();
+    assert.deepEqual([res.status, res.json.error], [409, 'insufficient_funds']);
+    assert.match(res.json.message, /holds 0.025 SOL; the dev buy of 0.01 SOL plus 0.01514332 SOL of rent and fees needs 0.02514332 SOL/);
+    assert.equal(intents(), 0);
+    // 4. enough: the intent stores the reviewed token amount, and the launched note says what was bought
+    fake.prepare = async (c) => ({ ...(await mock.prepare(c)), estimate: { networkFeeLamports: 10_000, accountsLamports: 15_133_320, initialBuyLamports: 10_000_000, initialBuyTokensBase: '10493886257633', signerBalanceLamports: 1_000_000_000, simulation: { ok: true } } });
+    res = await tx();
+    assert.equal(res.status, 200, res.text);
+    assert.equal(h.db.get('SELECT buy_tokens_base b FROM launch_intents').b, '10493886257633');
+    const sig = owner.w.signText(mockSigningText(res.json.messageHash));
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/signed`, { signed: sig })).status, 200);
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+    assert.match(ideaStatus(h.db, ideaId).status_note, /dev buy: 0.01 SOL for 10,493,886 tokens, in your wallet/);
+    // the plain-words helper on its own
+    assert.match(simulationMessage({ simulation: { ok: false, err: 'x', logs: [] } }, 0), /unknown reason|rejected the transaction \(x\)/);
+    assert.match(simulationMessage({ simulation: { ok: false, logs: ['Program log: Transfer: insufficient lamports'] } }, 2_000_000), /cannot cover the dev buy of 0.002 SOL/);
+  } finally { h.close(); }
+});
+
+test('dev buy: a configuration that cannot be prepared leaves a plain note on the idea (dead prepare job)', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await toLaunchPrepared(h);
+    assert.equal((await owner.call('PUT', `/api/projects/${slug}/launch/options`, { initialBuySol: 0.01 })).status, 200);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'approved');
+    h.db.run('UPDATE projects SET initial_buy_lamports = 6000000000 WHERE slug = ?', slug);      // above the hard cap, behind the API's back
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'approved');
+    assert.match(ideaStatus(h.db, ideaId).status_note, /could not be prepared: the dev buy of 6 SOL is above the cap of 5 SOL/);
+    assert.equal(h.db.get(`SELECT status FROM jobs WHERE type = 'prepare_launch' ORDER BY created_at DESC LIMIT 1`).status, 'dead');
   } finally { h.close(); }
 });

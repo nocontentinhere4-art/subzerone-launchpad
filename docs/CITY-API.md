@@ -561,20 +561,29 @@ transaction". Code: `setInitialBuy()` in `src/launch.js`, `launchInstructions()`
   is true for the owner while the idea is `preview_ready`, `approved` or `launch_prepared` and nothing is locked.
 - `PUT /api/projects/:slug/launch/options` body `{ "initialBuySol": 0.25 }` (0 = no buy; a number or a numeric
   string). Answers `{ ok, initialBuyLamports, status, reprepared, maxInitialBuyLamports }`. Errors:
-  `400 bad_initial_buy` (negative, not a number, above the cap), `404` (not the owner), `409 intent_exists`
-  (a transaction exists: cancel it with `…/launch/abandon` first), `409 already_launched`, `409 bad_state`
-  (any other stage).
-- The cap is `MAX_INITIAL_BUY_SOL` (default 5) and never above **5 SOL**.
+  `400 bad_initial_buy` (negative, not a number, above the cap, or between 0 and the 0.001 SOL minimum),
+  `400 insufficient_funds` (the wallet cannot cover the buy plus a 0.02 SOL reserve for rent and fees; the message
+  says what it holds and needs), `404` (not the owner), `409 intent_exists` (a transaction exists: cancel it with
+  `…/launch/abandon` first), `409 tx_too_large` (with the buy the creation transaction would exceed 1232 bytes:
+  shorten the name/ticker or keep the split to 2 recipients), `409 already_launched`, `409 bad_state` (any other
+  stage).
+- The cap is `MAX_INITIAL_BUY_SOL` (default 5) and never above **5 SOL**; a non-zero buy is at least **0.001 SOL**.
+- `POST …/launch/transaction` can answer, without storing anything: `409 simulation_failed` (the network simulation
+  rejected it; the message is a plain sentence, funds first), `409 insufficient_funds` (balance below fee + rent +
+  buy), `409 tx_too_large`, `409 buy_completes_curve` (the buy would take the whole curve), `409 buy_too_small`.
+  The author stays at `launch_prepared` and changes the option.
 - Changing it while `launch_prepared` throws the reviewed configuration away and prepares it again
   (`launch_prepared → approved → launch_prepared`, a few seconds): the `launchConfig` the author reviews, its hash and
   the transaction always agree. The configuration then carries `initialBuyLamports`, `initialBuySlippageBps` (500) and
   an extra line in `irreversible` ("You buy X SOL of your own coin in the creation transaction …").
-- On `POST …/launch/transaction` the `estimate` carries `initialBuyLamports` (the quoted cost, pump.fun's trading
-  fee included), `initialBuyMaxLamports` (the cap signed in the transaction: quote + 5%) and `initialBuyTokensBase`;
-  `accountsLamports` excludes the buy, so the total the author sees is fee + rent + buy. The review's `programs`
+- On `POST …/launch/transaction` the `estimate` carries `initialBuyLamports` (the real cost of the tokens, pump.fun's
+  fees included; may differ from the request by a lamport), `initialBuyRequestedLamports`, `initialBuyMaxLamports`
+  (the cap signed in the transaction: cost + 5%) and `initialBuyTokensBase`; `accountsLamports` is the rent alone
+  (the simulation's balance change minus the buy and minus the network fee), so fee + rent + buy is the total. The review's `programs`
   gain `Associated Token Account` (direct: the author's own token account is created) and the token programs passed
   inside; `launchProgramsOnly` stays true. The mock provider records the amount in its mock ledger and buys nothing.
-- After a verified launch the verification checks include `dev buy landed: tokens in the author wallet`.
+- After a verified launch the verification checks include `dev buy landed: exactly the reviewed amount of tokens in
+  the author wallet` (the intent's `buy_tokens_base`), and the `launched` status note says what was bought.
 
 #### Framing: what the city may put in an iframe
 

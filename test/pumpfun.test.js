@@ -157,7 +157,7 @@ test('pump.fun dev buy: create + locked split + ATA + buy_v2 in one message, buy
 test('pump.fun dev buy: with the static accounts in a lookup table the transaction stays under 1232 bytes', async () => {
   const sub01 = web3.Keypair.generate().publicKey;
   const build = async () => { const signer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
-    return { signer, ...(await launchInstructions({ config: launchConfig(5_000_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG })) }; };
+    return { signer, ...(await launchInstructions({ config: launchConfig(2_000_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG })) }; };   // 5 SOL would complete devnet's 1-SOL curve
   const keys = (b) => new Set(b.ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()));
   const [x, y] = [await build(), await build()];
   const statics = [...keys(x)].filter((k) => keys(y).has(k)).sort();         // what staticAccounts() puts in the table
@@ -169,4 +169,74 @@ test('pump.fun dev buy: with the static accounts in a lookup table the transacti
   assert.ok(bytes > 1100, `${bytes} bytes: expected about 1186`);
   // without the table it does not fit at all
   assert.throws(() => new web3.VersionedTransaction(compile(x.ixs, x.signer)).serialize(), /overruns/);
+});
+
+test('pump.fun dev buy: the real cost is reported, a buy that would complete the curve is refused with a code', async () => {
+  const signer = web3.Keypair.generate().publicKey, sub01 = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+  const two = await launchInstructions({ config: launchConfig(2_000_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG });
+  assert.deepEqual([two.buy.requestedLamports, two.buy.lamports, two.buy.maxLamports], [2_000_000_000, 1_999_999_999, 2_099_999_998], 'the quote rounds: the cost of the tokens, not the request');
+  // devnet\'s Global seeds the curve with 1 SOL: 5 SOL takes every real token (mainnet seeds 30 SOL, where 5 SOL cannot)
+  await assert.rejects(launchInstructions({ config: launchConfig(5_000_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG }), (e) => e.code === 'buy_completes_curve' && /complete/.test(e.message));
+  await assert.rejects(launchInstructions({ config: launchConfig(1, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG }), (e) => e.code === 'buy_too_small');
+});
+
+test('pump.fun dev buy: offline size probe with the longest name, ticker and URI: 2 recipients fit, 3 do not', async () => {
+  const { compiledTxBytes } = await import('../src/launch/pumpfun.js');
+  const w = () => web3.Keypair.generate().publicKey.toBase58();
+  const worst = (n, buy) => ({ name: 'N'.repeat(32), symbol: 'T'.repeat(10), uri: `https://city.subzerone.live/meta/${'s'.repeat(30)}/${'0'.repeat(16)}.json`, initialBuyLamports: buy,
+    feeSharing: { mode: 'sharing_config', shareholders: [{ wallet: w(), bps: 10000 - 1000 * (n - 1) }, ...Array.from({ length: n - 1 }, () => ({ wallet: w(), bps: 1000 }))] } });
+  const two = await compiledTxBytes(worst(2, 10_000_000));
+  assert.equal(two.fits, true);
+  assert.ok(two.bytes >= 1220 && two.bytes <= 1232, `${two.bytes} bytes (expected 1231)`);
+  const three = await compiledTxBytes(worst(3, 10_000_000));
+  assert.equal(three.fits, false);
+  assert.ok(three.bytes > 1232 && three.bytes < 1300, `${three.bytes} bytes (expected 1263)`);
+  assert.equal((await compiledTxBytes(worst(3, 0))).fits, true, 'without the buy 3 recipients fit');
+  assert.equal((await compiledTxBytes(worst(8, 0))).fits, true);
+});
+
+/** A connection that answers from the fixture: Global, FeeConfig, a lookup table with every static account, a simulation. */
+function fixtureConn({ balance = 1_000_000_000, simErr = null, logs = [], fee = 10_000, rentAndFee = 15_143_320 } = {}) {
+  let table = null;
+  return {
+    async getAccountInfo(key) { const k = key.toBase58(); return k === FIX.global.address ? account(FIX.global) : k === FIX.feeConfig.address ? account(FIX.feeConfig) : null; },
+    async getAddressLookupTable() {
+      if (!table) {
+        const sub01 = web3.Keypair.generate().publicKey, b = async () => { const s = web3.Keypair.generate().publicKey; return (await launchInstructions({ config: launchConfig(10_000_000, s, sub01), mint: web3.Keypair.generate().publicKey, signer: s, global: GLOBAL, feeConfig: FEE_CONFIG })).ixs; };
+        const k = (ixs) => new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((x) => x.pubkey)]).map((x) => x.toBase58()));
+        const [x, y] = [k(await b()), k(await b())];
+        table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey, state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [...x].filter((a) => y.has(a)).map((a) => new web3.PublicKey(a)) } });
+      }
+      return { value: table };
+    },
+    async getLatestBlockhash() { return { blockhash: web3.Keypair.generate().publicKey.toBase58(), lastValidBlockHeight: 1000 }; },
+    async getFeeForMessage() { return { value: fee }; },
+    async getBalance() { return balance; },
+    async simulateTransaction(tx) {
+      const buy = tx.message.compiledInstructions.length === 5 ? 10_000_000 : 0;
+      return { value: simErr ? { err: simErr, logs } : { err: null, logs, unitsConsumed: 385_860, accounts: [{ lamports: balance - rentAndFee - buy }] } };
+    },
+  };
+}
+const CFG_TABLE = { launch: { rpcUrl: 'http://127.0.0.1:1', network: 'devnet', lookupTable: web3.Keypair.generate().publicKey.toBase58() } };
+
+test('pump.fun prepare (offline, fixture chain): the estimate rows sum (rent excludes the fee and the buy), the buy fields, the size', async () => {
+  const p = makePumpfunProvider(CFG_TABLE, { connection: fixtureConn() });
+  const signer = web3.Keypair.generate().publicKey, sub01 = web3.Keypair.generate().publicKey;
+  const built = await p.prepare({ ...launchConfig(10_000_000, signer, sub01), signer: signer.toBase58() });
+  const e = built.estimate;
+  assert.equal(e.simulation.ok, true);
+  assert.deepEqual([e.networkFeeLamports, e.accountsLamports, e.initialBuyLamports, e.initialBuyRequestedLamports, e.initialBuyMaxLamports, e.signerBalanceLamports],
+    [10_000, 15_133_320, 10_000_000, 10_000_000, 10_500_000, 1_000_000_000], 'fee + rent + buy = the simulated balance change (25,143,320)');
+  assert.equal(e.initialBuyTokensBase, '10493886257633');
+  assert.ok(built.txBytes <= 1232 && built.txBytes > 1100, `${built.txBytes} bytes`);
+  assert.equal(p.reviewOf(built.txBase64).launchProgramsOnly, true);
+  assert.equal(await p.balance(signer.toBase58()), 1_000_000_000);
+  // a failed simulation is reported, not hidden; a transaction that does not fit is a coded error
+  const poor = makePumpfunProvider(CFG_TABLE, { connection: fixtureConn({ balance: 5_000, simErr: { InstructionError: [4, { Custom: 1 }] }, logs: ['Program log: Error: insufficient lamports 5000, need 10500000'] }) });
+  const failed = await poor.prepare({ ...launchConfig(10_000_000, signer, sub01), signer: signer.toBase58() });
+  assert.equal(failed.estimate.simulation.ok, false);
+  assert.match(failed.estimate.simulation.logs.join(' '), /insufficient lamports/);
+  const noTable = makePumpfunProvider(CFG_TABLE, { connection: { ...fixtureConn(), getAddressLookupTable: async () => ({ value: new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey, state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [] } }) }) } });
+  await assert.rejects(noTable.prepare({ ...launchConfig(10_000_000, signer, sub01), signer: signer.toBase58() }), (x) => x.code === 'tx_too_large' && /1232 bytes/.test(x.message));
 });

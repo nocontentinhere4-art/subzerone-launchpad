@@ -238,6 +238,9 @@ export function onDead(db, job) {
     transition(db, job.idea_id, ['generating', 'selected'], 'failed', { note: `building failed: ${why}` });
   } else if (job.type === 'confirm_launch') {
     note(db, job.idea_id, 'not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
+  } else if (job.type === 'prepare_launch' && idea.status === 'approved') {
+    // the author reads this on the Launch tab (a dev buy that does not fit, a cap lowered since, …) and changes the option
+    note(db, job.idea_id, `the launch configuration could not be prepared: ${why}`, { actor: 'system' });
   } else {
     audit(db, { actor: 'system', kind: 'dead_job', ideaId: job.idea_id, message: `${job.type} stopped: ${why}` });
   }

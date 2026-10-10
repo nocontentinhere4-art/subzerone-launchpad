@@ -1,0 +1,328 @@
+[
+  {
+    "t": "2026-10-10T21:41:01.528Z",
+    "msg": "launchpad",
+    "data": {
+      "base": "http://127.0.0.1:8795",
+      "provider": "pumpfun",
+      "network": "devnet",
+      "brain": "https://subzerone.live"
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:01.578Z",
+    "msg": "signed in (signed messages, no transactions)",
+    "data": {
+      "submitter": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+      "reviewer": "2z2MxGMzujGTKgn9GboW38ZCgEKj2x2r4h46vSi5ZYQm (promoted to reviewer in the local DB)"
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:01.582Z",
+    "msg": "idea submitted (private)",
+    "data": {
+      "id": "idea_4Mxe0olAJPxc"
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:09.108Z",
+    "msg": "SUB-01's brain vote: build",
+    "data": {
+      "options": [
+        {
+          "label": "build: Kissaten Jazz Hours 2341",
+          "p": 0.987,
+          "value": 1,
+          "response": 0.05049
+        },
+        {
+          "label": "pass: keep doing what he is doing",
+          "p": 0.013,
+          "value": 0.093,
+          "response": 0.00472
+        }
+      ],
+      "reason": "chose it: reward and language areas responded most",
+      "network": "500k-neuron network on CPU",
+      "networks": {
+        "language": 0.188,
+        "reward": 1,
+        "somatomotor": 0.094
+      },
+      "demoBrain": false,
+      "scores": {
+        "version": "scorecard/1",
+        "originality": {
+          "score": 1,
+          "source": "rule: shingle similarity to earlier ideas",
+          "similarity": 0
+        },
+        "clarity": {
+          "score": 1,
+          "source": "rule: length and readability"
+        },
+        "feasibility": {
+          "score": 1,
+          "source": "rule: does it need running infrastructure"
+        },
+        "suitability": {
+          "score": 0.99,
+          "value": 1,
+          "response": 0.05049,
+          "source": "simulation: brain vote probability for \"build\""
+        }
+      }
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:09.113Z",
+    "msg": "built: preview ready",
+    "data": {
+      "slug": "kissaten-jazz-hours-2341",
+      "name": "Kissaten Jazz Hours 2341",
+      "ticker": "RAMEN",
+      "generator": "template/1",
+      "siteVersion": 1,
+      "xPlanned": "KissatenJaz",
+      "xStatus": "planned",
+      "split": [
+        {
+          "label": "Idea submitter",
+          "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+          "bps": 8000,
+          "role": "submitter"
+        },
+        {
+          "label": "SUB-01",
+          "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+          "bps": 2000,
+          "role": "sub01"
+        }
+      ]
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:10.472Z",
+    "msg": "dev buy set by the author",
+    "data": {
+      "ok": true,
+      "initialBuyLamports": 10000000,
+      "status": "preview_ready",
+      "reprepared": false,
+      "maxInitialBuyLamports": 5000000000
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:10.479Z",
+    "msg": "submitter published the idea and approved site + fee split",
+    "data": {
+      "statement": "I approve this split of the CREATOR FEES of this token (not trading fees, not hosting costs):\n- Idea submitter (submitter): 80.00% → 12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n\n- SUB-01 (sub01): 20.00% → 4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg\nThis split is written on-chain at launch and LOCKED: it cannot be changed afterwards by me or by SUBZERONE.\nThere is no other, undisclosed recipient. Fees depend on trading; there may be none."
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:10.482Z",
+    "msg": "reviewer cleared it for launch"
+  },
+  {
+    "t": "2026-10-10T21:41:13.491Z",
+    "msg": "launch configuration ready for review",
+    "data": {
+      "provider": "pump.fun on Solana devnet",
+      "network": "devnet",
+      "name": "Kissaten Jazz Hours 2341",
+      "symbol": "RAMEN",
+      "uri": "http://localhost:8787/meta/kissaten-jazz-hours-2341/03d9b1cc275c367b.json",
+      "supply": "1000000000000000",
+      "decimals": 6,
+      "initialBuyLamports": 10000000,
+      "recipients": [
+        {
+          "label": "Idea submitter",
+          "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+          "bps": 8000,
+          "role": "submitter"
+        },
+        {
+          "label": "SUB-01",
+          "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+          "bps": 2000,
+          "role": "sub01"
+        }
+      ],
+      "irreversible": [
+        "The token name, ticker and metadata link cannot be changed after creation.",
+        "The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.",
+        "The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)",
+        "You buy 0.01 SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + 5%."
+      ],
+      "tradingFees": {
+        "protocolFeeBps": 95,
+        "creatorFeeBps": 30,
+        "source": "pump-fees FeeConfig + pump Global (on-chain), at a fresh curve; tiers change with market cap"
+      }
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:14.639Z",
+    "msg": "transaction built (launch intent persisted before signing)",
+    "data": {
+      "mint": "5fAM1GMq44NWu5oJYkvHe7e5NDTbejFpdxG47Jhntw2K",
+      "mock": false,
+      "estimate": {
+        "networkFeeLamports": 10000,
+        "accountsLamports": 13807440,
+        "simulation": {
+          "ok": true,
+          "unitsConsumed": 380028
+        },
+        "initialBuyLamports": 10000000,
+        "initialBuyRequestedLamports": 10000000,
+        "initialBuyMaxLamports": 10500000,
+        "initialBuyTokensBase": "10493886257633",
+        "signerBalanceLamports": 958712760
+      },
+      "bytes": 1206
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:14.767Z",
+    "msg": "signed by the test wallet and submitted",
+    "data": {
+      "signature": "2v68uDGyMyMrdiztmawLjQomiQqk5Sw1x9AJxUog7qcMJi5X2p6XYfC5wBz5q32hmTVdkXs96XRE1Bm18K22Koqs",
+      "uncertain": false
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:22.289Z",
+    "msg": "result: launched",
+    "data": {
+      "note": "verified on devnet · dev buy: 0.01 SOL for 10,493,886 tokens, in your wallet",
+      "launch": {
+        "mint": "5fAM1GMq44NWu5oJYkvHe7e5NDTbejFpdxG47Jhntw2K",
+        "tx": "2v68uDGyMyMrdiztmawLjQomiQqk5Sw1x9AJxUog7qcMJi5X2p6XYfC5wBz5q32hmTVdkXs96XRE1Bm18K22Koqs",
+        "network": "devnet",
+        "provider": "pumpfun",
+        "checks": [
+          {
+            "name": "transaction found at finalized commitment",
+            "ok": true,
+            "detail": "2v68uDGyMyMrdiztmawLjQomiQqk5Sw1x9AJxUog7qcMJi5X2p6XYfC5wBz5q32hmTVdkXs96XRE1Bm18K22Koqs"
+          },
+          {
+            "name": "transaction succeeded",
+            "ok": true,
+            "detail": "null"
+          },
+          {
+            "name": "payer is the approved signer",
+            "ok": true,
+            "detail": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n"
+          },
+          {
+            "name": "pump program invoked",
+            "ok": true,
+            "detail": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+          },
+          {
+            "name": "mint account in transaction",
+            "ok": true,
+            "detail": "5fAM1GMq44NWu5oJYkvHe7e5NDTbejFpdxG47Jhntw2K"
+          },
+          {
+            "name": "mint exists (Token-2022)",
+            "ok": true,
+            "detail": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          },
+          {
+            "name": "mint authority is none",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "freeze authority is none",
+            "ok": true,
+            "detail": null
+          },
+          {
+            "name": "decimals",
+            "ok": true,
+            "detail": 6
+          },
+          {
+            "name": "bonding curve exists",
+            "ok": true,
+            "detail": "ok"
+          },
+          {
+            "name": "curve creator is the sharing config",
+            "ok": true,
+            "detail": "E7d2qV6wa8bAir9XN35XizjWWsDMrv9na18JpxfeEBuN"
+          },
+          {
+            "name": "sharing config exists",
+            "ok": true,
+            "detail": "E7d2qV6wa8bAir9XN35XizjWWsDMrv9na18JpxfeEBuN"
+          },
+          {
+            "name": "shareholders match the approved allocation",
+            "ok": true,
+            "detail": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n:8000,4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg:2000"
+          },
+          {
+            "name": "sharing admin revoked (allocation locked)",
+            "ok": true,
+            "detail": "true"
+          },
+          {
+            "name": "dev buy landed: exactly the reviewed amount of tokens in the author wallet",
+            "ok": true,
+            "detail": "10493886257633 base units (reviewed 10493886257633)"
+          }
+        ],
+        "explorer": "https://solscan.io/tx/2v68uDGyMyMrdiztmawLjQomiQqk5Sw1x9AJxUog7qcMJi5X2p6XYfC5wBz5q32hmTVdkXs96XRE1Bm18K22Koqs?cluster=devnet"
+      }
+    }
+  },
+  {
+    "t": "2026-10-10T21:41:22.292Z",
+    "msg": "public fee ledger entry",
+    "data": {
+      "mode": "sharing_config",
+      "locked": true,
+      "network": "devnet",
+      "provider": "pumpfun",
+      "mock": false,
+      "tradingFees": {
+        "protocolFeeBps": 95,
+        "creatorFeeBps": 30,
+        "source": "pump-fees FeeConfig + pump Global (on-chain), at a fresh curve; tiers change with market cap"
+      },
+      "verifiedUndistributedLamports": null,
+      "vaultScope": "this project only",
+      "vaultObservedAt": null,
+      "vaultSlot": null,
+      "vaultAccounts": [],
+      "verifiedAccruedLamports": null,
+      "confirmedPayoutsLamports": 0,
+      "payouts": [],
+      "recipients": [
+        {
+          "label": "Idea submitter",
+          "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+          "bps": 8000,
+          "role": "submitter",
+          "estimatedShareOfUndistributed": 0,
+          "confirmedPayouts": 0
+        },
+        {
+          "label": "SUB-01",
+          "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+          "bps": 2000,
+          "role": "sub01",
+          "estimatedShareOfUndistributed": 0,
+          "confirmedPayouts": 0
+        }
+      ]
+    }
+  }
+]

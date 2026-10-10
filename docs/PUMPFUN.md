@@ -48,21 +48,40 @@ So:
 
 ### With the dev buy
 
-The author's optional first buy (`initialBuyLamports` in the launch configuration) adds two instructions after the
-fee split: the author's Token-2022 associated token account (idempotent) and `buy_v2` with the sharing-config PDA as
-the curve creator, so the buy's own creator fee goes to the project's shared vault like every other trade's. The
-amount of tokens is the SDK's quote at a fresh curve (`getBuyTokenAmountFromSolAmount`, fees included); the cost cap
-signed in the transaction is the quote + 5% (500 bps). Measured with the real SDK on devnet (2026-10-10):
+The author's optional first buy (`initialBuyLamports` in the launch configuration, 0.001–5 SOL) adds two instructions
+after the fee split: the author's Token-2022 associated token account (idempotent) and `buy_v2` with the
+sharing-config PDA as the curve creator, so the buy's own creator fee goes to the project's shared vault like every
+other trade's. The amount of tokens is the SDK's quote at a fresh curve (`getBuyTokenAmountFromSolAmount`); what is
+shown, reserved and signed is the **real cost of those tokens** (`getBuySolAmountFromTokenAmount`, fees included; the
+quote rounds by a lamport or so), with a cap of cost + 5% (500 bps) in the transaction. A buy the SDK would clamp to
+the curve's whole real reserve is refused (`409 buy_completes_curve`) instead of silently buying less: on devnet the
+curve is seeded with 1 SOL, so about 2.9 SOL completes it; on mainnet (30 SOL seed) the 5 SOL cap cannot.
+
+Sizes measured with the real SDK and the 22-account lookup table (2026-10-10), longest name (32), ticker (10) and
+metadata URI (`https://city.subzerone.live/meta/<30-char slug>/<16 hex>.json`):
 
 | | with the 16-account table | with the table extended to 22 accounts |
 |---|---|---|
-| 2 shareholders + dev buy | over the limit | **1186 bytes** |
+| 2 recipients, no buy | 938 bytes (real launch) | 938 bytes |
+| 2 recipients + dev buy | over the limit | **1231 bytes** (1202 in the devnet launch, shorter name) |
+| 3 recipients + dev buy | over | **1265 bytes: does not fit** |
+
+So the dev buy needs the fee split kept at **2 recipients** (the author and SUB-01), or a shorter name/ticker; the
+server refuses it before it is stored (`PUT …/launch/options` → `409 tx_too_large`, `compiledTxBytes()` offline, no
+RPC) and again when the configuration is prepared or the transaction built. There is **no compute-budget priority fee
+instruction**: it would add about 12 bytes plus a static key, which the 2-recipient worst case (1 byte of headroom)
+cannot take.
 
 The six extra accounts are the buy's static ones: the primary fee recipient on `Global` and its WSOL ATA, one
 buyback fee recipient (the SDK otherwise picks one of eight at random per build; the provider pins the lowest-sorted
 one) and its WSOL ATA, the global volume accumulator and the pump-fees `FeeConfig` PDA. A table created before the
 dev buy existed is extended in place with `npm run lookup-table -- --extend <table>` (the signer must be the table's
 authority; the new entries are usable from the next slot). The cap is `MAX_INITIAL_BUY_SOL` (default 5, never more).
+
+Before the transaction exists the server also checks the wallet can cover the buy plus a 0.02 SOL reserve for rent
+and fees (`400 insufficient_funds` at PUT time, `409` at preparation); a preparation whose simulation fails stores
+**no** intent and answers `409 simulation_failed` with the reason in plain words. The intent stores the reviewed
+token amount (`buy_tokens_base`) and the on-chain verification checks the author's token account holds exactly it.
 
 ## Terms of service: needs a decision before mainnet
 

@@ -41,6 +41,9 @@ export function makeMockProvider(db) {
         estimate: { networkFeeLamports: 0, accountsLamports: 0, initialBuyLamports, initialBuyMaxLamports: initialBuyLamports, simulation: { ok: true, mock: true } } };
     },
 
+    /** No chain: no balance to check (null = unknown, the checks are skipped) and no size limit. */
+    async balance() { return null; },
+
     /** What the wallet will see (review-before-sign): the mock touches no program and no account. */
     reviewOf() { return { programs: [{ id: 'MockLaunch', name: 'MockLaunch', direct: true }], accountsWritable: 0, signers: 1, launchProgramsOnly: true }; },
 

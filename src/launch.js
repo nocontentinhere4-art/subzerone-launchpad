@@ -7,7 +7,7 @@ import { enqueue, Permanent, Defer } from './jobs.js';
 import { transition, note } from './states.js';
 import { currentVersion, validateReceivingWallet } from './ideas.js';
 import { makeMockProvider } from './launch/mock.js';
-import { makePumpfunProvider } from './launch/pumpfun.js';
+import { makePumpfunProvider, TOO_LARGE_NOTE } from './launch/pumpfun.js';
 import { id, now, HttpError, parseJson, isSolanaAddress } from './util.js';
 
 export const MAX_RECIPIENTS = 8;
@@ -29,16 +29,51 @@ export function maxInitialBuyLamports(cfg) {
 }
 
 /** Body value (SOL, number or numeric string) -> lamports, or 400 bad_initial_buy. */
+export const MIN_INITIAL_BUY_LAMPORTS = 1_000_000;                 // 0.001 SOL: below that the quote rounds to nothing
+// Rent + network fee a launch needs on top of the buy (devnet 2026-10-10: 15.1M lamports), with margin, for the checks
+// made before the transaction exists; the transaction itself then carries the exact numbers.
+export const LAUNCH_COST_RESERVE_LAMPORTS = 20_000_000;
+
 export function parseInitialBuySol(cfg, value) {
   const sol = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
   if (!Number.isFinite(sol) || sol < 0) throw new HttpError(400, 'bad_initial_buy', 'the dev buy is an amount of SOL, 0 or more');
   const lamports = Math.round(sol * LAMPORTS_PER_SOL);
   const cap = maxInitialBuyLamports(cfg);
   if (lamports > cap) throw new HttpError(400, 'bad_initial_buy', `the dev buy is at most ${cap / LAMPORTS_PER_SOL} SOL`);
+  if (lamports > 0 && lamports < MIN_INITIAL_BUY_LAMPORTS) throw new HttpError(400, 'bad_initial_buy', `the dev buy is at least ${solString(MIN_INITIAL_BUY_LAMPORTS)} SOL, or 0 for none`);
   return lamports;
 }
 
 export const solString = (lamports) => (lamports / LAMPORTS_PER_SOL).toFixed(9).replace(/\.?0+$/, '');
+
+/** "your wallet holds X SOL; …" for the two checks below. */
+function fundsMessage(balance, buy, extra, exact) {
+  const need = buy + extra;
+  return `your wallet holds ${solString(balance)} SOL; the dev buy of ${solString(buy)} SOL plus ${exact ? '' : 'about '}${solString(extra)} SOL of rent and fees needs ${solString(need)} SOL`;
+}
+
+/** Before a transaction exists: can the wallet cover the buy plus a reserve for rent and fees? (null balance = unknown) */
+async function checkFunds(provider, wallet, lamports) {
+  if (!(lamports > 0) || typeof provider?.balance !== 'function') return;
+  const balance = await provider.balance(wallet);
+  if (balance == null) return;
+  if (balance < lamports + LAUNCH_COST_RESERVE_LAMPORTS) throw new HttpError(400, 'insufficient_funds', fundsMessage(balance, lamports, LAUNCH_COST_RESERVE_LAMPORTS, false));
+}
+
+/**
+ * Before a dev buy is stored: would the creation transaction still fit in 1232 bytes? Offline (provider.txBytes),
+ * with the project's name and ticker, a metadata URI of the real length and the current fee split.
+ */
+async function checkTxSize(db, cfg, provider, project, lamports, uri = null) {
+  if (!(lamports > 0) || typeof provider?.txBytes !== 'function') return null;
+  const alloc = db.get(`SELECT recipients_json FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved') ORDER BY version DESC LIMIT 1`, project.id);
+  const recipients = alloc ? parseJson(alloc.recipients_json) : [];
+  const shareholders = recipients.length >= 2 ? recipients.map(({ wallet, bps }) => ({ wallet, bps })) : null;
+  const size = await provider.txBytes({ name: project.name, symbol: project.ticker, uri: uri || `${cfg.publicOrigin}/meta/${project.slug}/${'0'.repeat(16)}.json`,
+    initialBuyLamports: lamports, feeSharing: { mode: 'sharing_config', shareholders: shareholders || [{ wallet: project.id, bps: 8000 }, { wallet: cfg.sub01FeeWallet || project.id, bps: 2000 }] } });
+  if (!size.fits) throw new HttpError(409, 'tx_too_large', `${TOO_LARGE_NOTE}${size.bytes ? ` (${size.bytes} bytes)` : ''}`);
+  return size.bytes;
+}
 
 /**
  * Owner sets the dev buy. Allowed while the idea is preview_ready / approved / launch_prepared and no transaction
@@ -46,13 +81,16 @@ export const solString = (lamports) => (lamports / LAMPORTS_PER_SOL).toFixed(9).
  * the first time (launch_prepared -> approved -> prepare_launch -> launch_prepared), so the hash the author reviews
  * always matches what the transaction will do.
  */
-export function setInitialBuy(db, cfg, project, idea, wallet, lamports) {
+export async function setInitialBuy(db, cfg, project, idea, wallet, lamports) {
   if (idea.owner_wallet !== wallet) throw new HttpError(403, 'not_owner');
   if (db.get('SELECT 1 FROM launches WHERE project_id = ?', project.id)) throw new HttpError(409, 'already_launched');
   if (db.get(`SELECT 1 FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature','submitted','confirmed')`, project.id)) {
     throw new HttpError(409, 'intent_exists', 'a transaction already exists; cancel it first to change the dev buy');
   }
   if (!INITIAL_BUY_STATES.includes(idea.status)) throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
+  const provider = getProvider(cfg, db);
+  await checkTxSize(db, cfg, provider, project, lamports);              // 409 tx_too_large
+  await checkFunds(provider, wallet, lamports);                          // 400 insufficient_funds
   const t = now();
   const changed = lamports !== Number(project.initial_buy_lamports ?? 0);
   let status = idea.status;
@@ -191,10 +229,9 @@ export async function buildLaunchConfig(db, cfg, project) {
   ];
   if (mode === 'sharing_config') irreversible.push('The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
   if (initialBuyLamports > 0) {
-    const f = params.fees;
-    const feeText = Number.isFinite(f?.protocolFeeBps) && Number.isFinite(f?.creatorFeeBps)
-      ? `pump.fun's trading fee of ${((f.protocolFeeBps + f.creatorFeeBps) / 100).toFixed(2)}% applies` : 'pump.fun\'s trading fee (about 1%) applies';
-    irreversible.push(`You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction; ${feeText}; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`);
+    if (initialBuyLamports < MIN_INITIAL_BUY_LAMPORTS) throw new Permanent(`the dev buy is at least ${solString(MIN_INITIAL_BUY_LAMPORTS)} SOL, or 0 for none`);
+    try { await checkTxSize(db, cfg, provider, project, initialBuyLamports, uri); } catch (e) { throw e instanceof HttpError ? new Permanent(e.message) : e; }
+    irreversible.push(`You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`);
   }
   const config = {
     version: 'launch-config/1',
@@ -245,22 +282,53 @@ export async function createIntent(db, cfg, project, wallet) {
   const config = parseJson(project.launch_config_json);
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
-  const built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
-    signer: config.signer, feeSharing: config.feeSharing, initialBuyLamports: Number(config.initialBuyLamports) || 0 });
+  const buyLamports = Number(config.initialBuyLamports) || 0;
+  let built;
+  try {
+    built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
+      signer: config.signer, feeSharing: config.feeSharing, initialBuyLamports: buyLamports });
+  } catch (e) {
+    if (e?.code) throw new HttpError(409, e.code, e.message);     // tx_too_large, buy_completes_curve, buy_too_small: the author's choice to change
+    throw e;
+  }
+  // nothing is stored for a transaction the network would reject: the author sees why and keeps the prepared state
+  const est = built.estimate || {};
+  if (est.simulation && est.simulation.ok === false) throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));
+  if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
+    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
+    if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
+  }
   const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
   const t = now();
   db.tx(() => {
     db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint,
-              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?)`,
+              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?)`,
     intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
-    config.feeSharing.allocationId, built.mint, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight, t, t);
+    config.feeSharing.allocationId, built.mint, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
+    buyLamports > 0 && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, t, t);
     transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
   });
   return { intentId, mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
     lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes, ...reviewed };
+}
+
+/** A failed preparation simulation in one plain sentence: funds first, else the last useful program log line. */
+export function simulationMessage(est, buyLamports = 0) {
+  const logs = Array.isArray(est.simulation?.logs) ? est.simulation.logs.map(String) : [];
+  const text = [est.simulation?.err, ...logs].filter(Boolean).join('\n');
+  if (/insufficient (lamports|funds)|InsufficientFunds|Transfer: insufficient/i.test(text)) {
+    const bal = est.signerBalanceLamports;
+    return bal != null ? `the network simulation says your wallet cannot cover it: ${fundsMessage(bal, buyLamports, LAUNCH_COST_RESERVE_LAMPORTS, false)}`
+      : `the network simulation says your wallet cannot cover the dev buy of ${solString(buyLamports)} SOL plus rent and fees`;
+  }
+  const keyword = /error|failed|custom program|insufficient|exceeded/i, rev = [...logs].reverse();
+  // the program's own words first ("Program log: …"), the runtime's "Program X failed: …" line otherwise
+  const useful = rev.find((l) => /^Program log: /.test(l) && keyword.test(l)) || rev.find((l) => keyword.test(l) && !/^Program .* (consumed|success)/.test(l));
+  const line = String(useful || logs.at(-1) || est.simulation?.err || 'unknown reason').replace(/^Program log: /, '').slice(0, 200);
+  return `the network simulation rejected the transaction (${line}); nothing was created. Check the dev buy and your balance, then try again`;
 }
 
 /** Review-before-sign: what the wallet will show, read from the built transaction (provider.reviewOf). */
@@ -383,8 +451,12 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
     intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now());
     db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
-    transition(db, project.idea_id, 'confirming', 'launched', { note: provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`,
-      data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length } });
+    // the launched note records what the author bought, in whole tokens (the config's decimals) and SOL
+    const buy = Number(config.initialBuyLamports) || 0;
+    const tokens = intent.buy_tokens_base ? (Number(BigInt(intent.buy_tokens_base) / 10n ** BigInt(config.token?.decimals ?? 6))).toLocaleString('en-US') : null;
+    const bought = buy > 0 ? ` · dev buy: ${solString(buy)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet` : '';
+    transition(db, project.idea_id, 'confirming', 'launched', { note: (provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`) + bought,
+      data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length, ...(buy > 0 ? { devBuyLamports: buy, devBuyTokensBase: intent.buy_tokens_base ?? null } : {}) } });
   });
   enqueue(db, { type: 'build_site', key: `site:launched:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: { reason: 'launched' } });
   enqueue(db, { type: 'reconcile_fees', key: `fees:${project.id}:first`, projectId: project.id, payload: {} });

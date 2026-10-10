@@ -327,7 +327,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     limit('write', u.wallet);
     const b = await ctx.body();
     const lamports = parseInitialBuySol(cfg, b.initialBuySol);
-    return { ok: true, ...setInitialBuy(db, cfg, p, idea, u.wallet, lamports), maxInitialBuyLamports: maxInitialBuyLamports(cfg) };
+    return { ok: true, ...(await setInitialBuy(db, cfg, p, idea, u.wallet, lamports)), maxInitialBuyLamports: maxInitialBuyLamports(cfg) };
   });
   r.post('/api/projects/:slug/launch/transaction', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);

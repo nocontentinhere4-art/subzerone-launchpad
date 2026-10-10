@@ -104,3 +104,16 @@ Offline: `test/pumpfun.test.js` composes the same transaction from the devnet `G
 (`test/fixtures/pump-devnet-accounts.json`) and checks the order, the pinned fee recipients, the 5% cap and the size
 under 1232 bytes with the static accounts in a table; `test/flow.test.js` covers the route (permissions, cap, hash
 change, `intent_exists`, the mock ledger).
+
+### Follow-up run (2026-10-10, after the review fixes)
+
+Same setup, `docs/demo/flow-pumpfun-2026-10-10T21-41-22.json`:
+
+- a 5 SOL dev buy against the 0.9587 SOL test wallet was refused before anything was stored:
+  `PUT …/launch/options → 400 insufficient_funds: "your wallet holds 0.95871276 SOL; the dev buy of 5 SOL plus about
+  0.02 SOL of rent and fees needs 5.02 SOL"` (on devnet 5 SOL would also complete the 1-SOL-seeded curve:
+  `409 buy_completes_curve` at preparation);
+- a 0.01 SOL dev buy launched: mint `5fAM1GMq44NWu5oJYkvHe7e5NDTbejFpdxG47Jhntw2K`, tx `2v68uDGy…Koqs`, 1206 bytes,
+  380,028 CU; estimate rows now sum (fee 10,000 + rent 13,807,440 + buy 10,000,000 = the simulated balance change);
+  verification `dev buy landed: exactly the reviewed amount of tokens in the author wallet = 10493886257633 base units
+  (reviewed 10493886257633)`; status note "verified on devnet · dev buy: 0.01 SOL for 10,493,886 tokens, in your wallet".

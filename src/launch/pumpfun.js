@@ -48,6 +48,11 @@ const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget1
 // The dev buy's cost cap: quote + 5% (500 bps). The curve is fresh at creation, so the SDK quote is what the program
 // charges; the margin only covers rounding and a fee-schedule change between preparation and landing.
 export const BUY_SLIPPAGE_PERCENT = 5;
+/** A transaction that cannot be built as asked; `code` is the API error (409) and the message is for the author. */
+export class LaunchBuildError extends Error {
+  constructor(code, message) { super(message); this.code = code; }
+}
+export const TOO_LARGE_NOTE = 'the creation transaction with the dev buy would be larger than the network allows (1232 bytes): shorten the name or the ticker, keep the fee split to 2 recipients, or set the dev buy to 0';
 
 /**
  * The dev buy's fee recipients, pinned so the launch lookup table can hold them: the SDK otherwise picks one of
@@ -92,9 +97,11 @@ async function buybackRecipient() {
  * (ATA + buy_v2) when initialBuyLamports > 0. The buy comes AFTER the fee split, with the curve creator the split
  * already made (the sharing-config PDA), so the buy's own creator fee goes to the project's shared vault like every
  * other trade's. global/feeConfig: the decoded pump Global and pump-fees FeeConfig (needed for the buy only).
- * -> { ixs, buy: null | { lamports, maxLamports, tokensBase, feeRecipient, buybackFeeRecipient, ata } }
+ * probe: a size-only build without the chain (1 token, dummy fee recipient): same bytes, never sent.
+ * -> { ixs, buy: null | { lamports (real cost, fees included), requestedLamports, maxLamports, tokensBase, feeRecipient,
+ *      buybackFeeRecipient, ata } }
  */
-export async function launchInstructions({ config, mint, signer, global = null, feeConfig = null }) {
+export async function launchInstructions({ config, mint, signer, global = null, feeConfig = null, probe = false }) {
   const { web3, spl, pump } = sdk();
   const Big = require('bn.js');
   const ixs = [];
@@ -110,23 +117,61 @@ export async function launchInstructions({ config, mint, signer, global = null, 
   const lamports = Number(config.initialBuyLamports) || 0;
   let buy = null;
   if (lamports > 0) {
-    if (!global) throw new Error('the dev buy needs the pump Global account');
+    if (!global && !probe) throw new Error('the dev buy needs the pump Global account');
     if (!Number.isInteger(lamports)) throw new Error('dev buy must be whole lamports');
-    const quoteAmount = new Big(String(lamports));
-    const tokens = pump.getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: quoteAmount, quoteMint: spl.NATIVE_MINT });
-    if (tokens.isZero()) throw new Error('the dev buy is too small to buy any token');
+    const requested = new Big(String(lamports));
+    let tokens = new Big(1), cost = requested;
+    if (!probe) {
+      // the SDK clamps the quote to the curve's real reserves: a buy that would take them all completes the curve
+      // (pump.fun then migrates it); such a buy is refused instead of silently buying less
+      tokens = pump.getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: requested, quoteMint: spl.NATIVE_MINT });
+      if (tokens.isZero()) throw new LaunchBuildError('buy_too_small', 'the dev buy is too small to buy any token');
+      const fresh = pump.newBondingCurve(global, spl.NATIVE_MINT);
+      if (tokens.gte(fresh.realTokenReserves)) throw new LaunchBuildError('buy_completes_curve', 'the dev buy would buy the whole bonding curve and complete it; choose a smaller amount');
+      // what those tokens really cost, fees included (the quote rounds): this is the amount shown and reserved
+      cost = pump.getBuySolAmountFromTokenAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: tokens, quoteMint: spl.NATIVE_MINT });
+      if (cost.isZero()) cost = requested;
+    }
     const ata = spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID);
     const creator = sharing ? pump.feeSharingConfigPda(mint) : signer;
-    const feeRecipient = global.feeRecipient, buybackFeeRecipient = await buybackRecipient();
-    // max cost = quote + slippage, as the SDK's buyV2Instruction computes it (percent, in tenths)
-    const maxQuote = quoteAmount.add(quoteAmount.mul(new Big(Math.floor(BUY_SLIPPAGE_PERCENT * 10))).div(new Big(1000)));
+    const feeRecipient = probe ? signer : global.feeRecipient, buybackFeeRecipient = await buybackRecipient();
+    // max cost = real cost + slippage, as the SDK's buyV2Instruction computes it (percent, in tenths)
+    const maxQuote = cost.add(cost.mul(new Big(Math.floor(BUY_SLIPPAGE_PERCENT * 10))).div(new Big(1000)));
     ixs.push(spl.createAssociatedTokenAccountIdempotentInstruction(signer, ata, signer, mint, spl.TOKEN_2022_PROGRAM_ID));
     ixs.push(await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator, amount: tokens, quoteAmount: maxQuote, feeRecipient, buybackFeeRecipient,
       tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID }));
-    buy = { lamports, maxLamports: Number(maxQuote.toString()), tokensBase: tokens.toString(), feeRecipient: feeRecipient.toBase58(),
-      buybackFeeRecipient: buybackFeeRecipient.toBase58(), ata: ata.toBase58() };
+    buy = { lamports: Number(cost.toString()), requestedLamports: lamports, maxLamports: Number(maxQuote.toString()), tokensBase: tokens.toString(),
+      feeRecipient: feeRecipient.toBase58(), buybackFeeRecipient: buybackFeeRecipient.toBase58(), ata: ata.toBase58() };
   }
   return { ixs, buy };
+}
+
+/**
+ * The size of a launch transaction, offline (no RPC, nothing signed): built twice with random keys, the accounts
+ * common to both are what the lookup table holds, the rest stay static. Exact for a table that holds every static
+ * account (npm run lookup-table). -> { bytes: number|null (null: beyond what a message can hold), fits }
+ * config: { name, symbol, uri, feeSharing: {mode, shareholders}, initialBuyLamports }
+ */
+export async function compiledTxBytes(config) {
+  const { web3 } = sdk();
+  const build = async () => {
+    const signer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+    const { ixs } = await launchInstructions({ config, mint, signer, probe: true });
+    return { signer, ixs, keys: new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58())) };
+  };
+  const [a, b] = [await build(), await build()];
+  const statics = [...a.keys].filter((k) => b.keys.has(k)).map((k) => new web3.PublicKey(k));
+  const table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey,
+    state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: statics } });
+  const message = new web3.TransactionMessage({ payerKey: a.signer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: a.ixs })
+    .compileToV0Message([table]);
+  try {
+    const bytes = new web3.VersionedTransaction(message).serialize().length;
+    return { bytes, fits: bytes <= MAX_TX_BYTES };
+  } catch (e) {
+    if (/overruns/.test(e.message)) return { bytes: null, fits: false };
+    throw e;
+  }
 }
 
 /**
@@ -223,18 +268,22 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const message = new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs })
         .compileToV0Message(await lookupTables());
       const tx = new web3.VersionedTransaction(message);
-      tx.sign([mintKp]);                                    // the mint key signs now and is never stored
-      const bytes = tx.serialize();
-      if (bytes.length > MAX_TX_BYTES) {
-        const hint = !cfg.launch.lookupTable ? ': fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)'
-          : buy ? ': the dev buy needs the buy accounts in LAUNCH_LOOKUP_TABLE (npm run lookup-table -- --extend <table>)' : '';
-        throw new Error(`transaction too large (${bytes.length} bytes)${hint}`);
+      let bytes = null;                                   // web3 refuses to encode far beyond the packet size (signing serializes too)
+      try { tx.sign([mintKp]); bytes = tx.serialize(); } catch (e) { if (!/overruns/.test(e.message)) throw e; }   // the mint key signs now and is never stored
+      if (!bytes || bytes.length > MAX_TX_BYTES) {
+        const size = bytes ? `${bytes.length} bytes` : 'over 1232 bytes';
+        // an operator problem (no table) is a plain error; with a buy it is the author's choice to change
+        if (!cfg.launch.lookupTable) throw new Error(`transaction too large (${size}): fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)`);
+        throw new LaunchBuildError('tx_too_large', buy ? `${TOO_LARGE_NOTE} (${size}; if this persists at 0 the lookup table lacks the buy accounts: npm run lookup-table -- --extend <table>)`
+          : `transaction too large (${size}): the lookup table may be missing accounts (npm run lookup-table -- --extend <table>)`);
       }
       const msgBytes = message.serialize();
-      // initialBuyLamports: the buy's quoted cost, fees included (what the simulation's balance change contains);
-      // initialBuyMaxLamports: the cap signed in the transaction (quote + slippage); accountsLamports excludes the buy
+      // initialBuyLamports: the buy's real cost, fees included (what the simulation's balance change contains);
+      // initialBuyMaxLamports: the cap signed in the transaction (cost + slippage); accountsLamports is the rent alone:
+      // the simulation's balance change minus the buy and minus the network fee it charged
       const estimate = { networkFeeLamports: null, accountsLamports: null, simulation: null,
-        initialBuyLamports: buy ? buy.lamports : 0, initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null };
+        initialBuyLamports: buy ? buy.lamports : 0, initialBuyRequestedLamports: buy ? buy.requestedLamports : 0,
+        initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null };
       try { estimate.networkFeeLamports = (await conn.getFeeForMessage(message, 'confirmed')).value; } catch { /* left null */ }
       try {
         const pre = await conn.getBalance(signer, 'confirmed');
@@ -244,7 +293,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         else {
           const post = sim.value.accounts?.[0]?.lamports;
           estimate.simulation = { ok: true, unitsConsumed: sim.value.unitsConsumed };
-          if (post != null) estimate.accountsLamports = Math.max(0, pre - post - (buy ? buy.lamports : 0));
+          if (post != null) estimate.accountsLamports = Math.max(0, pre - post - (buy ? buy.lamports : 0) - (estimate.networkFeeLamports ?? 0));
         }
         estimate.signerBalanceLamports = pre;
       } catch (e) {
@@ -255,6 +304,12 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     },
 
     reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
+
+    /** The size a launch would have, offline (see compiledTxBytes): the dev buy is refused before it is stored. */
+    txBytes: compiledTxBytes,
+
+    /** The wallet's SOL balance in lamports (confirmed). */
+    async balance(wallet) { return conn.getBalance(new web3.PublicKey(wallet), 'confirmed'); },
 
     /** Accounts every launch uses (same for any mint and signer), the dev buy's included: the lookup table's contents. */
     async staticAccounts() {
@@ -380,7 +435,10 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         const ata = spl.getAssociatedTokenAddressSync(new web3.PublicKey(intent.mint), new web3.PublicKey(intent.signer_wallet), true, spl.TOKEN_2022_PROGRAM_ID);
         let amount = null;
         try { amount = (await conn.getTokenAccountBalance(ata, 'finalized')).value.amount; } catch { /* checked below */ }
-        add('dev buy landed: tokens in the author wallet', amount != null && BigInt(amount) > 0n, amount == null ? `${ata.toBase58()} not visible` : `${amount} base units`);
+        // buy_v2 is exact-out: the account holds exactly the tokens the reviewed transaction asked for
+        const want = intent.buy_tokens_base ? String(intent.buy_tokens_base) : null;
+        add(want ? 'dev buy landed: exactly the reviewed amount of tokens in the author wallet' : 'dev buy landed: tokens in the author wallet',
+          amount != null && (want ? amount === want : BigInt(amount) > 0n), amount == null ? `${ata.toBase58()} not visible` : `${amount} base units${want ? ` (reviewed ${want})` : ''}`);
         if (amount == null) missing = true;
       }
       const ok = checks.every((c) => c.ok);
