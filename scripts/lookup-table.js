@@ -21,7 +21,9 @@ const provider = makePumpfunProvider(cfg, { connection: conn });
 const addresses = (await provider.staticAccounts()).map((a) => new web3.PublicKey(a));
 console.log(`payer ${payer.publicKey.toBase58()} on ${cfg.launch.network}; ${addresses.length} static accounts`);
 
-const slot = await conn.getSlot('finalized');
+// A slot a little behind the tip: the program checks it against SlotHashes on the node that simulates, and the public
+// RPCs are load-balanced (devnet 2026-10-10: the tip itself was 'not a recent slot').
+const slot = (await conn.getSlot('confirmed')) - 30;
 const [createIx, table] = web3.AddressLookupTableProgram.createLookupTable({ authority: payer.publicKey, payer: payer.publicKey, recentSlot: slot });
 const extendIx = web3.AddressLookupTableProgram.extendLookupTable({ payer: payer.publicKey, authority: payer.publicKey, lookupTable: table, addresses });
 const { blockhash } = await conn.getLatestBlockhash('confirmed');
