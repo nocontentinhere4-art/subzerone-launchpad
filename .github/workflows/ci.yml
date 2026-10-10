@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      # the suite is offline and secret-free: no .env is read, the mock launch provider and a fake brain are used
+      LAUNCHPAD_NO_DOTENV: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # --ignore-scripts, like the Dockerfile: the pump SDK's optional native bigint binding falls back to pure JS
+      - run: npm ci --ignore-scripts
+      - run: npm test
