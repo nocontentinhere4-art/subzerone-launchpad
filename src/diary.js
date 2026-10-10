@@ -5,7 +5,7 @@
 import { jstDate, dayStart, dateStart, TOKYO_DAY } from './calendar.js';
 import { now, parseJson, HttpError } from './util.js';
 
-export const DIARY_NOTE = 'SUB-01 is a model, not a conscious being. This page is generated from the vote ledger and the build log; numbers are copied exactly.';
+export const DIARY_NOTE = 'This page is generated from the vote ledger and the build log; numbers are copied exactly.';
 const KIND_ORDER = ['built', 'passed', 'site_live', 'launched', 'moved_in'];
 
 export const TEMPLATES = Object.freeze({

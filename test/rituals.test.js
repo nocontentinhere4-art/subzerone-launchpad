@@ -267,7 +267,7 @@ test('diary: template text from the ledger and build log, exact numbers, private
     assert.equal(d.status, 200);
     assert.deepEqual(Object.keys(d.json), ['date', 'entries', 'counts', 'note']);
     assert.equal(d.json.note, DIARY_NOTE);
-    assert.equal(d.json.note, 'SUB-01 is a model, not a conscious being. This page is generated from the vote ledger and the build log; numbers are copied exactly.');
+    assert.equal(d.json.note, 'This page is generated from the vote ledger and the build log; numbers are copied exactly.');
     assert.deepEqual(d.json.entries.map((e) => e.kind), ['moved_in', 'built', 'passed']);
     const [moved, built, passed] = d.json.entries;
     assert.deepEqual(moved, { kind: 'moved_in', at: moved.at, text: 'Author moved into Shiba.', slug: null, ticker: null, ledgerSeq: null, score: null });

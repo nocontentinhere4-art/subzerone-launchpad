@@ -109,8 +109,7 @@ export function verifyChain(db, query) {
 export const DISCLOSURE_UPDATED_AT = '2026-10-10';
 export const disclosure = (cfg) => ({
   system: 'SUB-01',
-  nature: 'AI system driven by a brain-activity model derived from human MRI datasets',
-  not_conscious: true,
+  nature: 'AI dev driven by a model of real human brain activity, built from MRI recordings of real brains',
   datasets: cfg.trust.datasets,
   decision: 'brain vote; reproducible from the ledger',
   human_gate: 'every publication and every transaction is approved/signed by a human',
