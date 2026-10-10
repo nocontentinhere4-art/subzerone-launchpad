@@ -55,6 +55,20 @@ export const BUY_SLIPPAGE_PERCENT = 5;
  * the SDK's candidates (read from built instructions by the IDL account name, never hardcoded here).
  */
 let _buyback = null;
+/** The log lines of a finalized transaction. Our own launches are v0, but other transactions touching the same fee
+ *  account (pump.fun's distributions, 2026-10-10 on mainnet) can use a newer version the web3.js client refuses to
+ *  decode; the raw RPC answer still carries the logs, which is all the fee reader needs. */
+async function logsOf(conn, signature) {
+  try {
+    const tx = await conn.getTransaction(signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
+    return tx?.meta?.logMessages || [];
+  } catch (e) {
+    if (!/maxSupportedTransactionVersion/.test(String(e?.message))) throw e;
+    const res = await conn._rpcRequest('getTransaction', [signature, { encoding: 'json', commitment: 'finalized', maxSupportedTransactionVersion: 1 }]);
+    return res?.result?.meta?.logMessages || [];
+  }
+}
+
 async function buybackRecipient() {
   if (_buyback) return _buyback;
   const { web3, spl, pump } = sdk();
@@ -398,8 +412,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         const sigs = await conn.getSignaturesForAddress(owner, { limit: 25 }, 'finalized');
         for (const s of sigs) {
           if (s.err) continue;
-          const tx = await conn.getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
-          for (const line of tx?.meta?.logMessages || []) {
+          for (const line of await logsOf(conn, s.signature)) {
             if (!line.startsWith('Program data: ')) continue;
             const data = Buffer.from(line.slice(14), 'base64');
             let ev = null;
