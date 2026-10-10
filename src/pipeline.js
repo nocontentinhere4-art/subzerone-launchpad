@@ -12,6 +12,7 @@ import { settlePredictions } from './rituals.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
 import { generate, estimateCostUsd } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
+import { bannerCredit } from './site.js';
 import { buildSiteVersion, setLiveVersion } from './site.js';
 import { planAccount, publishPost } from './x.js';
 import { buildLaunchConfig, configHash, confirmIntent, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
@@ -146,7 +147,7 @@ export const handlers = {
       const seed = `${p.id}:${evaluation.id}`;
       const build = brain.vote.options.find((o) => o.label.startsWith('build'));
       const logo = logoPng({ networks: brain.networks, seed, strength: build?.p });
-      const banner = Buffer.from(bannerSvg({ name: spec.name, ticker: spec.ticker, tagline: spec.tagline, networks: brain.networks, seed }));
+      const banner = Buffer.from(bannerSvg({ name: spec.name, ticker: spec.ticker, tagline: spec.tagline, networks: brain.networks, seed, credit: bannerCredit(cfg) }));
       for (const [kind, mime, body] of [['logo', 'image/png', logo], ['banner', 'image/svg+xml', banner]]) {
         const av = (db.get('SELECT MAX(version) v FROM assets WHERE project_id = ? AND kind = ?', p.id, kind)?.v || 0) + 1;
         db.run(`INSERT INTO assets (id, project_id, kind, version, mime, body, sha256, generator, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,

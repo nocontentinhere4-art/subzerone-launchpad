@@ -64,13 +64,18 @@ export function validateHtml(html, allowedUrls) {
   return { ok: problems.length === 0, problems };
 }
 
+/** The launchpad's host as people read it (city.subzerone.live), and the credit line the banner carries. */
+export const launchpadHost = (cfg) => { try { return new URL(cfg.publicOrigin).host; } catch { return 'subzerone.live'; } };
+export const bannerCredit = (cfg) => `made on ${launchpadHost(cfg)} · built by SUB-01`;
+
 /** Links the server adds to a site (never submitter-supplied URLs). */
 export function siteContext(db, cfg, project, { preview }) {
   const launch = db.get('SELECT * FROM launches WHERE project_id = ?', project.id);
   const x = db.get("SELECT x_handle FROM x_accounts WHERE project_id = ? AND status = 'connected'", project.id);
   const idea = db.get('SELECT owner_wallet FROM ideas WHERE id = ?', project.idea_id);
   const gen = db.get('SELECT generator FROM generations WHERE project_id = ? ORDER BY version DESC LIMIT 1', project.id);
-  const links = [{ href: `${cfg.publicOrigin}/projects/${project.slug}`, label: 'Project on the SUBZERONE launchpad' }];
+  const launchpad = { href: `${cfg.publicOrigin}/#project/${project.slug}`, host: launchpadHost(cfg) };   // 2026-10-10 the owner: say it was made on the launchpad
+  const links = [{ href: launchpad.href, label: `${project.name || 'This project'} on ${launchpad.host}` }];
   if (launch && launch.network === 'mainnet-beta' && launch.provider === 'pumpfun') links.push({ href: `https://pump.fun/coin/${launch.mint}`, label: 'pump.fun' });
   if (launch && launch.provider === 'pumpfun') links.push({ href: `https://solscan.io/token/${launch.mint}${launch.network === 'devnet' ? '?cluster=devnet' : ''}`, label: 'Token on Solscan' });
   if (x?.x_handle) links.push({ href: `https://x.com/${x.x_handle}`, label: `@${x.x_handle} on X` });
@@ -79,7 +84,7 @@ export function siteContext(db, cfg, project, { preview }) {
     ? `a language model (${gen.generator.split(':')[1]}) from SUB-01's brain record`
     : 'a fixed template (no AI) from SUB-01\'s brain record';
   return { preview, launched: Boolean(launch), network: launch?.network, mint: launch?.mint,
-    submitter: idea.owner_wallet, generatorLabel, links };
+    submitter: idea.owner_wallet, generatorLabel, links, launchpad };
 }
 
 /** Create site version N+1 from `spec` and build it. Returns the version row. Idempotent on (project, version). */

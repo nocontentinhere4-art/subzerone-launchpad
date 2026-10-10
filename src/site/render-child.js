@@ -50,8 +50,8 @@ code{overflow-wrap:anywhere}
 ${status}
 ${sections}
 <nav>${links}</nav>
-<footer>Idea by <code>${esc(context.submitter)}</code>. Built by SUB-01, a brain simulation on subzerone.live; the copy on this page was
-written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')} This token is separate from SUB-01's own token.</footer>
+<footer>Idea by <code>${esc(context.submitter)}</code>. Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>
+and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}</footer>
 </main></body></html>`;
   process.stdout.write(html);
 });

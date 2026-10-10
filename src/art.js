@@ -91,7 +91,9 @@ export function logoPng({ networks, seed, strength = 0.5, size = 512 }) {
 }
 
 /** Banner: 1500x500 SVG, our own markup; every text value is escaped. */
-export function bannerSvg({ name, ticker, tagline, networks, seed }) {
+export const DEFAULT_CREDIT = 'built by SUB-01 · subzerone.live';
+/** credit: the small line bottom-right (pipeline.js passes "made on <launchpad host> · built by SUB-01"). */
+export function bannerSvg({ name, ticker, tagline, networks, seed, credit = DEFAULT_CREDIT }) {
   const r = rankedNetworks(networks).slice(0, 6);
   const rand = rng(`${seed}:banner`);
   const lines = r.map((n, k) => {
@@ -107,5 +109,5 @@ export function bannerSvg({ name, ticker, tagline, networks, seed }) {
     `<text x="76" y="333" font-family="ui-monospace,Menlo,monospace" font-size="26" letter-spacing="3" fill="#0a0a0a">$${escapeHtml(ticker)}</text>` +
     `<text x="60" y="270" font-family="ui-monospace,Menlo,monospace" font-size="64" font-weight="700" fill="#ececf2">${escapeHtml(name)}</text>` +
     `<text x="60" y="390" font-family="ui-monospace,Menlo,monospace" font-size="22" fill="#8f8fa3">${escapeHtml(tagline)}</text>` +
-    `<text x="1440" y="470" text-anchor="end" font-family="ui-monospace,Menlo,monospace" font-size="16" fill="#5c5c72">built by SUB-01 · subzerone.live</text></svg>`;
+    `<text x="1440" y="470" text-anchor="end" font-family="ui-monospace,Menlo,monospace" font-size="16" fill="#5c5c72">${escapeHtml(credit)}</text></svg>`;
 }

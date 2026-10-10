@@ -15,6 +15,9 @@ for _ in $(seq 1 120); do
   sleep 0.5
 done
 
+# one-off maintenance that needs the migrated database (idempotent, never fatal)
+$NODE scripts/refresh-site-credits.js || echo "start: refresh-site-credits failed (continuing)" >&2
+
 $NODE src/worker.js &
 WORKER=$!
 trap 'kill -TERM "$SERVER" "$WORKER" 2>/dev/null; wait; exit 0' TERM INT
