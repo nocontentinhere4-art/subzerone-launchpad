@@ -10,7 +10,7 @@ import { askBrain } from './brain.js';
 import { appendVote } from './trust.js';
 import { settlePredictions } from './rituals.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
-import { generate, estimateCostUsd } from './generator.js';
+import { generate, estimateCostUsd , networkLabel } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
 import { bannerCredit } from './site.js';
 import { buildSiteVersion, setLiveVersion } from './site.js';
@@ -93,7 +93,7 @@ export const handlers = {
       evalId = stored.id;
       const build = rec.vote.options.find((o) => o.label.startsWith('build'));
       transition(db, ideaId, 'evaluating', stored.decision, { actor: 'brain',
-        note: `brain vote: ${stored.decision === 'selected' ? 'build' : 'pass'} (build ${Math.round(build.p * 100)}%, ${rec.vote.spiking?.network || 'rate model'})${rec.demo ? ' [brain in demo mode]' : ''}`,
+        note: `brain vote: ${stored.decision === 'selected' ? 'build' : 'pass'} (build ${Math.round(build.p * 100)}%, ${rec.vote.spiking?.used ? networkLabel(rec.vote.spiking) : 'rate model'})${rec.demo ? ' [brain in demo mode]' : ''}`,
         data: { request_id: requestId } });
       if (stored.decision === 'selected') enqueue(db, { type: 'generate', key: `generate:${ideaId}:1`, ideaId, payload: {} });
     });

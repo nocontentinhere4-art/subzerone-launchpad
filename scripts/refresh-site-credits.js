@@ -9,10 +9,27 @@ import { openDb } from '../src/db.js';
 import { siteContext, sandboxBuild, validateHtml, bannerCredit } from '../src/site.js';
 import { DEFAULT_CREDIT } from '../src/art.js';
 import { id, now, sha256, parseJson } from '../src/util.js';
+import { networkLabel } from '../src/generator.js';
 
 const cfg = loadConfig();
+
 const db = openDb(join(cfg.dataDir, 'launchpad.db'));
 const credit = bannerCredit(cfg);
+// Older brain answers said "20k-neuron network on CPU" whatever size ran (the label was fixed in the brain on 2026-10-10);
+// the record carries n_neurons, so the stored wording follows it: the brain record, the idea's status note, the site spec.
+let relabelled = 0;
+for (const ev of dbAll(`SELECT id, idea_id, brain_json FROM evaluations WHERE instr(brain_json, '-neuron network on') > 0`)) {
+  const rec = parseJson(ev.brain_json); const sp = rec?.vote?.spiking; if (!sp?.used || !sp.n_neurons) continue;
+  const right = networkLabel(sp), wrong = String(sp.network || ''); if (!wrong || wrong === right) continue;
+  sp.network = right;
+  db.run('UPDATE evaluations SET brain_json = ? WHERE id = ?', JSON.stringify(rec), ev.id);
+  db.run('UPDATE ideas SET status_note = replace(status_note, ?, ?) WHERE id = ? AND instr(coalesce(status_note, \'\'), ?) > 0', wrong, right, ev.idea_id, wrong);
+  for (const sv of dbAll(`SELECT s.id, s.spec_json FROM site_versions s JOIN projects p ON p.id = s.project_id WHERE p.idea_id = ? AND instr(s.spec_json, ?) > 0`, ev.idea_id, wrong)) {
+    db.run('UPDATE site_versions SET spec_json = ?, html = replace(coalesce(html, \'\'), ?, ?) WHERE id = ?', sv.spec_json.replaceAll(wrong, right), wrong, right, sv.id);
+  }
+  relabelled++;
+}
+function dbAll(sql, ...args) { return db.all(sql, ...args); }
 let sites = 0, banners = 0;
 for (const p of db.all('SELECT * FROM projects WHERE live_site_version IS NOT NULL')) {
   const row = db.get(`SELECT * FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, p.id, p.live_site_version);
@@ -36,4 +53,4 @@ for (const p of db.all('SELECT * FROM projects WHERE live_site_version IS NOT NU
     }
   }
 }
-console.log(`refresh-site-credits: ${sites} site(s) rebuilt, ${banners} banner(s) re-credited (${credit})`);
+console.log(`refresh-site-credits: ${sites} site(s) rebuilt, ${banners} banner(s) re-credited (${credit}), ${relabelled} vote record(s) relabelled`);

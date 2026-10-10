@@ -24,11 +24,21 @@ export function deriveTicker(name) {
   return t === 'SUB01' ? 'SUBX' : t;
 }
 
+/** "500k-neuron network on CPU": from the record's n_neurons when it has one (older brain answers said 20k whatever ran). */
+export function networkLabel(spiking) {
+  const n = Number(spiking?.n_neurons) || 0, net = String(spiking?.net || '');
+  if (n > 0 && (net === 'cpu' || net === 'gpu')) {
+    const size = n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 ? `${Math.floor(n / 1000)}k` : String(n);
+    return `${size}-neuron network on ${net.toUpperCase()}`;
+  }
+  return String(spiking?.network || 'spiking network');
+}
+
 export function brainNote(brain) {
   const vote = brain?.vote;
   const build = vote?.options?.find((o) => String(o.label).startsWith('build'));
   const nets = rankedNetworks(brain?.networks).slice(0, 3).map((n) => NETWORK_WORDS[n.group]);
-  const net = vote?.spiking?.used ? vote.spiking.network : 'rate model';
+  const net = vote?.spiking?.used ? networkLabel(vote.spiking) : 'rate model';
   return `SUB-01's brain simulation voted to build this (build ${Math.round((build?.p ?? 0) * 100)}% vs pass, ` +
     `${net}). The words drove his ${nets.join(', ')} networks. ${vote?.reason ? `Vote note: ${vote.reason}.` : ''}`.trim();
 }
