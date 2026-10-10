@@ -148,7 +148,7 @@ export function buildFeedback({ input, pre, rec, decision, others = [] }) {
   else summary = `Pass. ${dislikes[0] || `The build side of my vote got ${pct(b.buildP ?? 0)}; not enough.`} ${suggestions[0] ? `${suggestions[0].what[0].toUpperCase()}${suggestions[0].what.slice(1)}, then drop it again.` : 'Try again another day: my vote has a temperature.'}`;
   const wouldBuildIf = build ? null
     : suggestions.length ? `${suggestions.slice(0, 2).map((s) => s.what[0].toLowerCase() + s.what.slice(1)).join(', and ')}.`
-      : `it reaches me on another day: my vote has a temperature${rec?.vote?.temperature != null ? ` (${two(rec.vote.temperature)})` : ''} and this one landed on pass.`;
+      : `the build side of my vote reaches 50% (it got ${pct(b.buildP ?? 0)}): give me one more concrete thing to react to.`;   // the verdict follows p(build) >= 0.5 since 2026-10-10
   return {
     version: FEEDBACK_VERSION, source: rec ? 'rules+brain' : 'rules',
     summary: cut(summary, 300), likes, dislikes, suggestions: suggestions.map((s) => ({ what: cut(s.what), why: cut(s.why), how: cut(s.how) })),
