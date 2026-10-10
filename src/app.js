@@ -20,6 +20,7 @@ import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_
 import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
+import { xDonePage, X_DONE_CSP } from './x-done.js';
 import { sub01Market } from './market.js';
 import { coinStatsView } from './coin-stats.js';
 import { brainStatus } from './brain.js';
@@ -336,10 +337,16 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     return ctx.redirect(startOAuth(db, cfg, p.id, u.wallet));
   });
   r.get('/api/x/callback', async (ctx) => {
-    const u = requireUser(ctx);
-    const res = await finishOAuth(db, cfg, { state: ctx.query.get('state'), code: ctx.query.get('code') }, u.wallet, fetchImpl);
-    const p = db.get('SELECT slug FROM projects WHERE id = ?', res.projectId);
-    return ctx.redirect(`/projects/${p.slug}/review#x`);
+    // Lands in the pop-up the room PC opened; the city polls the project and updates its X tab by itself (desk.js).
+    const page = (body) => ctx.raw(200, Buffer.from(body), { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': X_DONE_CSP, 'cache-control': 'no-store' });
+    try {
+      const u = requireUser(ctx);
+      const res = await finishOAuth(db, cfg, { state: ctx.query.get('state'), code: ctx.query.get('code') }, u.wallet, fetchImpl);
+      return page(xDonePage({ ok: true, handle: res.handle }));
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      return page(xDonePage({ ok: false, error: err.message }));
+    }
   });
   r.put('/api/x-posts/:id', async (ctx) => {
     const u = requireUser(ctx);
@@ -792,8 +799,21 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     return true;
   }
 
+  // 2026-10-10 the owner: the old launchpad pages must not show up any more. With the city deployed they bounce into
+  // it with a hash the city understands (main.js applyHash); /admin keeps the old app (operators only).
+  const CITY_LINKS = [
+    [/^\/launchpad$/, () => '/'], [/^\/submit$/, () => '/#idea'], [/^\/ideas\/([^/]+)$/, (m) => `/#idea/${m[1]}`],
+    [/^\/projects\/([^/]+)\/review$/, () => '/#room/pc'], [/^\/projects\/([^/]+)$/, (m) => `/#project/${m[1]}`],
+    [/^\/token$/, () => '/#token'], [/^\/me$/, () => '/#account'], [/^\/fees$/, () => '/#about'], [/^\/how$/, () => '/#about'],
+  ];
+  function cityLink(path) {
+    for (const [re, to] of CITY_LINKS) { const m = re.exec(path); if (m) return to(m); }
+    return null;
+  }
   function serveStatic(res, path) {
     if (serveCity(res, path)) return true;
+    const to = cfg.cityDist ? cityLink(path) : null;
+    if (to) { res.writeHead(302, { location: to, 'cache-control': 'no-store' }); res.end(); return true; }
     const file = normalize(join(PUBLIC, path === '/' || PAGES.some((re) => re.test(path)) ? 'index.html' : path));
     if (!file.startsWith(PUBLIC) || !existsSync(file) || !statSync(file).isFile()) return false;
     res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream',

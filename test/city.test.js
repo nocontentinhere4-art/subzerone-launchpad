@@ -399,10 +399,14 @@ test('CITY_DIST: city at /, immutable assets with model MIME types, traversal re
       assert.equal(r.status, 404, p);
       assert.ok(!r.body.includes('nope'), p);
     }
-    const lp = await rawGet(h.base, '/launchpad');
-    assert.equal(lp.status, 200);
-    assert.match(lp.body, /id="app"/);
-    assert.doesNotMatch(lp.body, /The neighborhood/);
+    // 2026-10-10: the old launchpad pages bounce into the city with a hash it understands; /admin keeps the old app
+    for (const [path, to] of [['/launchpad', '/'], ['/submit', '/#idea'], ['/ideas/42', '/#idea/42'], ['/projects/horse', '/#project/horse'],
+      ['/projects/horse/review', '/#room/pc'], ['/me', '/#account'], ['/how', '/#about'], ['/fees', '/#about'], ['/token', '/#token']]) {
+      const r = await rawGet(h.base, path);
+      assert.equal(r.status, 302, path); assert.equal(r.headers.location, to, path);
+    }
+    const adm = await rawGet(h.base, '/admin');
+    assert.equal(adm.status, 200); assert.match(adm.body, /id="app"/); assert.doesNotMatch(adm.body, /The neighborhood/);
     assert.equal((await rawGet(h.base, '/js/app.js')).status, 200, 'launchpad scripts still served');
     assert.equal((await h.client(user(h.db)).call('GET', '/api/config')).json.city, true);
   } finally { h.close(); }
