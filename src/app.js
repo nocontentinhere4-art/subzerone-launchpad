@@ -361,6 +361,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     traits: { keys: TRAITS, range: [0, 1], default: DEFAULT_TRAITS }, name: NAME,
     room: { ...ROOM, textItems: TEXT_ITEMS, textMax: ITEM_TEXT_MAX, default: DEFAULT_ROOM }, progress: PROGRESS, unlocks: UNLOCKS,
     guestbook: { max: GUESTBOOK.max, keep: GUESTBOOK.keep, perPlotSeconds: GUESTBOOK.perPlotMs / 1000, perDay: GUESTBOOK.perDay },
+    sub01: SUB01,                                          // the CA chip next to the logo (city main.js caChip)
   })), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=3600' }));
   let worldCache = null;                                     // one snapshot for everyone, at most 3 s old
   r.get('/api/world', (ctx) => {
