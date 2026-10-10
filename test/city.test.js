@@ -294,7 +294,7 @@ test('roles: founder grants and revokes, others cannot; public view shortens wal
     const w = await stranger.call('GET', '/api/world');
     assert.deepEqual(w.json.plots.find((x) => x.plotId === 'roppongi-1').project,
       { ideaId: 'idea_ramen', slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen',
-        logoUrl: null, bannerUrl: null,
+        logoUrl: null, bannerUrl: null, siteUrl: null,   // no live site version in this fixture
         // launched: the building-lights feed, tier 0 (dark) until the first fetch stores real numbers (coin-stats.test.js)
         stats: { tier: 0, tierName: 'none', by: null, trend: null, fresh: false, holders: null, marketCapUsd: null, volume24hUsd: null, liquidityUsd: null,
           priceChange24hPct: null, at: null, source: null, url: null } }, 'no art stored: null URLs');

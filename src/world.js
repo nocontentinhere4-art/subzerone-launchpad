@@ -447,12 +447,13 @@ export function worldView(db, cfg, t = now()) {
     // the same public, immutable /meta/<slug>/… files the token metadata links to (app.js serves them for public ideas only)
     const asset = (kind, v, ext) => (x.slug && v ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : null);
     return { ideaId: x.idea_id, slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
+      siteUrl: x.slug && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,   // the coin's own site (city: "Open the coin site")
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
       // launched only: real market/holder data for the building lights (coin-stats.js); tier 0 until the first fetch
       ...(launched ? { stats: publicStats(parseJson(x.cs_json), t) } : {}) };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.slug, p.name pname, p.ticker, l.mint, cs.json cs_json,
+      p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
