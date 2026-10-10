@@ -746,6 +746,13 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     transition(db, idea.id, 'preview_ready', 'approved', { actor: 'system', note: 'approved; preparing the launch configuration' });
     enqueue(db, { type: 'prepare_launch', key: `prepare:${p.id}:${p.submitter_approved_at}`, ideaId: idea.id, projectId: p.id });
   }
+  // 2026-10-10 the owner removed the reviewer step (REQUIRE_ADMIN_CLEARANCE=0): projects that were approved by their
+  // author while it still applied would otherwise wait forever, so each boot lets them through.
+  if (!cfg.launch.requireAdminClearance) {
+    for (const row of db.all(`SELECT p.id FROM projects p JOIN ideas i ON i.id = p.idea_id WHERE i.status = 'preview_ready' AND p.submitter_approved_at IS NOT NULL`)) {
+      try { maybeApprove(row.id); } catch (e) { console.error(`boot: could not release ${row.id}: ${e.message}`); }
+    }
+  }
 
   // --- generated project sites ----------------------------------------------------------------------------------------
   function serveSiteFile(ctx, p, version, file, preview) {
