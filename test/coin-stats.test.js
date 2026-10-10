@@ -152,10 +152,13 @@ test('refreshCoinStats: stores DexScreener + Helius numbers with source and time
   const { cfg, db } = makeEnv({ HELIUS_API_KEY: 'test-key', HELIUS_DAILY_PAGES: '25' });
   assert.equal(cfg.coinStats.heliusUrl, HELIUS_URL);
   const w = user(db).address;
-  const t0 = Date.now() - 2 * 3_600_000;                     // launched 2 h ago: young (5 min cadence)
+  // a fixed clock at 03:00 UTC: the later steps add hours and must stay inside one Helius budget day (the test
+  // crossed UTC midnight on 2026-10-10 23:43 with Date.now() and the budget reset under it)
+  const NOW = Date.UTC(2026, 0, 15, 3, 0, 0);
+  const t0 = NOW - 2 * 3_600_000;                            // launched 2 h ago: young (5 min cadence)
   launched(db, w, { slug: 'fx', mint: MINT, provider: 'pumpfun', verifiedAt: t0, plotId: 'ginza-1' });
   const f = fakeFetch({ holders: 1_500 });
-  const t1 = Date.now();
+  const t1 = NOW;
   const r1 = await refreshCoinStats(db, cfg, MINT, { fetchImpl: f.fetchImpl, t: t1 });
   assert.deepEqual(r1, { ok: true, source: 'dexscreener', tier: 3 }, 'mcap $2.3M → roof');
   assert.deepEqual([f.state.dexCalls, f.state.heliusCalls], [1, 2]);
