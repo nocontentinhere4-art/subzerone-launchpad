@@ -1,0 +1,16 @@
+# never in the image: local secrets, the local database, dependencies (installed in the image), tests, editors' leftovers
+.env
+.env.*
+!.env.example
+data/
+node_modules/
+test/
+*.db
+*.db-wal
+*.db-shm
+*.bak
+*.bak.*
+.git/
+.claude/
+.DS_Store
+*.log
