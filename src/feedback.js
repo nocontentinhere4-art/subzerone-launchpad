@@ -117,6 +117,8 @@ export function brainFeedback(rec) {
   if (m.tired >= 0.7) context.push(`I was tired when I read it (${two(m.tired)}). That is on me, not on you.`);
   if (m.boredom >= 0.7) context.push(`I was bored when it arrived (${two(m.boredom)}); a bored me is easier to win.`);
   if (rec.demo) context.push('Read by the demo brain, not the live one.');
+  // Always on (owner 2026-10-10): asleep he still votes, on his sleeping brain; say so, it is part of the record.
+  if (rec.stage && rec.stage !== 'AWAKE') context.push(`I read it in my sleep (${rec.stage}); the vote came from my sleeping brain, gain ${rec.gain != null ? two(rec.gain) : '?'}.`);
   return { likes, dislikes, suggestions, context, buildP: build ? Number(build.p) : null };
 }
 
