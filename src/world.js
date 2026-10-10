@@ -348,7 +348,14 @@ function cleanName(name, { min, max }, code, prefix = '') {
   }
   return v;
 }
-export const validateName = (name) => cleanName(name, NAME, 'bad_name');
+/** SUB-01's own names: a resident cannot take them (the city chat shows resident names next to his). */
+export const reservedName = (name) => { const k = String(name ?? '').normalize('NFKC').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return k === 'sub1' || k.startsWith('sub01') || k.startsWith('subzerone'); };
+export const validateName = (name) => {
+  const v = cleanName(name, NAME, 'bad_name');
+  if (reservedName(v)) throw new HttpError(400, 'bad_name', 'that name is reserved for SUB-01');
+  return v;
+};
 
 /** Free text (guestbook notes, poster text): NFKC, no control or bidi characters, no < > `, whitespace collapsed.
  * Emoji stay. Length limits count code points. */
@@ -408,7 +415,7 @@ export const plotsOf = (db, wallet) => db.all('SELECT plot_id plotId, kind, idea
 
 /** first4…last4: enough to recognise a wallet, not to copy it. */
 export const shortWallet = (w) => (w && w.length > 10 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w);
-const scrub = (text) => String(text).replace(/[1-9A-HJ-NP-Za-km-z]{32,88}/g, shortWallet);
+export const scrub = (text) => String(text).replace(/[1-9A-HJ-NP-Za-km-z]{32,88}/g, shortWallet);
 
 const JOB_VERBS = { evaluate: 'Thinking about', generate: 'Building', build_site: 'Rebuilding the site of', prepare_launch: 'Preparing the launch of',
   confirm_launch: 'Watching the launch of', reconcile_fees: 'Counting the fees of', publish_x_post: 'Posting for' };

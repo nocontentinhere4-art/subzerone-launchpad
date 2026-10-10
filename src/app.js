@@ -28,6 +28,7 @@ import { drawOmikuji, todayOmikuji, predict, predictionView, leaderboard, emaLis
 import { diaryFor, latestDiary } from './diary.js';
 import { postcardSvg, postcardPng } from './postcard.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
+import { createChat } from './chat.js';
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
@@ -41,7 +42,8 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const COOKIE = 'lp_session';
 const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved', 'launch_prepared', 'awaiting_signature', 'confirming'];
 
-export function createApp({ cfg, db, fetchImpl = fetch }) {
+/** `chat`: {connect, fetchMind, relayOpts, limits} for tests (the SUB-01 transport and quotas; see chat.js). */
+export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
   const r = router();
   const limit = rateLimiter();
   const origin = new URL(cfg.publicOrigin);
@@ -406,6 +408,20 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   });
   r.post('/api/takeover/:id/withdraw', (ctx) => withdrawTakeover(db, ctx.params.id, requireUser(ctx).wallet));
 
+  // --- live city chat and SUB-01 relay (chat.js, sub01relay.js; contract in docs/CITY-API.md "Chat") ----------------
+  const fetchMind = cfg.brain.url ? async () => {
+    const res = await fetchImpl(new URL('/api/mind', cfg.brain.url), { signal: AbortSignal.timeout(5000), redirect: 'error' });
+    return res.ok ? res.json() : null;
+  } : null;
+  const chat = createChat({ db, cfg, fetchMind, ...chatOpts });
+  r.get('/api/chat/stream', (ctx) => { chat.stream(ctx.req, ctx.res, { user: ctx.user, ip: ctx.ip }); return RAW; });
+  r.post('/api/chat', async (ctx) => chat.post(requireUser(ctx), await ctx.body(4_000)));
+  r.post('/api/chat/presence', async (ctx) => chat.ping(requireUser(ctx), await ctx.body(1_000)));
+  r.post('/api/chat/report', async (ctx) => chat.report(requireUser(ctx), await ctx.body(1_000)));
+  r.post('/api/chat/sub01', async (ctx) => chat.sub01(requireUser(ctx), await ctx.body(4_000)));
+  r.get('/api/admin/chat', (ctx) => { requireAdmin(ctx); return chat.adminList(ctx.query); });
+  r.del('/api/admin/chat/:id', (ctx) => chat.adminDelete(requireAdmin(ctx), ctx.params.id));
+
   // --- trust: vote ledger, disclosure, calendar, telemetry (trust.js, calendar.js, telemetry.js) ------------------------
   const JSON_TYPE = 'application/json; charset=utf-8';
   const disclosureBody = Buffer.from(JSON.stringify(disclosure(cfg)));
@@ -742,7 +758,9 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     return true;
   }
 
-  return async function handle(req, res) {
+  handle.chat = chat;                                         // tests and server shutdown
+  return handle;
+  async function handle(req, res) {
     const reqId = token(6);
     const started = Date.now();
     const url = new URL(req.url, 'http://x');
@@ -759,12 +777,12 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
         // state-changing requests must come from our own pages
         const o = req.headers.origin;
         if (o !== origin.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
-        if (url.pathname !== '/api/telemetry') worldCache = null;   // a write may change the city; the next read rebuilds it
+        if (url.pathname !== '/api/telemetry' && !url.pathname.startsWith('/api/chat')) worldCache = null;   // a write may change the city; the next read rebuilds it
       }
       const cookies = parseCookies(req.headers.cookie);
       const ip = clientIp(req, cfg.trustProxy);
       const ctx = {
-        req, params: route.params, query: url.searchParams, cookies, ip,
+        req, res, params: route.params, query: url.searchParams, cookies, ip,
         user: sessionUser(db, cookies[COOKIE]),
         body: (lim) => readJson(req, lim || route.opts.bodyLimit || 64_000),
         setCookie: (c) => res.setHeader('set-cookie', c),

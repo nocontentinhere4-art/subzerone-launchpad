@@ -84,10 +84,12 @@ export const IDEA = (w, extra = {}) => ({
 export const ideaStatus = (db, id) => db.get('SELECT status, status_note FROM ideas WHERE id = ?', id);
 
 /** The app on a real port, with a cookie-keeping client per wallet. */
-export async function harness(env = {}) {
+export async function harness(env = {}, appOpts = {}) {
   const e = makeEnv(env);
   const brain = fakeBrain('build');
-  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl });
+  // SUB-01's chat socket: never dialled for real in tests (pass `chat: {connect}` for a fake transport)
+  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl, ...appOpts,
+    chat: { connect: () => ({ send() {}, close() {} }), fetchMind: null, ...(appOpts.chat || {}) } });
   const server = createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${server.address().port}`;
@@ -103,7 +105,7 @@ export async function harness(env = {}) {
       return { status: res.status, json, text, headers: res.headers };
     };
     return {
-      call, w,
+      call, w, get cookie() { return cookie; },
       async signIn() {
         const n = await call('POST', '/api/auth/nonce', { wallet: w.address });
         const v = await call('POST', '/api/auth/verify', { wallet: w.address, nonce: n.json.nonce, signature: w.signText(n.json.message) });
@@ -111,5 +113,5 @@ export async function harness(env = {}) {
       },
     };
   };
-  return { ...e, brain, server, base, client, close: () => server.close() };
+  return { ...e, brain, server, base, client, app, close: () => { app.chat.close(); server.closeAllConnections(); server.close(); } };
 }
