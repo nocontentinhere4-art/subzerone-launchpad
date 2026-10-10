@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { hostname } from 'node:os';
 import { loadConfig } from './config.js';
 import { openDb, migrate, backup, getSetting, setSetting } from './db.js';
-import { claim, runJob, enqueue } from './jobs.js';
+import { claim, runJob, enqueue, nudgeDeferredEvaluations } from './jobs.js';
 import { handlers, onDead } from './pipeline.js';
 import { sweepSubmitted } from './launch.js';
 import { scheduleCoinStats } from './coin-stats.js';
@@ -13,6 +13,8 @@ import { now } from './util.js';
 
 export function makeWorker({ cfg, db, fetchImpl = fetch, id = `${hostname()}:${process.pid}` }) {
   const services = { cfg, fetchImpl };
+  const nudged = nudgeDeferredEvaluations(db);
+  if (nudged) log.info('deferred evaluations made due at boot', { nudged });
   async function tick() {
     const job = claim(db, id);
     if (!job) return false;

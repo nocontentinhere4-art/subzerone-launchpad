@@ -104,6 +104,13 @@ export function progress(db, jobId, text) {
 }
 
 /** Admin: give a dead job a fresh set of attempts. */
+/** Evaluate jobs parked by a brain outage or his sleep are made due now: called once when a worker boots (the brain
+ * may be back after a restart) so an idea never waits a whole 30 min backoff. -> number of jobs nudged. */
+export function nudgeDeferredEvaluations(db, t = now()) {
+  return db.run(`UPDATE jobs SET run_after = ?, updated_at = ? WHERE status = 'queued' AND type = 'evaluate' AND run_after > ?
+                 AND (last_error LIKE 'brain unavailable%' OR last_error LIKE 'brain asleep%')`, t, t, t).changes;
+}
+
 export function retryDead(db, jobId, actor) {
   const r = db.run(`UPDATE jobs SET status = 'queued', attempts = 0, run_after = ?, last_error = NULL, updated_at = ?
                     WHERE id = ? AND status = 'dead'`, now(), now(), jobId);

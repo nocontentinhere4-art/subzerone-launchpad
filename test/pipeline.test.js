@@ -219,3 +219,16 @@ test('receiving wallet changed after the build: the split is redrafted with the 
   assert.equal(JSON.parse(rows[1].recipients_json)[0].wallet, w2.address);
   assert.equal(db.get('SELECT submitter_approved_at a FROM projects').a, null);
 });
+
+test('a worker boot makes evaluate jobs parked by a brain outage due now (nudgeDeferredEvaluations)', async () => {
+  const { nudgeDeferredEvaluations } = await import('../src/jobs.js');
+  const { db } = makeEnv();
+  const t = Date.now();
+  enqueue(db, { type: 'evaluate', key: 'evaluate:a:v1', ideaId: 'a' });
+  db.run(`UPDATE jobs SET run_after = ?, last_error = 'brain unavailable: brain service answered 502' WHERE idempotency_key = 'evaluate:a:v1'`, t + 30 * 60_000);
+  enqueue(db, { type: 'evaluate', key: 'evaluate:b:v1', ideaId: 'b' });
+  db.run(`UPDATE jobs SET run_after = ?, last_error = 'something else' WHERE idempotency_key = 'evaluate:b:v1'`, t + 30 * 60_000);
+  assert.equal(nudgeDeferredEvaluations(db, t), 1);
+  assert.ok(db.get(`SELECT run_after FROM jobs WHERE idempotency_key = 'evaluate:a:v1'`).run_after <= t);
+  assert.ok(db.get(`SELECT run_after FROM jobs WHERE idempotency_key = 'evaluate:b:v1'`).run_after > t);
+});
