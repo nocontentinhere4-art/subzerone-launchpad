@@ -108,17 +108,22 @@ export function brainFeedback(rec) {
     dislikes.push(`The words did little for my language network (${two(lang.weight)}).`);
     suggestions.push({ what: 'Write it like you would tell a friend', why: `My language network responded at ${two(lang.weight)}.`, how: 'Short sentences, concrete nouns, one joke.' });
   }
-  if (build && build.novel === false) {
+  // The brain's novelty flag is only a finding when it was actually checked (launchpad votes pass novel=None, which
+  // the vote records as false): without `rec.vote.novelty_checked` it says nothing. (2026-10-10: it contradicted the
+  // launchpad's own originality line on the first live idea.)
+  if (build && build.novel === false && rec.vote?.novelty_checked) {
     dislikes.push('Nothing in it was new to me.');
     suggestions.push({ what: 'Give it a twist I have not seen', why: 'My novelty check found nothing new in the text.', how: 'One concrete thing no other coin here has: an object, a ritual, a place.' });
   }
-  if (rec.vote?.reason) context.push(`Vote note: ${cut(rec.vote.reason, 120)}.`);
+  if (rec.vote?.reason) context.push(`Vote note: ${cut(String(rec.vote.reason).replace(/^no brain response: picked on the spiking network leaned to it\.?/i, 'my cortex model had no clear lean; the spiking network decided'), 120)}.`);
   const m = rec.mood || {};
   if (m.tired >= 0.7) context.push(`I was tired when I read it (${two(m.tired)}). That is on me, not on you.`);
   if (m.boredom >= 0.7) context.push(`I was bored when it arrived (${two(m.boredom)}); a bored me is easier to win.`);
   if (rec.demo) context.push('Read by the demo brain, not the live one.');
   // Always on (owner 2026-10-10): asleep he still votes, on his sleeping brain; say so, it is part of the record.
-  if (rec.stage && rec.stage !== 'AWAKE') context.push(`I read it in my sleep (${rec.stage}); the vote came from my sleeping brain, gain ${rec.gain != null ? two(rec.gain) : '?'}.`);
+  if (rec.stage && rec.stage !== 'AWAKE') context.push(rec.as_if_awake
+    ? `I read it in my sleep (${rec.stage}) but judged it in my daytime tone (gain ${rec.gain != null ? two(rec.gain) : '?'}; my sleeping gain was ${rec.sleeping_gain != null ? two(rec.sleeping_gain) : '?'}).`
+    : `I read it in my sleep (${rec.stage}); the vote came from my sleeping brain, gain ${rec.gain != null ? two(rec.gain) : '?'}.`);
   return { likes, dislikes, suggestions, context, buildP: build ? Number(build.p) : null };
 }
 

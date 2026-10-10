@@ -140,6 +140,9 @@ test('feedback from the brain record: networks become likes, a pass gets his rea
   const { brainFeedback } = await import('../src/feedback.js');
   const asleep = brainFeedback({ decision: 'pass', networks: { reward: 1 }, stage: 'NREM', gain: 0.71, mood: {}, vote: { options: [] } });
   assert.ok(asleep.context.some((c) => /in my sleep \(NREM\)/.test(c)), `context: ${asleep.context}`);
+  const awakeTone = brainFeedback({ decision: 'pass', networks: { reward: 1 }, stage: 'NREM', gain: 1.0, as_if_awake: true, sleeping_gain: 0.12, mood: {}, vote: { options: [{ label: 'build: x', p: 0.3, novel: false }] } });
+  assert.ok(awakeTone.context.some((c) => /daytime tone/.test(c)));
+  assert.ok(!awakeTone.dislikes.some((d) => /new to me/.test(d)), 'novelty not checked: no novelty dislike');
   assert.ok(typeof f.wouldBuildIf === 'string' && f.wouldBuildIf.length > 10);
   assert.ok(f.suggestions.every((s) => s.what && s.why && s.how));
   // a build: no "would build if", confidence = p(build)
