@@ -223,7 +223,7 @@ receives). Poll every 3–5 s.
     { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits },
       "buff": "glow|confetti|petals|null" }, "project": null },
     { "plotId": "ginza-3", "kind": "project", "resident": null,
-      "project": { "slug": "ramen-radar|null", "name": "Ramen Radar", "ticker": "RAMEN|null", "stage": "preview_ready",
+      "project": { "ideaId": "idea_…|null", "slug": "ramen-radar|null", "name": "Ramen Radar", "ticker": "RAMEN|null", "stage": "preview_ready",
                    "stageLabel": "Preview ready for your review", "progress": 0.65, "launched": false, "mint": null,
                    "logoUrl": "/meta/ramen-radar/logo-v1.png|null", "bannerUrl": "/meta/ramen-radar/banner-v1.svg|null" } }
   ],
@@ -237,11 +237,15 @@ receives). Poll every 3–5 s.
 - `plots` lists **claimed** plots only, oldest claim first.
 - `resident.buff`: today's omikuji effect (cosmetic, see Omikuji), the kind only; `null` when the resident has not
   drawn today, drew a slip without an effect, or the Tokyo day is over.
-- `project` for an idea that is still **private**: `{ "slug": null, "name": "Private project", "ticker": null,
+- `project` for an idea that is still **private**: `{ "ideaId": null, "slug": null, "name": "Private project", "ticker": null,
   "stage", "stageLabel", "progress", "launched": false, "mint": null, "logoUrl": null, "bannerUrl": null }`. Nothing else
   about it is exposed.
 - Public idea: `name` is the project name (or the idea title before the project exists); `ticker` is the project's
   (or the suggested one); `slug` is null until SUB-01 has built it (`/projects/<slug>` on the launchpad).
+- `ideaId` (`project` only): a **public** idea's id (`idea_…`), so the city can call `GET /api/predictions/:ideaId` and
+  `POST /api/ema/:ideaId/cheer` without matching by title. A **private** project is `null`: its id is never sent. Public ids
+  are the ones `GET /api/ema` and `GET /api/votes` already show. An idea that goes private again drops back to `null` on
+  the next snapshot.
 - `mint` is set only when `launched` is true.
 - `logoUrl` / `bannerUrl`: the project's latest generated logo (PNG) and banner (SVG) as public same-origin paths
   `/meta/<slug>/logo-v<n>.png` and `/meta/<slug>/banner-v<n>.svg` (the files the token metadata links to; immutable,

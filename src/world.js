@@ -424,11 +424,13 @@ export function worldView(db, cfg, t = now()) {
     let progress = PROGRESS[stage] ?? 0;
     if (stage === 'generating' && GEN_STEPS[genProgress.get(x.idea_id)]) progress = GEN_STEPS[genProgress.get(x.idea_id)];
     const base = { stage, stageLabel: LABELS[stage] || stage, progress };
-    if (x.visibility !== 'public') return { slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null, logoUrl: null, bannerUrl: null };
+    // ideaId: the key the city uses for /api/predictions/:ideaId and /api/ema/:ideaId/cheer. Public ideas only; a private
+    // project's id is never sent (the placeholder carries null).
+    if (x.visibility !== 'public') return { ideaId: null, slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null, logoUrl: null, bannerUrl: null };
     const launched = stage === 'launched' && Boolean(x.mint);
     // the same public, immutable /meta/<slug>/… files the token metadata links to (app.js serves them for public ideas only)
     const asset = (kind, v, ext) => (x.slug && v ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : null);
-    return { slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
+    return { ideaId: x.idea_id, slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg') };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,

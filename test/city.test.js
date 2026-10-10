@@ -150,7 +150,7 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     assert.equal(w.headers.get('cache-control'), 'public, max-age=3');
     const plot = w.json.plots.find((p) => p.plotId === 'ebisu-2');
     assert.deepEqual(plot, { plotId: 'ebisu-2', kind: 'project', resident: null,
-      project: { slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null, logoUrl: null, bannerUrl: null } });
+      project: { ideaId: null, slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null, logoUrl: null, bannerUrl: null } });
     assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT, buff: null });
     for (const secret of ['Secret Sauce', 'SAUCE', 'Ramen', a.w.address, sub.json.id, a.w.address.slice(0, 12)]) assert.ok(!w.text.includes(secret), `leaked ${secret}`);
     assert.ok(w.json.news.some((n) => n.text === 'Kenji moved into ebisu-1' && n.plotId === 'ebisu-1'));
@@ -172,6 +172,32 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     assert.ok(w.json.news.some((n) => n.plotId === 'ebisu-2' && n.text.startsWith(`${pub.name}: `)));
     assert.ok(!w.text.includes(a.w.address), 'still no wallet');
     assert.ok(w.json.news.length <= 20);
+  } finally { h.close(); }
+});
+
+test('/api/world project.ideaId: a public project carries its idea id (usable as the predictions key), a private one is null', async () => {
+  const h = await harness();
+  try {
+    const a = await signedIn(h);
+    const pubIdea = await a.call('POST', '/api/ideas', IDEA(a.w, { title: 'Open Id Coin', tickerSuggestion: 'OPENID', plotId: 'nakano-1' }));
+    // a different concept: the same text would be declined as a duplicate and its plot released
+    const privIdea = await a.call('POST', '/api/ideas', IDEA(a.w, { title: 'Hidden Id Coin', concept: 'A night bus map of Shinjuku that says which line to take at 3 am.', tickerSuggestion: 'HIDDENID', plotId: 'nakano-2' }));
+    assert.equal(pubIdea.status, 200, pubIdea.text);
+    assert.equal(privIdea.status, 200, privIdea.text);
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const anon = h.client(user(h.db));
+    const project = (w, plotId) => w.json.plots.find((p) => p.plotId === plotId).project;
+    let w = await anon.call('GET', '/api/world');
+    assert.equal(project(w, 'nakano-1').ideaId, null, 'private until published');
+    assert.equal(project(w, 'nakano-2').ideaId, null, 'private: null, never the id');
+    assert.ok(!w.text.includes(pubIdea.json.id) && !w.text.includes(privIdea.json.id), 'no idea id while private');
+    await a.call('POST', `/api/ideas/${pubIdea.json.id}/publish`, { public: true });
+    w = await anon.call('GET', '/api/world');
+    assert.equal(project(w, 'nakano-1').ideaId, pubIdea.json.id, 'public: the idea id, so the city can call /api/predictions/:ideaId');
+    assert.equal(project(w, 'nakano-2').ideaId, null, 'still private: null');
+    assert.ok(!w.text.includes(privIdea.json.id), 'the private idea id never appears');
+    assert.equal((await anon.call('GET', `/api/predictions/${project(w, 'nakano-1').ideaId}`)).status, 200, 'the id works as the predictions key');
+    assert.equal((await anon.call('GET', `/api/predictions/${privIdea.json.id}`)).status, 404, 'a private idea has no predictions');
   } finally { h.close(); }
 });
 
@@ -267,7 +293,7 @@ test('roles: founder grants and revokes, others cannot; public view shortens wal
     h.db.run(`INSERT INTO plots (plot_id, kind, wallet, idea_id, claimed_at) VALUES ('roppongi-1', 'project', ?, 'idea_ramen', 1)`, founder.w.address);
     const w = await stranger.call('GET', '/api/world');
     assert.deepEqual(w.json.plots.find((x) => x.plotId === 'roppongi-1').project,
-      { slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen',
+      { ideaId: 'idea_ramen', slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen',
         logoUrl: null, bannerUrl: null }, 'no art stored: null URLs');
     assert.ok(!w.text.includes(founder.w.address) && !w.text.includes(mod.address));
   } finally { h.close(); }
