@@ -17,6 +17,10 @@ export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku
 export const PLOTS_PER_DISTRICT = 6;
 export const PLOT_IDS = DISTRICTS.flatMap((d) => Array.from({ length: PLOTS_PER_DISTRICT }, (_, i) => `${d}-${i + 1}`));
 const PLOT_SET = new Set(PLOT_IDS);
+// Reserved plots (owner 2026-10-10): the two Shiba plots either side of Tokyo Tower are its park. The ids stay (288 ids,
+// nothing renumbered) but they cannot be claimed any more; a row that already claims one is left alone.
+export const RESERVED_PLOTS = new Set(['shiba-2', 'shiba-5']);
+export const RESERVED_PLOT_IDS = [...RESERVED_PLOTS];
 
 export const LOOK = Object.freeze({
   skin: ['#f6d5b8', '#e8b48f', '#c98e66', '#a26a45', '#7a4a2e', '#4f3020'],
@@ -287,8 +291,10 @@ export const PROGRESS = { submitted: 0.05, evaluating: 0.12, selected: 0.2, gene
 // generate-job progress texts (pipeline.js) -> a finer position inside 'generating'
 const GEN_STEPS = { 'writing the project identity': 0.5, 'building the website in the sandbox': 0.58 };
 
-export function validatePlotId(plotId) {
+/** A known plot id. With `claim`, a reserved plot (the tower park) is refused too: it can be read but never claimed. */
+export function validatePlotId(plotId, { claim = false } = {}) {
   if (typeof plotId !== 'string' || !PLOT_SET.has(plotId)) throw new HttpError(400, 'bad_plot', 'unknown plot (see /api/world/options)');
+  if (claim && RESERVED_PLOTS.has(plotId)) throw new HttpError(400, 'plot_reserved', `${plotId} is part of the Tokyo Tower park (see /api/world/options.reservedPlotIds)`);
   return plotId;
 }
 
@@ -364,7 +370,7 @@ export const cleanText = (s) => String(s).normalize('NFKC').replace(/[\u0000-\u0
 
 /** Inside a transaction: claim a free plot or 409. The pre-check gives a clear error; the primary key is the guard. */
 export function claimPlot(db, { plotId, kind, wallet, ideaId = null }) {
-  validatePlotId(plotId);
+  validatePlotId(plotId, { claim: true });
   if (db.get('SELECT 1 FROM plots WHERE plot_id = ?', plotId)) throw new HttpError(409, 'plot_taken', `${plotId} is already taken`);
   try {
     db.run('INSERT INTO plots (plot_id, kind, wallet, idea_id, claimed_at) VALUES (?, ?, ?, ?, ?)', plotId, kind, wallet, ideaId, now());
@@ -448,7 +454,7 @@ export function worldView(db, cfg, t = now()) {
     LEFT JOIN fortunes f ON f.wallet = r.wallet AND f.date = ? AND f.until > ? AND f.buff != 'none'
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
     LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`, jstDate(t), t);
-  const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind,
+  const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind, ...(RESERVED_PLOTS.has(x.plot_id) ? { reserved: true } : {}),
     // buff: today's omikuji effect (cosmetic, kind only; rituals.js), null when none is active
     resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: readLook(x.look_json), traits: readTraits(x.traits_json), buff: x.buff || null } : null,
     project: x.kind === 'project' && x.status ? projectOf(x) : null }));
@@ -481,7 +487,7 @@ export function worldView(db, cfg, t = now()) {
     WHERE e.public = 1 AND (e.idea_id IS NULL OR i.visibility = 'public') AND (e.project_id IS NULL OR i.visibility = 'public')
     ORDER BY e.id DESC LIMIT 20`).map((e) => ({ at: e.at, kind: e.kind, plotId: e.plot_id ?? (e.kind === 'resident' ? residentPlot(e.message) : null),
     text: scrub(e.name ? `${e.name}: ${e.message}` : e.message) }));
-  return { now: now(), sub01, plots, news, events: cityEvents(db) };
+  return { now: now(), sub01, plots, reservedPlots: RESERVED_PLOT_IDS, news, events: cityEvents(db) };
 }
 
 // status changes the city celebrates (fireworks, street parties): the first time an idea reaches each of them

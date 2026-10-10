@@ -494,3 +494,33 @@ test('rooms v2: Kenney catalog, stacking, wall pieces, window view; v1 rooms sti
     assert.equal(o.json.room.maxFurniture, 40);
   } finally { h.close(); }
 });
+
+// Owner 2026-10-10: the two Shiba plots beside Tokyo Tower are its park. Still valid ids (288, nothing renumbered), but
+// never claimable, as an apartment or with an idea; an existing row on one is left alone and just flagged.
+test('reserved plots: shiba-2 and shiba-5 are listed, refused by every claim path, and flagged in the snapshot', async () => {
+  const h = await harness();
+  try {
+    const a = await signedIn(h);
+    const o = await a.call('GET', '/api/world/options');
+    assert.deepEqual(o.json.reservedPlotIds, ['shiba-2', 'shiba-5']);
+    assert.ok(o.json.plotIds.includes('shiba-2') && o.json.plotIds.length === 288, 'the ids stay');
+    assert.equal(validatePlotId('shiba-2'), 'shiba-2', 'readable');
+    assert.throws(() => validatePlotId('shiba-5', { claim: true }), /plot_reserved|Tokyo Tower park/);
+    for (const plotId of ['shiba-2', 'shiba-5']) {
+      const apt = await a.call('POST', '/api/residents', { name: 'Kenji', look: LOOK, plotId });
+      assert.equal(apt.json.error, 'plot_reserved', `${plotId} apartment`);
+      const idea = await a.call('POST', '/api/ideas', IDEA(a.w, { plotId }));
+      assert.equal(idea.json.error, 'plot_reserved', `${plotId} idea`);
+      assert.equal(h.db.get('SELECT COUNT(*) n FROM ideas').n, 0, 'no idea without its plot');
+    }
+    assert.throws(() => h.db.tx(() => claimPlot(h.db, { plotId: 'shiba-2', kind: 'apartment', wallet: a.w.address })), /Tokyo Tower park/);
+    assert.equal(h.db.get('SELECT COUNT(*) n FROM plots').n, 0);
+    // a row claimed before the reservation stays, flagged for the client
+    h.db.run(`INSERT INTO plots (plot_id, kind, wallet, claimed_at) VALUES ('shiba-5', 'apartment', ?, 1)`, a.w.address);
+    const w = worldView(h.db, h.cfg);
+    assert.deepEqual(w.reservedPlots, ['shiba-2', 'shiba-5']);
+    assert.deepEqual(w.plots.map((p) => [p.plotId, p.reserved]), [['shiba-5', true]]);
+    assert.equal((await a.call('POST', '/api/residents', { name: 'Kenji', look: LOOK, plotId: 'shiba-3' })).status, 200, 'the plot next door is fine');
+    assert.equal(w.plots.length, 1);
+  } finally { h.close(); }
+});

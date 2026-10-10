@@ -55,6 +55,7 @@ Public, `cache-control: public, max-age=3600`.
   "districts": ["shiba", "shinjuku", "…48 names"],
   "plotsPerDistrict": 6,
   "plotIds": ["shiba-1", "shiba-2", "…288 ids"],
+  "reservedPlotIds": ["shiba-2", "shiba-5"],
   "look": {
     "skin": ["#f6d5b8", "#e8b48f", "#c98e66", "#a26a45", "#7a4a2e", "#4f3020"],
     "hair": ["#1b1b1b", "#3b2a20", "#6b4428", "#a87443", "#d9b26f", "#b23a2e", "#e8e8e8", "#4a6cd4"],
@@ -220,6 +221,7 @@ receives). Poll every 3–5 s.
   "now": 1760000000000,
   "sub01": { "state": "idle|working|asleep|offline", "ideaId": "idea_…|null", "plotId": "ginza-3|null",
              "stage": "generating|null", "text": "Building Ramen Radar (building)" },
+  "reservedPlots": ["shiba-2", "shiba-5"],
   "plots": [
     { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits },
       "buff": "glow|confetti|petals|null" }, "project": null },

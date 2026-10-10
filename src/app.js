@@ -13,7 +13,7 @@ import { buildSiteVersion, setLiveVersion, siteCsp } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
-import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
+import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
   unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
 import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
@@ -341,7 +341,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
 
   // --- city (world.js, roles.js; contract in docs/CITY-API.md) -------------------------------------------------------
   r.get('/api/world/options', (ctx) => ctx.raw(200, Buffer.from(JSON.stringify({
-    districts: DISTRICTS, plotsPerDistrict: PLOTS_PER_DISTRICT, plotIds: PLOT_IDS,
+    districts: DISTRICTS, plotsPerDistrict: PLOTS_PER_DISTRICT, plotIds: PLOT_IDS, reservedPlotIds: RESERVED_PLOT_IDS,
     look: { ...LOOK, freeColors: FREE_COLORS, colorPattern: '^#[0-9a-f]{6}$', accessories: ACCESSORIES, maxAccessories: MAX_ACCESSORIES, pets: PETS, petName: PET_NAME },
     traits: { keys: TRAITS, range: [0, 1], default: DEFAULT_TRAITS }, name: NAME,
     room: { ...ROOM, textItems: TEXT_ITEMS, textMax: ITEM_TEXT_MAX, default: DEFAULT_ROOM }, progress: PROGRESS, unlocks: UNLOCKS,
