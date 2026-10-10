@@ -467,3 +467,12 @@ test('chat stream: heartbeat comments, and a connection idle past the limit is d
     one.close();
   } finally { h.close(); }
 });
+
+test('wsConnect: a handshake that only errors (Node WebSocket, live server down) still closes the transport, so the relay redials', async () => {
+  const { wsConnect } = await import('../src/sub01relay.js');
+  const t = wsConnect('ws://127.0.0.1:9/ws');            // nothing listens: Node fires error, never close
+  let closes = 0;
+  t.onclose = () => { closes++; };
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(closes, 1);
+});

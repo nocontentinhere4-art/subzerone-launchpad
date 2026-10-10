@@ -25,10 +25,14 @@ export function wsUrl(base) {
 export function wsConnect(url) {
   const ws = new WebSocket(url);
   const t = { send: (s) => ws.send(s), close: () => { try { ws.close(); } catch { /* already closed */ } } };
+  let closed = false;
+  const closeOnce = () => { if (closed) return; closed = true; t.onclose?.(); };
   ws.onopen = () => t.onopen?.();
   ws.onmessage = (e) => t.onmessage?.(typeof e.data === 'string' ? e.data : '');
-  ws.onclose = () => t.onclose?.();
-  ws.onerror = () => {};                                    // a close event follows
+  ws.onclose = closeOnce;
+  // Node's WebSocket fires only 'error' (no 'close') when the handshake fails, e.g. a 502 while the live server
+  // restarts: without this the relay kept a dead transport and never redialled (2026-10-10, stuck "offline").
+  ws.onerror = closeOnce;
   return t;
 }
 
