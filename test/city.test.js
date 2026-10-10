@@ -151,7 +151,7 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     const plot = w.json.plots.find((p) => p.plotId === 'ebisu-2');
     assert.deepEqual(plot, { plotId: 'ebisu-2', kind: 'project', resident: null,
       project: { slug: null, name: 'Private project', ticker: null, stage: 'preview_ready', stageLabel: 'Preview ready for your review', progress: 0.65, launched: false, mint: null, logoUrl: null, bannerUrl: null } });
-    assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT });
+    assert.deepEqual(w.json.plots.find((p) => p.plotId === 'ebisu-1').resident, { name: 'Kenji', look: LOOK_OUT, traits: TRAITS_DEFAULT, buff: null });
     for (const secret of ['Secret Sauce', 'SAUCE', 'Ramen', a.w.address, sub.json.id, a.w.address.slice(0, 12)]) assert.ok(!w.text.includes(secret), `leaked ${secret}`);
     assert.ok(w.json.news.some((n) => n.text === 'Kenji moved into ebisu-1' && n.plotId === 'ebisu-1'));
     assert.equal(w.json.news.filter((n) => n.plotId === 'ebisu-2').length, 0, 'no news from a private idea');

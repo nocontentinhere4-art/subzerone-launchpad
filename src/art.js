@@ -29,7 +29,7 @@ export function palette(networks) {
   return { bg: '#08080b', fg: '#ececf2', accent: NETWORK_COLORS[r[0].group], second: NETWORK_COLORS[(r[1] || r[0]).group] };
 }
 
-function png(width, height, rgba) {
+export function png(width, height, rgba) {
   const raw = Buffer.alloc((width * 4 + 1) * height);
   for (let y = 0; y < height; y++) {
     raw[y * (width * 4 + 1)] = 0;

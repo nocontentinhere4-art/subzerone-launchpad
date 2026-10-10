@@ -15,7 +15,7 @@ import { getProvider, validateRecipients, draftAllocation, allocationStatement, 
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
-  unlocksFor, postGuestbook, deleteGuestbook, deskView } from './world.js';
+  unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
 import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover } from './roles.js';
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
@@ -23,9 +23,12 @@ import { sub01Market } from './market.js';
 import { brainStatus } from './brain.js';
 import { limits, spentToday } from './budget.js';
 import { listVotes, voteHead, verifyChain, disclosure } from './trust.js';
-import { calendarView } from './calendar.js';
+import { calendarView, jstDate } from './calendar.js';
+import { drawOmikuji, todayOmikuji, predict, predictionView, leaderboard, emaList, cheerEma, touchSeen, recordVisit, awayView } from './rituals.js';
+import { diaryFor, latestDiary } from './diary.js';
+import { postcardSvg, postcardPng } from './postcard.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
-import { HttpError, parseJson, now, token } from './util.js';
+import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
 
@@ -108,6 +111,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   });
   r.get('/api/me', (ctx) => {
     if (!ctx.user) return { user: null };
+    touchSeen(db, ctx.user.wallet);                          // "while you were away" (rituals.js)
     const ideas = db.all(`SELECT i.id, i.status, i.status_note, i.visibility, i.created_at, i.updated_at, v.title, p.slug, p.ticker, l.provider, l.network
       FROM ideas i JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version LEFT JOIN projects p ON p.idea_id = i.id
       LEFT JOIN launches l ON l.project_id = p.id
@@ -138,7 +142,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const b = await ctx.body(7_000_000);
     const ideaId = submitIdea(db, cfg, u.wallet, b);
     log.info('idea submitted', { idea: ideaId });
-    return { id: ideaId };
+    const pin = db.get('SELECT pinned_hash, pinned_at FROM ideas WHERE id = ?', ideaId);
+    return { id: ideaId, pinnedHash: pin.pinned_hash, pinnedAt: pin.pinned_at };
   }, { bodyLimit: 7_000_000 });
   r.get('/api/ideas/:id', (ctx) => {
     const v = viewIdea(db, ctx.params.id, ctx.user);
@@ -181,6 +186,8 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const gen = db.get('SELECT generator, cost_usd, created_at FROM generations WHERE project_id = ? ORDER BY version DESC LIMIT 1', p.id);
     const evaluation = db.get(`SELECT brain_json, scores_json FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, idea.id);
     const v1 = currentVersion(db, idea.id);
+    const vote = db.get(`SELECT l.seq FROM evaluations e JOIN vote_ledger l ON l.request_id = e.brain_request_id WHERE e.idea_id = ? AND l.decision = 'build'
+      ORDER BY l.seq LIMIT 1`, idea.id);
     return {
       id: p.id, slug: p.slug, name: p.name, ticker: p.ticker, description: p.description, ideaId: idea.id, ideaTitle: v1.title,
       status: idea.status, statusNote: idea.status_note, visibility: idea.visibility, owner, staff,
@@ -196,6 +203,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
         explorerTx: provider?.explorerTx?.(launch.tx_signature) ?? null, explorerToken: provider?.explorerToken?.(launch.mint) ?? null },
       intent, mockSigningText: intent && provider?.isMock ? mockSigningText(db.get('SELECT tx_message_hash h FROM launch_intents WHERE id = ?', intent.id).h) : undefined,
       ledger: launch ? feeLedger(db, p.id) : null,
+      pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: vote?.seq ?? null,
     };
   });
 
@@ -352,6 +360,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     const v = roomView(db, ctx.params.plotId);
     if (!v) throw new HttpError(404, 'not_found', 'nobody lives there (or it is private)');
     const pl = db.get('SELECT wallet, idea_id FROM plots WHERE plot_id = ?', ctx.params.plotId);
+    recordVisit(db, ctx.user?.wallet, ctx.params.plotId, pl.wallet);   // for the owner's "while you were away"
     const provider = getProvider(cfg, db);
     const desk = deskView(db, cfg, { wallet: pl.wallet, owner: ctx.user?.wallet === pl.wallet, plotIdeaId: pl.idea_id,
       previewLink: (p) => previewLink(p.slug, p.live_site_version), explorerTx: (sig) => provider?.explorerTx?.(sig) });
@@ -419,6 +428,90 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
     if (!/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 90) throw new HttpError(400, 'bad_request', 'days: 1–90');
     return telemetryDaily(db, Number(d));
   });
+
+  // --- rituals: omikuji, predictions, ema, "while you were away" (rituals.js); diary (diary.js); postcards ------------
+  r.post('/api/omikuji', (ctx) => drawOmikuji(db, requireUser(ctx).wallet));
+  r.get('/api/omikuji/today', (ctx) => todayOmikuji(db, requireUser(ctx).wallet));
+  r.post('/api/predictions', async (ctx) => { const u = requireUser(ctx); limit('write', u.wallet); return predict(db, u.wallet, await ctx.body()); });
+  r.get('/api/predictions/:ideaId', (ctx) => predictionView(db, ctx.params.ideaId, ctx.user?.wallet));
+  r.get('/api/leaderboard', (ctx) => leaderboard(db, ctx.query));
+  r.get('/api/ema', (ctx) => emaList(db, ctx.query));
+  r.post('/api/ema/:ideaId/cheer', (ctx) => { const u = requireUser(ctx); limit('write', u.wallet); return cheerEma(db, u.wallet, ctx.params.ideaId); });
+  r.get('/api/away', (ctx) => awayView(db, requireUser(ctx).wallet));
+  r.get('/api/diary/latest', () => latestDiary(db, cfg));
+  r.get('/api/diary', (ctx) => {
+    const extra = [...ctx.query.keys()].filter((k) => k !== 'date');
+    if (extra.length) throw new HttpError(400, 'bad_request', `unknown parameter ${extra[0].slice(0, 20)}`);
+    return diaryFor(db, cfg, ctx.query.get('date') ?? undefined);
+  });
+
+  /** The card data of a public project, or null. */
+  const projectCard = (slug) => {
+    if (!/^[a-z0-9-]{1,40}$/.test(slug)) return null;
+    const p = projectBySlug(slug);
+    const idea = p && db.get('SELECT status, visibility FROM ideas WHERE id = ?', p.idea_id);
+    if (!p || idea.visibility !== 'public') return null;
+    const ev = db.get(`SELECT brain_json FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, p.idea_id);
+    const logo = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'logo' ORDER BY version DESC LIMIT 1`, p.id);
+    const plot = db.get('SELECT plot_id FROM plots WHERE idea_id = ?', p.idea_id);
+    return { kind: 'project', slug: p.slug, name: p.name, ticker: p.ticker, stage: idea.status, stageLabel: LABELS[idea.status] || idea.status,
+      networks: parseJson(ev?.brain_json)?.networks || {}, logo: logo ? Buffer.from(logo.body) : null, date: jstDate(now()), plotId: plot?.plot_id || null };
+  };
+  /** The card data of an apartment with a resident, or null. */
+  const roomCard = (plotId) => {
+    try { validatePlotId(plotId); } catch { return null; }
+    const x = db.get(`SELECT r.name, r.look_json FROM plots pl JOIN residents r ON r.plot_id = pl.plot_id WHERE pl.plot_id = ? AND pl.kind = 'apartment'`, plotId);
+    if (!x) return null;
+    const d = plotId.replace(/-\d+$/, '');
+    return { kind: 'room', plotId, name: x.name, district: d[0].toUpperCase() + d.slice(1), look: readLook(x.look_json), date: jstDate(now()) };
+  };
+  const CARD_HEADERS = { 'cache-control': 'public, max-age=300', 'access-control-allow-origin': '*', 'x-content-type-options': 'nosniff' };
+  const cardCache = new Map();                             // rendered cards, 5 min, at most 200 (a PNG takes ~40 ms)
+  const sendCard = (ctx, card, ext) => {
+    if (!card) throw new HttpError(404, 'not_found', 'not found, or private');
+    const key = `${ext}:${JSON.stringify({ ...card, logo: card.logo?.length ?? 0 })}`;
+    let hit = cardCache.get(key);
+    if (!hit || Date.now() - hit.at > 300_000) {
+      hit = { at: Date.now(), body: ext === 'png' ? postcardPng(card) : Buffer.from(postcardSvg(card)) };
+      cardCache.delete(key);
+      cardCache.set(key, hit);
+      if (cardCache.size > 200) cardCache.delete(cardCache.keys().next().value);
+    }
+    if (ext === 'png') return ctx.raw(200, hit.body, { ...CARD_HEADERS, 'content-type': 'image/png' });
+    return ctx.raw(200, hit.body, { ...CARD_HEADERS, 'content-type': 'image/svg+xml; charset=utf-8',
+      'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox" });
+  };
+  r.get('/api/postcard/room/:file', (ctx) => {
+    const m = String(ctx.params.file).match(/^([a-z]+-[1-6])\.(svg|png)$/);
+    return sendCard(ctx, m && roomCard(m[1]), m?.[2]);
+  });
+  r.get('/api/postcard/:file', (ctx) => {
+    const m = String(ctx.params.file).match(/^([a-z0-9-]{1,40})\.(svg|png)$/);
+    return sendCard(ctx, m && projectCard(m[1]), m?.[2]);
+  });
+  // share pages: Open Graph tags (the PNG postcard: most sites do not take SVG previews) and a redirect into the city
+  const sharePage = (ctx, card, path, target) => {
+    if (!card) return ctx.raw(404, Buffer.from('not found'), { 'content-type': 'text/plain; charset=utf-8' });
+    const title = card.kind === 'room' ? `${card.name}'s room in ${card.district}` : `${card.name}${card.ticker ? ` ($${card.ticker})` : ''}`;
+    const desc = card.kind === 'room' ? `An apartment in ${card.district}, SUBZERONE city, Tokyo.` : `${card.stageLabel}. Built by SUB-01 in the SUBZERONE city.`;
+    const image = `${origin.origin}/api/postcard/${card.kind === 'room' ? `room/${card.plotId}` : card.slug}.png`;
+    const e = escapeHtml;
+    const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${e(title)} · SUBZERONE</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="${e(desc)}">
+<meta property="og:type" content="website"><meta property="og:site_name" content="SUBZERONE"><meta property="og:title" content="${e(title)}">
+<meta property="og:description" content="${e(desc)}"><meta property="og:url" content="${e(origin.origin + path)}">
+<meta property="og:image" content="${e(image)}"><meta property="og:image:type" content="image/png"><meta property="og:image:width" content="1200"><meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="${e(title)}"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="${e(title)}">
+<meta name="twitter:description" content="${e(desc)}"><meta name="twitter:image" content="${e(image)}">
+<meta http-equiv="refresh" content="0; url=${e(target)}"></head>
+<body><p><a href="${e(target)}">Open ${e(title)} in the city</a></p></body></html>`;
+    return ctx.raw(200, Buffer.from(html), { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' });
+  };
+  r.get('/p/:slug', (ctx) => {
+    const card = projectCard(ctx.params.slug);
+    return sharePage(ctx, card, `/p/${ctx.params.slug}`, card?.plotId ? `/?focus=${card.plotId}` : `/projects/${ctx.params.slug}`);
+  });
+  r.get('/r/:plotId', (ctx) => sharePage(ctx, roomCard(ctx.params.plotId), `/r/${ctx.params.plotId}`, `/?focus=${ctx.params.plotId}`));
 
   // --- ledger & SUB-01 token -----------------------------------------------------------------------------------------
   r.get('/api/ledger', () => {

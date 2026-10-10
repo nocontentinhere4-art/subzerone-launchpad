@@ -20,8 +20,11 @@ export const THEMES = Object.freeze([
   { id: 'newyear', title: 'Shōgatsu', kanji: '正月', text: 'New Year: shrine visits, kadomatsu at the doors, a fresh start.' },
 ]);
 
-const jstDate = (t) => new Date(t + JST).toISOString().slice(0, 10);
-const dayStart = (t) => Math.floor((t + JST) / DAY) * DAY - JST;
+/** Tokyo date 'YYYY-MM-DD' of t; start (00:00 JST, unix ms) of the Tokyo day containing t; start of a Tokyo date. */
+export const jstDate = (t) => new Date(t + JST).toISOString().slice(0, 10);
+export const dayStart = (t) => Math.floor((t + JST) / DAY) * DAY - JST;
+export const dateStart = (date) => Date.parse(`${date}T00:00:00Z`) - JST;
+export const TOKYO_DAY = DAY;
 
 /** ISO 8601 week of the JST date containing t: {label: 'YYYY-Www', index (weeks since 1970-01-05), starts, ends}. */
 export function isoWeek(t) {

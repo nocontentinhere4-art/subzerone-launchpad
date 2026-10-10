@@ -8,6 +8,7 @@ import { transition } from './states.js';
 import { id, now, sha256, isSolanaAddress, HttpError, parseJson, utcDay } from './util.js';
 import { SUB01 } from './config.js';
 import { claimPlot, validatePlotId } from './world.js';
+import { pinHash } from './rituals.js';
 
 export const LIMITS = { title: [3, 80], concept: [20, 1500], name: 32, ticker: [2, 10], links: 5, uploads: 3,
   uploadBytes: 1_500_000 };
@@ -94,8 +95,9 @@ export function submitIdea(db, cfg, wallet, input) {
   }
   const ideaId = id('idea');
   return db.tx(() => {
-    db.run(`INSERT INTO ideas (id, owner_wallet, status, status_note, created_at, updated_at)
-            VALUES (?, ?, 'submitted', 'waiting for SUB-01', ?, ?)`, ideaId, wallet, t, t);
+    // the ema: version 1 pinned with its hash before anything is decided (rituals.js; proof of priority for the author)
+    db.run(`INSERT INTO ideas (id, owner_wallet, status, status_note, created_at, updated_at, pinned_hash, pinned_at)
+            VALUES (?, ?, 'submitted', 'waiting for SUB-01', ?, ?, ?, ?)`, ideaId, wallet, t, t, pinHash(v.title, v.concept, 1, wallet), t);
     insertVersion(db, ideaId, 1, v, wallet, t);
     if (plotId) claimPlot(db, { plotId, kind: 'project', wallet, ideaId });   // same transaction: no idea without its plot
     mkdirSync(join(cfg.dataDir, 'uploads'), { recursive: true });
@@ -201,6 +203,8 @@ export function viewIdea(db, ideaId, viewer) {
   const evaluation = db.get('SELECT * FROM evaluations WHERE idea_id = ? ORDER BY created_at DESC LIMIT 1', ideaId);
   const uploads = db.all('SELECT id, mime, bytes FROM uploads WHERE idea_id = ?', ideaId);
   const project = db.get('SELECT p.id, p.slug, p.name, p.ticker, l.provider, l.network FROM projects p LEFT JOIN launches l ON l.project_id = p.id WHERE p.idea_id = ?', ideaId);
+  const ledger = evaluation && (owner || admin || idea.status !== 'declined')
+    ? db.get('SELECT seq, hash FROM vote_ledger WHERE request_id = ?', evaluation.brain_request_id) || null : null;
   const job = db.get(`SELECT type, status, attempts, max_attempts, run_after, progress, last_error FROM jobs
                       WHERE idea_id = ? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1`, ideaId);
   return {
@@ -210,11 +214,11 @@ export function viewIdea(db, ideaId, viewer) {
     version: idea.current_version,
     title: v.title, concept: v.concept, nameSuggestion: v.name_suggestion, tickerSuggestion: v.ticker_suggestion,
     links: parseJson(v.links_json, []), contacts: parseJson(v.contacts_json, {}), receivingWallet: v.receiving_wallet,
-    uploads, versions, timeline, project,
+    uploads, versions, timeline, project, pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: ledger?.seq ?? null,
     evaluation: evaluation && { decision: evaluation.decision, decidedBy: evaluation.decided_by,
       scores: parseJson(evaluation.scores_json), brain: parseJson(evaluation.brain_json), at: evaluation.created_at,
       version: evaluation.idea_version, // the vote-ledger row; a passed idea is not linked to it publicly (GET /api/votes shows no titles for those)
-      ledger: (owner || admin || idea.status !== 'declined') ? db.get('SELECT seq, hash FROM vote_ledger WHERE request_id = ?', evaluation.brain_request_id) || null : null },
+      ledger },
     job: job && { type: job.type, status: job.status, attempts: job.attempts, maxAttempts: job.max_attempts,
       runAfter: job.run_after, progress: job.progress, lastError: (owner || admin) ? job.last_error : undefined },
   };

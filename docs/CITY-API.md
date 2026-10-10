@@ -2,9 +2,10 @@
 
 The 3D city (`sub01-launchpad`, Vite/three.js) talks to this service. Code: `src/world.js` (plots, residents, rooms,
 world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers),
-`src/trust.js` (vote ledger, disclosure), `src/calendar.js`, `src/telemetry.js`, routes in `src/app.js`. Tests:
-`test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`, `test/trust.test.js`, `test/calendar.test.js`,
-`test/telemetry.test.js`.
+`src/trust.js` (vote ledger, disclosure), `src/calendar.js`, `src/telemetry.js`, `src/rituals.js` (omikuji, predictions,
+ema, "while you were away"), `src/diary.js` (SUB-01's diary), `src/postcard.js` (share cards), routes in `src/app.js`.
+Tests: `test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`, `test/trust.test.js`, `test/calendar.test.js`,
+`test/telemetry.test.js`, `test/rituals.test.js`.
 
 ## Conventions
 
@@ -16,7 +17,8 @@ world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/role
   `400 bad_plot | bad_name | bad_look | bad_traits | bad_room | bad_text | bad_wallet | bad_role | bad_reason | bad_request`,
   `401 sign_in`, `403 forbidden | locked | own_room | not_founder | founder_active`, `404 not_found | no_role`,
   `409 plot_taken | no_resident | not_launched | already_founder | takeover_open | not_open`, `429 rate_limited`;
-  trust routes: `400 bad_request | bad_telemetry`.
+  trust routes: `400 bad_request | bad_telemetry`; rituals: `400 bad_request`, `403 own_idea`, `404 not_found`,
+  `409 no_resident | closed | already_predicted | already_cheered`.
 - `403 locked` carries the names that are not unlocked yet: `{ "error": "locked", "message": "…", "locked": ["halo", "dragon"] }`.
 - `429 rate_limited` carries `retryAfterS` (seconds).
 - Rate limits: the same per-IP/per-wallet token buckets as every other route (reads 400/min, writes 60/min).
@@ -180,7 +182,7 @@ Unchanged fields (`user`, `ideas`, `fees`) plus:
 ```json
 {
   "resident": { "name": "…", "look": { …look v2 }, "traits": { …traits }, "plotId": "shiba-1", "room": { … },
-                "createdAt": 0, "updatedAt": 0 } | null,
+                "points": 0, "createdAt": 0, "updatedAt": 0 } | null,
   "plots": [ { "plotId": "shiba-1", "kind": "apartment", "ideaId": null, "claimedAt": 0 },
              { "plotId": "ginza-3", "kind": "project", "ideaId": "idea_…", "claimedAt": 0 } ],
   "projectRoles": [ { "slug": "ramen-radar", "role": "founder" } ],
@@ -195,12 +197,17 @@ Unchanged fields (`user`, `ideas`, `fees`) plus:
 `unlocks` is cumulative (everything up to `tier`, in catalog order) and counts **all** the wallet's ideas, private
 ones included (it is the wallet's own view). See Unlocks.
 
+`resident.points`: prediction points (see Predictions). Every signed-in `GET /api/me` also marks the visit for
+"While you were away" (a visit ends after 30 minutes without one).
+
 Signed out: `{ "user": null }` as before.
 
 ## POST /api/ideas — addition
 
 Optional `"plotId": "ginza-3"` in the existing submission body. Validated (`400 bad_plot`) and reserved atomically
 with the idea (`409 plot_taken`, and then no idea is created). Omitted = the idea has no building yet.
+
+Response: `{ "id": "idea_…", "pinnedHash": "<64 hex>", "pinnedAt": 1791601080098 }`: the idea's ema (see Ema).
 
 ## GET /api/world
 
@@ -213,8 +220,8 @@ receives). Poll every 3–5 s.
   "sub01": { "state": "idle|working|asleep|offline", "ideaId": "idea_…|null", "plotId": "ginza-3|null",
              "stage": "generating|null", "text": "Building Ramen Radar (building)" },
   "plots": [
-    { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits } },
-      "project": null },
+    { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits },
+      "buff": "glow|confetti|petals|null" }, "project": null },
     { "plotId": "ginza-3", "kind": "project", "resident": null,
       "project": { "slug": "ramen-radar|null", "name": "Ramen Radar", "ticker": "RAMEN|null", "stage": "preview_ready",
                    "stageLabel": "Preview ready for your review", "progress": 0.65, "launched": false, "mint": null,
@@ -228,6 +235,8 @@ receives). Poll every 3–5 s.
 ```
 
 - `plots` lists **claimed** plots only, oldest claim first.
+- `resident.buff`: today's omikuji effect (cosmetic, see Omikuji), the kind only; `null` when the resident has not
+  drawn today, drew a slip without an effect, or the Tokyo day is over.
 - `project` for an idea that is still **private**: `{ "slug": null, "name": "Private project", "ticker": null,
   "stage", "stageLabel", "progress", "launched": false, "mint": null, "logoUrl": null, "bannerUrl": null }`. Nothing else
   about it is exposed.
@@ -316,6 +325,8 @@ Public.
 - `guestbook`: newest first, at most 50; `name` is the visitor's resident name **now**, never a wallet. Notes written
   before the current owner claimed the plot are not shown (a new tenant starts with an empty guestbook).
 - `visits`: the number of different residents among those notes.
+- A signed-in visitor's `GET` (not the owner's) is noted once per visitor, plot and Tokyo day in `room_visits`, for
+  the owner's "While you were away". Nothing about it is public.
 - `unlocks`: the owner's, same shape as `/api/me.unlocks`, but counting the owner's **public** ideas only (a visitor
   must not learn that a private project exists), so it can be lower than what the owner sees.
 
@@ -662,6 +673,161 @@ for a day without sessions.
     "fps": { "<20": 0, "20-30": 1, "30-45": 0, "45+": 0 }, "quality": { "0": 0, "1": 1, "2": 0, "3": 0 } } ],
   "since": "2026-10-09", "note": "anonymous: no wallet, cookie or IP; session ids and IPs hashed with a salt that is discarded daily" }
 ```
+
+## Rituals (rituals.js, diary.js, postcard.js)
+
+**Legal line.** Nothing awarded here has value or can be traded, transferred, sold or redeemed: fortunes and their
+buffs are cosmetic and end at midnight JST, prediction points only order a leaderboard (no prize, no streak reward, no
+market), cheers are cosmetic. That keeps every ritual outside prize-contest and gambling rules (DPR 430/2001, TULPS
+art. 110; loot-box resale rules). Do not add anything that changes this without legal review. No wallet ever appears
+in these outputs; people are shown by resident name.
+
+### Omikuji: POST /api/omikuji (auth, resident) · GET /api/omikuji/today (auth)
+
+One slip per wallet per Tokyo day. The draw is deterministic: `sha256("<wallet>|<Tokyo date>|<secret salt>")`; the
+first 4 bytes pick one of 7 fortunes by weight (out of 12), byte 5 picks the line. The salt lives in `settings`
+(`omikuji.salt`, created on first use, never returned). Drawing again the same day returns the same slip with
+`fresh: false`; a new slip is available from 00:00 JST.
+
+```json
+{ "drawn": true, "fresh": true, "date": "2026-10-10",
+  "fortune": { "id": "daikichi", "kanji": "大吉", "rank": 1 },
+  "text": "Great blessing. Your balcony lantern stays lit until midnight.",
+  "buff": { "kind": "glow", "until": 1791644400000 }, "drawnAt": 1791601080098,
+  "note": "Cosmetic only: no value, nothing to trade, transfer or redeem." }
+```
+
+- Fortunes (rank, weight, buff): `daikichi` 大吉 (1, 1, glow), `kichi` 吉 (2, 3, petals), `chukichi` 中吉 (3, 2, confetti),
+  `shokichi` 小吉 (4, 2, petals), `hankichi` 半吉 (5, 1, none), `suekichi` 末吉 (6, 2, none), `kyo` 凶 (7, 1, none: tie
+  the slip to the shrine tree). Lines come from the fixed list in `rituals.js` `FORTUNES`.
+- `buff.until` = the end of that Tokyo day. Others see `buff.kind` on `/api/world` (`plots[].resident.buff`).
+- `GET /api/omikuji/today`: the same object with `fresh: false`, or `{ "drawn": false, "date": "2026-10-10", "note": "…" }`.
+- `409 no_resident` without a resident; `401 sign_in` signed out.
+
+### Predictions ("build or pass")
+
+Residents guess SUB-01's vote on a **public** idea while it waits for the brain (`submitted` or `evaluating`, no vote
+yet). Only public ideas can be predicted, so **the author decides**: an idea published before the vote is open to
+guesses; a private one never is. One guess per resident per idea; not on your own idea.
+
+`POST /api/predictions` (auth, resident) with exactly `{ "ideaId": "idea_…", "guess": "build" | "pass" }` →
+the view below. Errors: `400 bad_request` (other keys, bad values), `404 not_found` (unknown or private), `403
+own_idea`, `409 closed` (already voted, or the idea left the queue), `409 already_predicted`, `409 no_resident`.
+
+`GET /api/predictions/:ideaId` (public; `mine`/`correct` with a session; private idea → `404`):
+
+```json
+{ "ideaId": "idea_…", "closed": true, "decision": "build", "total": 2, "build": 1, "pass": 1, "mine": "build", "correct": true }
+```
+
+- `closed`: the ledger has the brain's vote on the idea, or the idea is no longer in the queue. `decision` comes from
+  that ledger row (`null` until it exists; also `null` for an idea declined by a rule or cancelled before the vote: no
+  one scores).
+- Settlement happens in the same database transaction that appends the vote to the ledger: each correct guess adds
+  **10 points** to the resident (`/api/me.resident.points`). Guesses never reach the brain.
+
+`GET /api/leaderboard?kind=predictions` (public; `kind` defaults to `predictions`, anything else → `400`):
+
+```json
+{ "kind": "predictions", "top": [ { "name": "Yui", "points": 10 } ],
+  "note": "Points only order this list. They have no value and cannot be traded, transferred or redeemed." }
+```
+
+Top 20 residents with points > 0, highest first (ties: the older resident first). Names only.
+
+### Ema (an idea pinned before the vote)
+
+At submission the idea's version 1 is pinned: `pinnedHash = sha256(JSON.stringify([title, concept, 1, wallet]))`
+(the submitted, cleaned text), `pinnedAt` = submission time. The author can later prove they had this exact text at
+that time (their own copy of v1 is in the idea's versions). It is returned by `POST /api/ideas` and shown as
+`pinnedHash`, `pinnedAt`, `ledgerSeq` on `GET /api/ideas/:id` and on the project JSON `GET /api/projects/:slug`.
+`ledgerSeq` = the idea's vote-ledger row (`null` before the vote; on a passed idea only for its author or staff, like
+`evaluation.ledger`; on the project JSON the build vote). Ideas submitted before this feature have `null` hashes.
+
+`GET /api/ema?limit=30` (public, `limit` 1–50): the latest **public** pinned ideas, newest first; declined and
+cancelled ideas leave the shrine.
+
+```json
+{ "ema": [ { "ideaId": "idea_…", "pinnedHash": "…", "pinnedAt": 1791601080098, "title": "Ramen Radar", "slug": "ramen-radar|null",
+             "stage": "submitted", "stageLabel": "Dropped in his room", "cheers": 1 } ],
+  "note": "Cheers are cosmetic. They do not reach SUB-01's brain and do not change the order or the outcome of any vote." }
+```
+
+`POST /api/ema/:ideaId/cheer` (auth, resident, once per idea, not your own) → `{ "cheers": 1 }`. Errors: `404
+not_found` (not on the shrine), `403 own_idea`, `409 already_cheered`, `409 no_resident`.
+
+**Cheers do not influence the brain.** The pipeline never reads them; the brain request carries the request id, the
+idea's title and its concept only (tested). The evaluation queue order is unchanged.
+
+### While you were away: GET /api/away (auth, resident)
+
+Since the resident's last visit (a visit = `GET /api/me` calls less than 30 minutes apart; `since` is when the
+previous visit ended, or the resident's creation on the first visit):
+
+```json
+{ "since": 1791590000000,
+  "visits": [ { "name": "Yui", "at": 1791600000000 } ],
+  "guestbook": [ { "name": "Yui", "text": "nice room 🍜", "at": 1791600000000 } ],
+  "project": [ { "ideaId": "idea_…", "slug": "ramen-radar|null", "from": "generating", "to": "preview_ready", "at": 1791600100000 } ],
+  "note": "What happened in your rooms and to your ideas since your last visit. Nothing here needs an action." }
+```
+
+- `visits`: people who opened or signed in the guestbook of any room the resident holds now (apartment and project
+  plots), newest first, one entry per person (their latest time), never the resident; `Visitor` for someone without a
+  resident. `guestbook`: new notes in those rooms. `project`: status changes of the resident's own ideas (private ones
+  included: this is the owner's own view). At most 20 each, newest first.
+- No push, no badge counts, no streaks. Show it as a quiet note in the room; the text stays neutral.
+
+### SUB-01's diary: GET /api/diary?date=YYYY-MM-DD · GET /api/diary/latest
+
+Public. One page per **Tokyo** day, written from the vote ledger and the build log with fixed templates (no language
+model; `diary.js` `TEMPLATES`). `date` defaults to the last completed Tokyo day; today is allowed (a partial page);
+a future day, a malformed date or another parameter → `400 bad_request`. `/latest` = the most recent completed day
+that has entries (or the last completed day, empty).
+
+```json
+{ "date": "2026-10-10",
+  "entries": [
+    { "kind": "moved_in", "at": 1791601080000, "text": "Kenji moved into Ebisu.", "slug": null, "ticker": null, "ledgerSeq": null, "score": null },
+    { "kind": "built", "at": 1791601080098, "text": "I built Ramen Radar ($RAMEN). The build network lit at 0.8.",
+      "slug": "ramen-radar", "ticker": "RAMEN", "ledgerSeq": 1, "score": 0.8 },
+    { "kind": "site_live", "at": 1791601080200, "text": "I finished the site of Ramen Radar ($RAMEN). Its author reviews it before anything goes out.",
+      "slug": "ramen-radar", "ticker": "RAMEN", "ledgerSeq": 1, "score": 0.8 },
+    { "kind": "passed", "at": 1791601090000, "text": "I passed on an idea (55a2c0de): build 0.2, keep going 0.8.",
+      "slug": null, "ticker": null, "ledgerSeq": 2, "score": 0.2 } ],
+  "counts": { "built": 1, "passed": 1, "launched": 0, "residents": 1 },
+  "note": "SUB-01 is a model, not a conscious being. This page is generated from the vote ledger and the build log; numbers are copied exactly." }
+```
+
+- `built` / `passed`: every ledger row of the day. `score` = the build option's `p` from the ledger row, copied as
+  stored; "keep going" = the pass option's `p`. A **private** idea, and **any passed idea** (even a public one), is
+  named only by the first 8 characters of its ledger `ideaHash`: `I said build to a private idea (1a2b3c4d). …`.
+- `site_live` / `launched`: the first time a **public** idea's site was built / it launched (mock launches hidden in
+  production), with the build vote's `ledgerSeq` and `score`. `moved_in`: a new resident (not a move between plots),
+  by resident name and district.
+- Entries in time order. A finished day is cached (`diary_days`); every read re-checks that the ideas it names are
+  still public and not declined, and regenerates the page otherwise.
+
+### Postcards: GET /api/postcard/:slug.(svg|png) · GET /api/postcard/room/:plotId.(svg|png)
+
+Public share cards, 1200×630. A **public** project (name, `$TICKER`, stage label, its logo, a stamp: 待 waiting,
+建 building, 発 launched, 休 stopped) or an **apartment with a resident** (name, district, a figure in the resident's
+colours, stamp 住); both with the SUBZERONE lockup and the Tokyo date. **Never a price** or any market number: the
+card has no field for one. `cache-control: public, max-age=300`, `access-control-allow-origin: *`. Private or
+unknown project, free or project plot, other extension → `404`.
+
+- `.svg`: real text in system fonts, the lockup inlined (path lettering, no font needed), the logo as a data URI;
+  served with `content-security-policy: default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox`.
+- `.png`: the same card drawn with a built-in 5×7 bitmap font (ASCII; other characters print as `?`) and a postmark
+  instead of the kanji stamp. Use the PNG for `og:image`: X, Facebook, Discord and Telegram do not take SVG.
+
+### Share pages: GET /p/:slug · GET /r/:plotId
+
+Tiny HTML pages with Open Graph and Twitter tags (`og:image` = the absolute URL of the PNG postcard, 1200×630,
+`twitter:card = summary_large_image`) and an immediate redirect (`<meta http-equiv="refresh">`) into the city:
+`/?focus=<plotId>` (a project without a building goes to `/projects/<slug>`). Same `404` rules as the postcards.
+`cache-control: public, max-age=300`. The city should share these URLs (`/p/ramen-radar`, `/r/ebisu-1`) and read
+`?focus=` on load.
 
 ## Hosting the city on the same origin
 

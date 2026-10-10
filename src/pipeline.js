@@ -6,6 +6,7 @@ import { transition, note } from './states.js';
 import { currentVersion } from './ideas.js';
 import { askBrain } from './brain.js';
 import { appendVote } from './trust.js';
+import { settlePredictions } from './rituals.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
 import { generate, estimateCostUsd } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
@@ -57,7 +58,10 @@ export const handlers = {
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'brain_vote', ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
       id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(rec), JSON.stringify(scores(pre, rec)), decision, now());
       // the public vote ledger: one hash-chained row per brain answer, in the same transaction (trust.js)
-      if (ins.changes === 1) appendVote(db, { requestId, title: v.title, concept: v.concept, version: v.version, rec });
+      if (ins.changes === 1) {
+        appendVote(db, { requestId, title: v.title, concept: v.concept, version: v.version, rec });
+        settlePredictions(db, ideaId, rec.decision === 'build' ? 'build' : 'pass');   // residents' guesses, scored in this transaction
+      }
       const stored = db.get('SELECT decision FROM evaluations WHERE idea_id = ? AND idea_version = ?', ideaId, v.version);
       const build = rec.vote.options.find((o) => o.label.startsWith('build'));
       transition(db, ideaId, 'evaluating', stored.decision, { actor: 'brain',

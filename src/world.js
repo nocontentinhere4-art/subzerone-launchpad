@@ -4,6 +4,7 @@
 // `plots`; the primary key makes a double claim impossible even across processes. Everything returned by worldView() is public.
 import { audit } from './db.js';
 import { LABELS } from './states.js';
+import { jstDate } from './calendar.js';
 import { now, HttpError, parseJson, utcDay } from './util.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
@@ -400,7 +401,7 @@ export function saveResident(db, wallet, input) {
 export function residentOf(db, wallet) {
   const r = db.get('SELECT * FROM residents WHERE wallet = ?', wallet);
   return r && { name: r.name, look: readLook(r.look_json), traits: readTraits(r.traits_json), plotId: r.plot_id, room: upgradeRoom(parseJson(r.room_json)),
-    createdAt: r.created_at, updatedAt: r.updated_at };
+    points: r.points ?? 0, createdAt: r.created_at, updatedAt: r.updated_at };
 }
 
 export const plotsOf = (db, wallet) => db.all('SELECT plot_id plotId, kind, idea_id ideaId, claimed_at claimedAt FROM plots WHERE wallet = ? ORDER BY claimed_at', wallet);
@@ -415,7 +416,7 @@ const STAGE_WORD = { submitted: 'dropped', evaluating: 'reading', selected: 'sel
   approved: 'approved', launch_prepared: 'launch ready', awaiting_signature: 'signature', confirming: 'confirming', launched: 'launched' };
 
 /** The public city snapshot. Private ideas show as 'Private project' with stage only; no wallet ever appears. */
-export function worldView(db, cfg) {
+export function worldView(db, cfg, t = now()) {
   const genProgress = new Map(db.all(`SELECT idea_id, progress FROM jobs WHERE type = 'generate' AND status = 'running' AND idea_id IS NOT NULL`)
     .map((j) => [j.idea_id, j.progress]));
   const projectOf = (x) => {
@@ -430,15 +431,17 @@ export function worldView(db, cfg) {
     return { slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg') };
   };
-  const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, i.status, i.visibility, v.title, v.ticker_suggestion,
+  const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
       p.slug, p.name pname, p.ticker, l.mint,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
+    LEFT JOIN fortunes f ON f.wallet = r.wallet AND f.date = ? AND f.until > ? AND f.buff != 'none'
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
-    LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`);
+    LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`, jstDate(t), t);
   const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind,
-    resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: readLook(x.look_json), traits: readTraits(x.traits_json) } : null,
+    // buff: today's omikuji effect (cosmetic, kind only; rituals.js), null when none is active
+    resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: readLook(x.look_json), traits: readTraits(x.traits_json), buff: x.buff || null } : null,
     project: x.kind === 'project' && x.status ? projectOf(x) : null }));
 
   // SUB-01: working on whatever job is running now; otherwise what the brain last answered (no network call here)
