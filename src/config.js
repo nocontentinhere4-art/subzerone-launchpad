@@ -86,6 +86,7 @@ export function loadConfig(env = process.env) {
       confirmTimeoutS: num('LAUNCH_CONFIRM_TIMEOUT_S', 180),
       metadataUploader: e('METADATA_UPLOADER', 'self'),  // self: metadata JSON + image served by this app
       lookupTable: e('LAUNCH_LOOKUP_TABLE'),             // address lookup table with the static launch accounts
+      maxInitialBuySol: num('MAX_INITIAL_BUY_SOL', 5),   // cap of the author's dev buy (launch.js caps it at 5 SOL regardless)
     },
     x: {
       clientId: e('X_CLIENT_ID'),

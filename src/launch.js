@@ -13,6 +13,64 @@ import { id, now, HttpError, parseJson, isSolanaAddress } from './util.js';
 export const MAX_RECIPIENTS = 8;
 let cached = null;
 
+// --- the author's dev buy ---------------------------------------------------------------------------------------------
+// An optional buy of the author's own coin inside the creation transaction (pump.fun buy_v2 after create_v2 and the
+// fee split). Paid by the author's wallet, tokens land in the author's wallet. Hard cap 5 SOL; MAX_INITIAL_BUY_SOL
+// can only lower it. The quote comes from the SDK at a fresh curve; the transaction caps the cost at quote + 5%.
+export const LAMPORTS_PER_SOL = 1_000_000_000;
+export const HARD_MAX_INITIAL_BUY_SOL = 5;
+export const INITIAL_BUY_SLIPPAGE_BPS = 500;
+export const INITIAL_BUY_STATES = ['preview_ready', 'approved', 'launch_prepared'];
+
+export function maxInitialBuyLamports(cfg) {
+  const sol = Number(cfg.launch?.maxInitialBuySol);
+  const capped = Math.min(HARD_MAX_INITIAL_BUY_SOL, Number.isFinite(sol) && sol >= 0 ? sol : HARD_MAX_INITIAL_BUY_SOL);
+  return Math.round(capped * LAMPORTS_PER_SOL);
+}
+
+/** Body value (SOL, number or numeric string) -> lamports, or 400 bad_initial_buy. */
+export function parseInitialBuySol(cfg, value) {
+  const sol = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN;
+  if (!Number.isFinite(sol) || sol < 0) throw new HttpError(400, 'bad_initial_buy', 'the dev buy is an amount of SOL, 0 or more');
+  const lamports = Math.round(sol * LAMPORTS_PER_SOL);
+  const cap = maxInitialBuyLamports(cfg);
+  if (lamports > cap) throw new HttpError(400, 'bad_initial_buy', `the dev buy is at most ${cap / LAMPORTS_PER_SOL} SOL`);
+  return lamports;
+}
+
+export const solString = (lamports) => (lamports / LAMPORTS_PER_SOL).toFixed(9).replace(/\.?0+$/, '');
+
+/**
+ * Owner sets the dev buy. Allowed while the idea is preview_ready / approved / launch_prepared and no transaction
+ * exists (409 intent_exists: cancel it first). Once a reviewed configuration exists it is rebuilt by the same job as
+ * the first time (launch_prepared -> approved -> prepare_launch -> launch_prepared), so the hash the author reviews
+ * always matches what the transaction will do.
+ */
+export function setInitialBuy(db, cfg, project, idea, wallet, lamports) {
+  if (idea.owner_wallet !== wallet) throw new HttpError(403, 'not_owner');
+  if (db.get('SELECT 1 FROM launches WHERE project_id = ?', project.id)) throw new HttpError(409, 'already_launched');
+  if (db.get(`SELECT 1 FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature','submitted','confirmed')`, project.id)) {
+    throw new HttpError(409, 'intent_exists', 'a transaction already exists; cancel it first to change the dev buy');
+  }
+  if (!INITIAL_BUY_STATES.includes(idea.status)) throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
+  const t = now();
+  const changed = lamports !== Number(project.initial_buy_lamports ?? 0);
+  let status = idea.status;
+  db.tx(() => {
+    db.run('UPDATE projects SET initial_buy_lamports = ?, updated_at = ? WHERE id = ?', lamports, t, project.id);
+    audit(db, { actor: `wallet:${wallet}`, kind: 'launch_options', ideaId: idea.id, projectId: project.id,
+      message: `Dev buy set to ${solString(lamports)} SOL`, data: { initialBuyLamports: lamports } });
+    if (idea.status === 'launch_prepared' && changed) {
+      db.run('UPDATE projects SET launch_config_json = NULL, launch_config_hash = NULL WHERE id = ?', project.id);
+      transition(db, idea.id, 'launch_prepared', 'approved', { actor: `wallet:${wallet}`, note: 'dev buy changed; preparing the launch configuration again' });
+      status = 'approved';
+    }
+    // approved: the queued job reads the row (and re-checks it before writing); a fresh key covers a dead one
+    if (status === 'approved') enqueue(db, { type: 'prepare_launch', key: `prepare:${project.id}:options:${t}`, ideaId: idea.id, projectId: project.id });
+  });
+  return { initialBuyLamports: lamports, status, reprepared: status === 'approved' && idea.status === 'launch_prepared' };
+}
+
 export function getProvider(cfg, db) {
   if (cfg.launch.provider === 'none') return null;
   if (cached && cached.db === db && cached.key === cfg.launch.provider + cfg.launch.rpcUrl) return cached.p;
@@ -121,11 +179,23 @@ export async function buildLaunchConfig(db, cfg, project) {
   const metaHash = createHash('sha256').update(JSON.stringify(metadata)).digest('hex').slice(0, 16);
   const uri = `${cfg.publicOrigin}/meta/${project.slug}/${metaHash}.json`;
   if (uri.length > 200) throw new Permanent('metadata URI longer than 200 characters');
+  // the dev buy: read fresh (the author may have changed it since the job picked up the row), checked against the cap
+  const initialBuyLamports = Number(db.get('SELECT initial_buy_lamports FROM projects WHERE id = ?', project.id)?.initial_buy_lamports ?? 0);
+  if (!Number.isInteger(initialBuyLamports) || initialBuyLamports < 0) throw new Permanent('bad dev buy amount');
+  if (initialBuyLamports > maxInitialBuyLamports(cfg)) {
+    throw new Permanent(`the dev buy of ${solString(initialBuyLamports)} SOL is above the cap of ${solString(maxInitialBuyLamports(cfg))} SOL; lower it in the Launch tab`);
+  }
   const irreversible = [
     'The token name, ticker and metadata link cannot be changed after creation.',
     'The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.',
   ];
   if (mode === 'sharing_config') irreversible.push('The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
+  if (initialBuyLamports > 0) {
+    const f = params.fees;
+    const feeText = Number.isFinite(f?.protocolFeeBps) && Number.isFinite(f?.creatorFeeBps)
+      ? `pump.fun's trading fee of ${((f.protocolFeeBps + f.creatorFeeBps) / 100).toFixed(2)}% applies` : 'pump.fun\'s trading fee (about 1%) applies';
+    irreversible.push(`You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction; ${feeText}; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`);
+  }
   const config = {
     version: 'launch-config/1',
     provider: provider.name, providerLabel: provider.label, network: provider.network, mock: provider.isMock,
@@ -133,7 +203,7 @@ export async function buildLaunchConfig(db, cfg, project) {
       totalSupplyBase: params.totalSupplyBase, tokenProgram: params.tokenProgram,
       authorities: { mint: 'none after creation', freeze: 'none' } },
     signer, payer: signer, creator: mode === 'sharing_config' ? 'per-mint sharing config (holds the split)' : signer,
-    initialBuyLamports: 0,
+    initialBuyLamports, initialBuySlippageBps: initialBuyLamports > 0 ? INITIAL_BUY_SLIPPAGE_BPS : 0,
     feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })), recipients, locked: mode === 'sharing_config',
       allocationId: alloc.id, allocationVersion: alloc.version },
     tradingFees: params.fees,
@@ -176,7 +246,7 @@ export async function createIntent(db, cfg, project, wallet) {
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
   const built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
-    signer: config.signer, feeSharing: config.feeSharing });
+    signer: config.signer, feeSharing: config.feeSharing, initialBuyLamports: Number(config.initialBuyLamports) || 0 });
   const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
   const t = now();

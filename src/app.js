@@ -13,7 +13,8 @@ import { enqueue, retryDead, cancelJobs } from './jobs.js';
 import { buildSiteVersion, setLiveVersion, siteCsp } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
-  abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL } from './launch.js';
+  abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
+  INITIAL_BUY_STATES } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
   unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
@@ -220,6 +221,12 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       launchConfig: parseJson(p.launch_config_json), launch: launch && { ...launch, verification: parseJson(launch.verification),
         explorerTx: provider?.explorerTx?.(launch.tx_signature) ?? null, explorerToken: provider?.explorerToken?.(launch.mint) ?? null },
       intent, mockSigningText: intent && provider?.isMock ? mockSigningText(db.get('SELECT tx_message_hash h FROM launch_intents WHERE id = ?', intent.id).h) : undefined,
+      // the author's dev buy (PUT …/launch/options): the stored setting; locked while a transaction exists
+      launchOptions: (owner || staff) ? (() => {
+        const locked = !!db.get(`SELECT 1 FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature','submitted','confirmed')`, p.id);
+        return { initialBuyLamports: Number(p.initial_buy_lamports ?? 0), maxInitialBuyLamports: maxInitialBuyLamports(cfg), locked,
+          editable: owner && !locked && !launch && INITIAL_BUY_STATES.includes(idea.status) };
+      })() : undefined,
       ledger: launch ? feeLedger(db, p.id) : null,
       pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: vote?.seq ?? null,
     };
@@ -313,6 +320,14 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       db.run(`UPDATE fee_allocations SET status = 'draft' WHERE project_id = ? AND status = 'approved'`, p.id);
     });
     return { ok: true };
+  });
+  // the dev buy: {initialBuySol} (0 = none), owner only, before a transaction exists (409 intent_exists otherwise)
+  r.put('/api/projects/:slug/launch/options', async (ctx) => {
+    const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    const b = await ctx.body();
+    const lamports = parseInitialBuySol(cfg, b.initialBuySol);
+    return { ok: true, ...setInitialBuy(db, cfg, p, idea, u.wallet, lamports), maxInitialBuyLamports: maxInitialBuyLamports(cfg) };
   });
   r.post('/api/projects/:slug/launch/transaction', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);

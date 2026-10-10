@@ -101,3 +101,72 @@ test('pump.fun review-before-sign: programs and writable accounts read from the 
   assert.deepEqual(reviewOfMessage(odd).programs, [{ id: '11111111111111111111111111111111', name: 'System Program', direct: true }]);
   assert.equal(reviewOfMessage(odd).launchProgramsOnly, false);
 });
+
+// --- the dev buy, composed offline from the devnet Global / FeeConfig fixture (read on 2026-10-10) ------------------
+import { readFileSync } from 'node:fs';
+import { launchInstructions, BUY_SLIPPAGE_PERCENT } from '../src/launch/pumpfun.js';
+const pumpSdk = require('@pump-fun/pump-sdk');
+const spl = require('@solana/spl-token');
+const FIX = JSON.parse(readFileSync(new URL('./fixtures/pump-devnet-accounts.json', import.meta.url), 'utf8'));
+const account = (f) => ({ owner: new web3.PublicKey(f.owner), lamports: f.lamports, executable: f.executable, rentEpoch: 0, data: Buffer.from(f.data, 'base64') });
+const GLOBAL = pumpSdk.PUMP_SDK.decodeGlobal(account(FIX.global));
+const FEE_CONFIG = pumpSdk.PUMP_SDK.decodeFeeConfig(account(FIX.feeConfig));
+const launchConfig = (initialBuyLamports, signer, sub01) => ({ name: 'Ramen Radar', symbol: 'RAMEN', uri: 'https://city.subzerone.live/meta/ramen-radar/0123456789abcdef.json', initialBuyLamports,
+  feeSharing: { mode: 'sharing_config', shareholders: [{ wallet: signer.toBase58(), bps: 8000 }, { wallet: sub01.toBase58(), bps: 2000 }] } });
+const compile = (ixs, payer, tables = []) => new web3.TransactionMessage({ payerKey: payer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: ixs }).compileToV0Message(tables);
+
+test('pump.fun dev buy: create + locked split + ATA + buy_v2 in one message, buy after the split with the sharing config as creator', async () => {
+  const { reviewOfMessage, PROGRAMS } = await import('../src/launch/pumpfun.js');
+  const signer = web3.Keypair.generate().publicKey, sub01 = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+  const plain = await launchInstructions({ config: launchConfig(0, signer, sub01), mint, signer });
+  assert.equal(plain.ixs.length, 3);
+  assert.equal(plain.buy, null);
+  const { ixs, buy } = await launchInstructions({ config: launchConfig(10_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG });
+  assert.equal(ixs.length, 5);
+  assert.deepEqual(ixs.map((ix) => ix.programId.toBase58()), [PROGRAMS.pump, PROGRAMS.pumpFees, PROGRAMS.pumpFees, spl.ASSOCIATED_TOKEN_PROGRAM_ID.toBase58(), PROGRAMS.pump]);
+  // the quote: tokens for 0.01 SOL at a fresh curve, cost capped at quote + 5%
+  assert.equal(buy.lamports, 10_000_000);
+  assert.equal(buy.maxLamports, 10_500_000);
+  assert.equal(BUY_SLIPPAGE_PERCENT, 5);
+  assert.ok(BigInt(buy.tokensBase) > 0n);
+  const expectTokens = pumpSdk.getBuyTokenAmountFromSolAmount({ global: GLOBAL, feeConfig: FEE_CONFIG, mintSupply: null, bondingCurve: null, amount: new (require('bn.js'))(10_000_000), quoteMint: spl.NATIVE_MINT });
+  assert.equal(buy.tokensBase, expectTokens.toString());
+  // the buy's accounts: the author's Token-2022 ATA, the sharing-config PDA's creator vault, the pinned fee recipients
+  const names = pumpSdk.pumpIdl.instructions.find((i) => i.name === 'buy_v2').accounts.map((a) => a.name);
+  const keyOf = (name) => ixs[4].keys[names.indexOf(name)].pubkey.toBase58();
+  assert.equal(keyOf('user'), signer.toBase58());
+  assert.equal(keyOf('associated_base_user'), buy.ata);
+  assert.equal(buy.ata, spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID).toBase58());
+  assert.equal(keyOf('creator_vault'), pumpSdk.creatorVaultPda(pumpSdk.feeSharingConfigPda(mint)).toBase58(), 'the buy\'s creator fee goes to the project\'s shared vault');
+  assert.equal(keyOf('fee_recipient'), GLOBAL.feeRecipient.toBase58());
+  assert.equal(keyOf('buyback_fee_recipient'), buy.buybackFeeRecipient);
+  const again = await launchInstructions({ config: launchConfig(10_000_000, web3.Keypair.generate().publicKey, sub01), mint: web3.Keypair.generate().publicKey, signer: web3.Keypair.generate().publicKey, global: GLOBAL, feeConfig: FEE_CONFIG });
+  assert.equal(again.buy.buybackFeeRecipient, buy.buybackFeeRecipient, 'pinned, not random: the lookup table can hold it');
+  // review-before-sign: still "launch programs only" (the ATA program is green-listed), the token programs passed inside
+  const r = reviewOfMessage(compile(ixs, signer));
+  assert.equal(r.launchProgramsOnly, true);
+  assert.deepEqual(r.programs.filter((p) => p.direct).map((p) => p.name), ['pump.fun (bonding curve)', 'pump.fun fee sharing', 'Associated Token Account']);
+  assert.ok(r.programs.some((p) => p.name === 'Token-2022' && !p.direct));
+  assert.ok(r.programs.every((p) => p.name !== 'unknown program'));
+  assert.equal(r.signers, 2);
+  // rejects what cannot be built
+  await assert.rejects(launchInstructions({ config: launchConfig(10_000_000, signer, sub01), mint, signer }), /needs the pump Global/);
+  await assert.rejects(launchInstructions({ config: launchConfig(1.5, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG }), /whole lamports/);
+});
+
+test('pump.fun dev buy: with the static accounts in a lookup table the transaction stays under 1232 bytes', async () => {
+  const sub01 = web3.Keypair.generate().publicKey;
+  const build = async () => { const signer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+    return { signer, ...(await launchInstructions({ config: launchConfig(5_000_000_000, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG })) }; };
+  const keys = (b) => new Set(b.ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()));
+  const [x, y] = [await build(), await build()];
+  const statics = [...keys(x)].filter((k) => keys(y).has(k)).sort();         // what staticAccounts() puts in the table
+  assert.ok(statics.length >= 22 && statics.length <= 26, `static accounts: ${statics.length}`);
+  const table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey, state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: statics.map((k) => new web3.PublicKey(k)) } });
+  const tx = new web3.VersionedTransaction(compile(x.ixs, x.signer, [table]));
+  const bytes = tx.serialize().length;
+  assert.ok(bytes <= 1232, `${bytes} bytes`);
+  assert.ok(bytes > 1100, `${bytes} bytes: expected about 1186`);
+  // without the table it does not fit at all
+  assert.throws(() => new web3.VersionedTransaction(compile(x.ixs, x.signer)).serialize(), /overruns/);
+});

@@ -82,3 +82,25 @@ npm run lookup-table
 LAUNCH_PROVIDER=pumpfun SOLANA_NETWORK=devnet LAUNCH_LOOKUP_TABLE=<printed> npm run dev   # in one terminal
 LAUNCH_PROVIDER=pumpfun npm run demo:flow                                                   # in another
 ```
+
+## Dev buy on devnet (2026-10-10)
+
+`DEMO_INITIAL_BUY_SOL=0.01 LAUNCH_PROVIDER=pumpfun npm run demo:flow` against a launchpad started with
+`DATA_DIR=data/devnet-run PORT=8795 LAUNCH_PROVIDER=pumpfun SOLANA_NETWORK=devnet LAUNCH_LOOKUP_TABLE=BLnaXFCoct6AtR7eUayZ43GTpD3csDWJUt4YhuTEGXPY BRAIN_URL=https://subzerone.live`
+(the lookup table was first extended from 16 to 22 accounts with `npm run lookup-table -- --extend <table>`).
+Transcript `docs/demo/flow-pumpfun-2026-10-10T20-00-11.json`:
+
+- the author set the dev buy at `preview_ready` (`PUT …/launch/options {initialBuySol: 0.01}`);
+- the configuration carried `initialBuyLamports: 10000000`, the irreversible line "You buy 0.01 SOL of your own coin
+  in the creation transaction; pump.fun's trading fee of 1.25% applies; the tokens go to your wallet…";
+- one transaction of **1202 bytes** (create_v2 + sharing config + locked 80/20 split + ATA + buy_v2), simulation ok
+  (385,860 CU), estimate `initialBuyLamports 10000000`, `initialBuyMaxLamports 10500000`, rent 0.0151 SOL;
+- signed by the devnet test wallet, finalized, all 15 verification checks ok, including
+  `dev buy landed: tokens in the author wallet = 10493886257633 base units` (10,493,886.257633 tokens, exactly the
+  SDK quote); the payer's balance moved by 25,143,320 lamports (fee 10,000 + rent + the 0.01 SOL buy);
+- the curve creator is the sharing config, so the buy's creator fee went to the project's shared vault.
+
+Offline: `test/pumpfun.test.js` composes the same transaction from the devnet `Global`/`FeeConfig` fixture
+(`test/fixtures/pump-devnet-accounts.json`) and checks the order, the pinned fee recipients, the 5% cap and the size
+under 1232 bytes with the static accounts in a table; `test/flow.test.js` covers the route (permissions, cap, hash
+change, `intent_exists`, the mock ledger).

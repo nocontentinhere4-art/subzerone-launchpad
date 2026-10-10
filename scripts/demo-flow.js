@@ -92,6 +92,12 @@ const slug = preview.project.slug;
 let p = await submitter.call('GET', `/api/projects/${slug}`);
 step('built: preview ready', { slug, name: p.name, ticker: p.ticker, generator: p.generator, siteVersion: p.liveSiteVersion, xPlanned: p.x?.planned_handle, xStatus: p.x?.status, split: p.allocation?.recipients });
 
+// DEMO_INITIAL_BUY_SOL: the author's dev buy (PUT …/launch/options), e.g. 0.01 on devnet
+if (process.env.DEMO_INITIAL_BUY_SOL) {
+  const opt = await submitter.call('PUT', `/api/projects/${slug}/launch/options`, { initialBuySol: Number(process.env.DEMO_INITIAL_BUY_SOL) });
+  step('dev buy set by the author', opt);
+}
+
 await submitter.call('POST', `/api/ideas/${id}/publish`, { public: true });
 await submitter.call('POST', `/api/projects/${slug}/approve`, { allocationId: p.allocation.id, statement: p.allocation.statement, siteVersion: p.liveSiteVersion });
 step('submitter published the idea and approved site + fee split', { statement: p.allocation.statement });

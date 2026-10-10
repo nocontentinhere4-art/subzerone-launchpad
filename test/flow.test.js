@@ -415,3 +415,94 @@ test('review #8: non-owners only get preview links for the live version; private
     assert.equal((await anon.call('GET', `/meta/${slug}/logo-v1.png`)).status, 200);
   } finally { h.close(); }
 });
+
+test('dev buy (launch options): owner only, cap, re-prepared config with a new hash, locked by a transaction, recorded by the mock', async () => {
+  const h = await harness({ MAX_INITIAL_BUY_SOL: '2' });
+  try {
+    const { owner, ideaId, slug, proj } = await toLaunchPrepared(h);
+    const put = (c, body) => c.call('PUT', `/api/projects/${slug}/launch/options`, body);
+    const before = h.db.get('SELECT launch_config_hash h FROM projects WHERE slug = ?', slug).h;
+    assert.deepEqual(proj.json.launchOptions, { initialBuyLamports: 0, maxInitialBuyLamports: 2_000_000_000, locked: false, editable: true });
+    // validation and permissions
+    assert.equal((await put(owner, { initialBuySol: -1 })).status, 400);
+    assert.equal((await put(owner, { initialBuySol: 'abc' })).status, 400);
+    assert.equal((await put(owner, { initialBuySol: 2.5 })).status, 400, 'above MAX_INITIAL_BUY_SOL');
+    assert.equal((await put(owner, {})).status, 400);
+    const other = h.client(user(h.db));
+    await other.signIn();
+    assert.equal((await put(other, { initialBuySol: 0.1 })).status, 404, 'not the owner');
+    const anon = h.client(user(h.db));
+    assert.equal((await put(anon, { initialBuySol: 0.1 })).status, 401);
+    // set while launch_prepared: the configuration is rebuilt by the job and its hash changes
+    const set = await put(owner, { initialBuySol: 0.25 });
+    assert.equal(set.status, 200, set.text);
+    assert.deepEqual([set.json.initialBuyLamports, set.json.status, set.json.reprepared], [250_000_000, 'approved', true]);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'approved');
+    assert.equal(h.db.get('SELECT launch_config_json j FROM projects WHERE slug = ?', slug).j, null);
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {})).status, 409, 'no transaction without a prepared configuration');
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    const after = await owner.call('GET', `/api/projects/${slug}`);
+    assert.equal(after.json.launchConfig.initialBuyLamports, 250_000_000);
+    assert.equal(after.json.launchConfig.initialBuySlippageBps, 500);
+    assert.match(after.json.launchConfig.irreversible.at(-1), /You buy 0\.25 SOL of your own coin in the creation transaction/);
+    assert.notEqual(h.db.get('SELECT launch_config_hash h FROM projects WHERE slug = ?', slug).h, before);
+    assert.equal(after.json.launchOptions.initialBuyLamports, 250_000_000);
+    // the same value again changes nothing and does not re-prepare
+    const same = await put(owner, { initialBuySol: '0.25' });
+    assert.equal(same.json.reprepared, false);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    // a transaction exists: the option is locked until it is cancelled
+    const tx = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    assert.equal(tx.status, 200, tx.text);
+    assert.equal(tx.json.estimate.initialBuyLamports, 250_000_000);
+    assert.equal(tx.json.launchProgramsOnly, true);
+    const locked = await put(owner, { initialBuySol: 0 });
+    assert.equal(locked.status, 409);
+    assert.equal(locked.json.error, 'intent_exists');
+    assert.equal((await owner.call('GET', `/api/projects/${slug}`)).json.launchOptions.locked, true);
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/abandon`, { reason: 'cancelled' })).status, 200);
+    assert.equal((await put(owner, { initialBuySol: 0.5 })).status, 200);
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    // sign the mock launch with the buy: the mock ledger records it and the verification says so
+    const { res } = await signAndSubmit(h, owner, slug);
+    assert.equal(res.status, 200, res.text);
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+    const done = await owner.call('GET', `/api/projects/${slug}`);
+    const check = done.json.launch.verification.find((c) => /dev buy/.test(c.name));
+    assert.ok(check && check.ok, JSON.stringify(done.json.launch.verification));
+    assert.equal(JSON.parse(h.db.get('SELECT payload FROM mock_chain').payload).initialBuyLamports, 500_000_000);
+    assert.equal((await put(owner, { initialBuySol: 0 })).status, 409, 'launched: no more changes');
+  } finally { h.close(); }
+});
+
+test('dev buy: set at preview_ready it lands in the first configuration; the hard cap is 5 SOL whatever the env says', async () => {
+  const h = await harness({ MAX_INITIAL_BUY_SOL: '50' });
+  try {
+    const owner = h.client(user(h.db));
+    await owner.signIn();
+    const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w));
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const slug = (await owner.call('GET', `/api/ideas/${sub.json.id}`)).json.project.slug;
+    const put = (body) => owner.call('PUT', `/api/projects/${slug}/launch/options`, body);
+    assert.equal((await owner.call('GET', `/api/projects/${slug}`)).json.launchOptions.maxInitialBuyLamports, 5_000_000_000);
+    assert.equal((await put({ initialBuySol: 5.01 })).status, 400);
+    assert.equal((await put({ initialBuySol: 5 })).status, 200);
+    assert.equal((await put({ initialBuySol: 0.01 })).status, 200);
+    assert.equal(ideaStatus(h.db, sub.json.id).status, 'preview_ready', 'nothing to re-prepare yet');
+    const admin = h.client(user(h.db, 'admin'));
+    await admin.signIn();
+    await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true });
+    const proj = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    assert.equal((await owner.call('POST', `/api/projects/${slug}/approve`, { allocationId: proj.allocation.id, statement: proj.allocation.statement, siteVersion: proj.liveSiteVersion })).status, 200);
+    assert.equal((await admin.call('POST', `/api/admin/projects/${slug}/clear`, {})).status, 200);
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const cfg = (await owner.call('GET', `/api/projects/${slug}`)).json.launchConfig;
+    assert.equal(cfg.initialBuyLamports, 10_000_000);
+    assert.equal(cfg.irreversible.filter((l) => /You buy/.test(l)).length, 1);
+    // the public view never shows the option
+    const anon = h.client(user(h.db));
+    assert.equal((await anon.call('GET', `/api/projects/${slug}`)).json.launchOptions, undefined);
+  } finally { h.close(); }
+});

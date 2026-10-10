@@ -32,11 +32,13 @@ export function makeMockProvider(db) {
 
     async prepare(config) {
       const mint = `MOCK${b58encode(randomBytes(28))}`.slice(0, 44);
-      const doc = { mock: true, provider: 'mock', mint, config, nonce: randomBytes(8).toString('hex') };
+      const initialBuyLamports = Number(config.initialBuyLamports) || 0;
+      // the dev buy is recorded in the mock document (nothing is bought: no chain); the estimate reports it like pump.fun's
+      const doc = { mock: true, provider: 'mock', mint, config: { ...config, initialBuyLamports }, nonce: randomBytes(8).toString('hex') };
       const json = JSON.stringify(doc);
       return { txBase64: Buffer.from(json).toString('base64'), messageHash: createHash('sha256').update(json).digest('hex'),
         lastValidBlockHeight: height() + VALID_BLOCKS, mint, txBytes: json.length,
-        estimate: { networkFeeLamports: 0, accountsLamports: 0, simulation: { ok: true, mock: true } } };
+        estimate: { networkFeeLamports: 0, accountsLamports: 0, initialBuyLamports, initialBuyMaxLamports: initialBuyLamports, simulation: { ok: true, mock: true } } };
     },
 
     /** What the wallet will see (review-before-sign): the mock touches no program and no account. */
@@ -87,6 +89,8 @@ export function makeMockProvider(db) {
       const got = payload?.feeSharing?.shareholders?.map((s) => `${s.wallet}:${s.bps}`).sort().join(',');
       const want = config.feeSharing.shareholders.map((s) => `${s.wallet}:${s.bps}`).sort().join(',');
       checks.push({ name: 'recipients match the approved allocation', ok: got === want, detail: got });
+      const buy = Number(config.initialBuyLamports) || 0;
+      if (buy > 0) checks.push({ name: 'MOCK: dev buy recorded as approved (nothing was bought)', ok: Number(payload?.initialBuyLamports) === buy, detail: `${buy} lamports` });
       checks.push({ name: 'MOCK: no blockchain was used', ok: true, detail: 'mock provider' });
       return { ok: checks.every((c) => c.ok), checks, slot: row ? height(row.visible_at) : null, blockTime: row ? Math.floor(row.visible_at / 1000) : null };
     },

@@ -190,6 +190,9 @@ export const handlers = {
     ctx.progress('reading the launch program\'s current parameters');
     const config = await buildLaunchConfig(db, cfg, project);
     db.tx(() => {
+      // the author may change the dev buy while this job reads the chain: the stored configuration must match the row
+      const fresh = db.get('SELECT initial_buy_lamports FROM projects WHERE id = ?', project.id);
+      if (Number(fresh?.initial_buy_lamports ?? 0) !== config.initialBuyLamports) throw new Defer('the dev buy changed while preparing; building the configuration again', 500);
       db.run('UPDATE projects SET launch_config_json = ?, launch_config_hash = ?, updated_at = ? WHERE id = ?',
         JSON.stringify(config), configHash(config), now(), project.id);
       transition(db, idea.id, 'approved', 'launch_prepared', { actor: 'system',

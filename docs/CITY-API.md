@@ -549,6 +549,33 @@ Fields:
 - `kind`: `"project"` for the project whose building this plot is; `"apartment-owner-project"` for the owner's other
   projects (on an apartment, all of them).
 
+#### Launch options: the dev buy (`GET /api/projects/:slug` → `launchOptions`, `PUT …/launch/options`)
+
+The author may buy some of their own coin **in the same transaction** that creates it (pump.fun `buy_v2` after
+`create_v2` and the locked fee split). The room PC's Launch tab shows the field at step 4, above "Prepare the
+transaction". Code: `setInitialBuy()` in `src/launch.js`, `launchInstructions()` in `src/launch/pumpfun.js`.
+
+- `launchOptions` (owner and staff only, absent for everyone else):
+  `{ "initialBuyLamports": 0, "maxInitialBuyLamports": 5000000000, "locked": false, "editable": true }`.
+  `locked` is true while a transaction exists (prepared / awaiting signature / submitted / confirmed); `editable`
+  is true for the owner while the idea is `preview_ready`, `approved` or `launch_prepared` and nothing is locked.
+- `PUT /api/projects/:slug/launch/options` body `{ "initialBuySol": 0.25 }` (0 = no buy; a number or a numeric
+  string). Answers `{ ok, initialBuyLamports, status, reprepared, maxInitialBuyLamports }`. Errors:
+  `400 bad_initial_buy` (negative, not a number, above the cap), `404` (not the owner), `409 intent_exists`
+  (a transaction exists: cancel it with `…/launch/abandon` first), `409 already_launched`, `409 bad_state`
+  (any other stage).
+- The cap is `MAX_INITIAL_BUY_SOL` (default 5) and never above **5 SOL**.
+- Changing it while `launch_prepared` throws the reviewed configuration away and prepares it again
+  (`launch_prepared → approved → launch_prepared`, a few seconds): the `launchConfig` the author reviews, its hash and
+  the transaction always agree. The configuration then carries `initialBuyLamports`, `initialBuySlippageBps` (500) and
+  an extra line in `irreversible` ("You buy X SOL of your own coin in the creation transaction …").
+- On `POST …/launch/transaction` the `estimate` carries `initialBuyLamports` (the quoted cost, pump.fun's trading
+  fee included), `initialBuyMaxLamports` (the cap signed in the transaction: quote + 5%) and `initialBuyTokensBase`;
+  `accountsLamports` excludes the buy, so the total the author sees is fee + rent + buy. The review's `programs`
+  gain `Associated Token Account` (direct: the author's own token account is created) and the token programs passed
+  inside; `launchProgramsOnly` stays true. The mock provider records the amount in its mock ledger and buys nothing.
+- After a verified launch the verification checks include `dev buy landed: tokens in the author wallet`.
+
 #### Framing: what the city may put in an iframe
 
 The city page is served by this app (`CITY_DIST`) under the app CSP, whose `frame-src` is:

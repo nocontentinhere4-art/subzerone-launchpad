@@ -46,6 +46,24 @@ So:
 - **Not yet verified on-chain**: creation and fee sharing together in one transaction. It isn't documented. The SDK
   builds it and simulation is the next check. **Test it on devnet before relying on it** (see STATUS).
 
+### With the dev buy
+
+The author's optional first buy (`initialBuyLamports` in the launch configuration) adds two instructions after the
+fee split: the author's Token-2022 associated token account (idempotent) and `buy_v2` with the sharing-config PDA as
+the curve creator, so the buy's own creator fee goes to the project's shared vault like every other trade's. The
+amount of tokens is the SDK's quote at a fresh curve (`getBuyTokenAmountFromSolAmount`, fees included); the cost cap
+signed in the transaction is the quote + 5% (500 bps). Measured with the real SDK on devnet (2026-10-10):
+
+| | with the 16-account table | with the table extended to 22 accounts |
+|---|---|---|
+| 2 shareholders + dev buy | over the limit | **1186 bytes** |
+
+The six extra accounts are the buy's static ones: the primary fee recipient on `Global` and its WSOL ATA, one
+buyback fee recipient (the SDK otherwise picks one of eight at random per build; the provider pins the lowest-sorted
+one) and its WSOL ATA, the global volume accumulator and the pump-fees `FeeConfig` PDA. A table created before the
+dev buy existed is extended in place with `npm run lookup-table -- --extend <table>` (the signer must be the table's
+authority; the new entries are usable from the next slot). The cap is `MAX_INITIAL_BUY_SOL` (default 5, never more).
+
 ## Terms of service: needs a decision before mainnet
 
 pump.fun's terms (§21(c)) forbid executing transactions "on behalf of" other persons without pump.fun's written

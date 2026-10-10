@@ -6,6 +6,9 @@
 //     (only pump.fun's own takeover authority can rewrite it).
 //   - fee rates are dynamic: read from Global / FeeConfig at preparation time, never hardcoded.
 //   - no official REST API for creation; no official metadata upload endpoint (metadata is served by this app).
+//   - the dev buy (optional, launch.js initialBuyLamports): buy_v2 in the SAME transaction, after the fee split, quoted
+//     by the SDK at a fresh curve (getBuyTokenAmountFromSolAmount), cost capped at quote + 5%; the author's wallet pays
+//     and receives the tokens. It needs the buy's static accounts in the lookup table (scripts/lookup-table.js --extend).
 // The submitter's own wallet is the payer and creator and signs; this app never holds a key that can move funds.
 // The mint keypair is generated per launch intent, signs once during preparation and is then discarded.
 import { createRequire } from 'node:module';
@@ -39,8 +42,78 @@ export const KNOWN_PROGRAMS = Object.freeze({
   ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL: 'Associated Token Account', metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: 'Metaplex Token Metadata',
   MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr: 'Memo',
 });
-// the only programs a launch transaction may call directly for the "what this does NOT do" line to hold
-const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget111111111111111111111111111111']);
+// the only programs a launch transaction may call directly for the "what this does NOT do" line to hold: pump, pump-fees,
+// compute budget, and the Associated Token Account program (the dev buy creates the author's own token account)
+const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget111111111111111111111111111111', 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']);
+// The dev buy's cost cap: quote + 5% (500 bps). The curve is fresh at creation, so the SDK quote is what the program
+// charges; the margin only covers rounding and a fee-schedule change between preparation and landing.
+export const BUY_SLIPPAGE_PERCENT = 5;
+
+/**
+ * The dev buy's fee recipients, pinned so the launch lookup table can hold them: the SDK otherwise picks one of
+ * eight at random per build. fee_recipient = the primary one on Global; buyback_fee_recipient = the lowest-sorted of
+ * the SDK's candidates (read from built instructions by the IDL account name, never hardcoded here).
+ */
+let _buyback = null;
+async function buybackRecipient() {
+  if (_buyback) return _buyback;
+  const { web3, spl, pump } = sdk();
+  const names = pump.pumpIdl.instructions.find((i) => i.name === 'buy_v2').accounts.map((a) => a.name);
+  const at = names.indexOf('buyback_fee_recipient');
+  if (at < 0) throw new Error('pump IDL: buy_v2 has no buyback_fee_recipient account');
+  const user = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+  const Big = require('bn.js');
+  const seen = new Set();
+  for (let i = 0; i < 128; i++) {
+    const ix = await pump.PUMP_SDK.getBuyV2InstructionRaw({ user, mint, creator: user, amount: new Big(1), quoteAmount: new Big(1),
+      feeRecipient: user, tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID });
+    seen.add(ix.keys[at].pubkey.toBase58());
+  }
+  _buyback = new web3.PublicKey([...seen].sort()[0]);
+  return _buyback;
+}
+
+/**
+ * The instructions of one launch, offline: create_v2, the locked fee split (sharing_config mode), and the dev buy
+ * (ATA + buy_v2) when initialBuyLamports > 0. The buy comes AFTER the fee split, with the curve creator the split
+ * already made (the sharing-config PDA), so the buy's own creator fee goes to the project's shared vault like every
+ * other trade's. global/feeConfig: the decoded pump Global and pump-fees FeeConfig (needed for the buy only).
+ * -> { ixs, buy: null | { lamports, maxLamports, tokensBase, feeRecipient, buybackFeeRecipient, ata } }
+ */
+export async function launchInstructions({ config, mint, signer, global = null, feeConfig = null }) {
+  const { web3, spl, pump } = sdk();
+  const Big = require('bn.js');
+  const ixs = [];
+  ixs.push(await pump.PUMP_SDK.createV2Instruction({ mint, name: config.name, symbol: config.symbol, uri: config.uri,
+    creator: signer, user: signer, mayhemMode: false }));
+  const sharing = config.feeSharing.mode === 'sharing_config';
+  if (sharing) {
+    ixs.push(await pump.PUMP_SDK.createFeeSharingConfig({ creator: signer, mint, pool: null }));
+    ixs.push(await pump.PUMP_SDK.updateFeeSharesV2({ authority: signer, mint, currentShareholders: [signer],
+      newShareholders: config.feeSharing.shareholders.map((s) => ({ address: new web3.PublicKey(s.wallet), shareBps: s.bps })),
+      quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID, bondingCurveComplete: false }));
+  }
+  const lamports = Number(config.initialBuyLamports) || 0;
+  let buy = null;
+  if (lamports > 0) {
+    if (!global) throw new Error('the dev buy needs the pump Global account');
+    if (!Number.isInteger(lamports)) throw new Error('dev buy must be whole lamports');
+    const quoteAmount = new Big(String(lamports));
+    const tokens = pump.getBuyTokenAmountFromSolAmount({ global, feeConfig, mintSupply: null, bondingCurve: null, amount: quoteAmount, quoteMint: spl.NATIVE_MINT });
+    if (tokens.isZero()) throw new Error('the dev buy is too small to buy any token');
+    const ata = spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID);
+    const creator = sharing ? pump.feeSharingConfigPda(mint) : signer;
+    const feeRecipient = global.feeRecipient, buybackFeeRecipient = await buybackRecipient();
+    // max cost = quote + slippage, as the SDK's buyV2Instruction computes it (percent, in tenths)
+    const maxQuote = quoteAmount.add(quoteAmount.mul(new Big(Math.floor(BUY_SLIPPAGE_PERCENT * 10))).div(new Big(1000)));
+    ixs.push(spl.createAssociatedTokenAccountIdempotentInstruction(signer, ata, signer, mint, spl.TOKEN_2022_PROGRAM_ID));
+    ixs.push(await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator, amount: tokens, quoteAmount: maxQuote, feeRecipient, buybackFeeRecipient,
+      tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID }));
+    buy = { lamports, maxLamports: Number(maxQuote.toString()), tokensBase: tokens.toString(), feeRecipient: feeRecipient.toBase58(),
+      buybackFeeRecipient: buybackFeeRecipient.toBase58(), ata: ata.toBase58() };
+  }
+  return { ixs, buy };
+}
 
 /**
  * Review-before-sign, from the compiled message itself: the programs it calls (direct), known programs it passes to
@@ -95,18 +168,19 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     return [r.value];
   }
 
+  /** Global + FeeConfig as the buy needs them (FeeConfig may be unreadable: the SDK then quotes from Global alone). */
+  async function chainAccounts() {
+    const { pump } = sdk();
+    const online = new pump.OnlinePumpSdk(conn);
+    const global = await online.fetchGlobal();
+    let feeConfig = null;
+    try { feeConfig = await online.fetchFeeConfig(); } catch { /* quoted from Global's flat rate */ }
+    return { global, feeConfig };
+  }
+
   async function buildInstructions(config, mint, signer) {
-    const { spl, pump } = sdk();
-    const ixs = [];
-    ixs.push(await pump.PUMP_SDK.createV2Instruction({ mint, name: config.name, symbol: config.symbol, uri: config.uri,
-      creator: signer, user: signer, mayhemMode: false }));
-    if (config.feeSharing.mode === 'sharing_config') {
-      ixs.push(await pump.PUMP_SDK.createFeeSharingConfig({ creator: signer, mint, pool: null }));
-      ixs.push(await pump.PUMP_SDK.updateFeeSharesV2({ authority: signer, mint, currentShareholders: [signer],
-        newShareholders: config.feeSharing.shareholders.map((s) => ({ address: new web3.PublicKey(s.wallet), shareBps: s.bps })),
-        quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID, bondingCurveComplete: false }));
-    }
-    return ixs;
+    const chain = (Number(config.initialBuyLamports) || 0) > 0 ? await chainAccounts() : {};
+    return launchInstructions({ config, mint, signer, ...chain });
   }
 
   return {
@@ -129,8 +203,8 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const signer = new web3.PublicKey(config.signer);
       const mintKp = web3.Keypair.generate();
       const mint = mintKp.publicKey;
-      // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing
-      const ixs = await buildInstructions(config, mint, signer);
+      // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing (+ buy_v2)
+      const { ixs, buy } = await buildInstructions(config, mint, signer);
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       const message = new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs })
         .compileToV0Message(await lookupTables());
@@ -138,10 +212,15 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       tx.sign([mintKp]);                                    // the mint key signs now and is never stored
       const bytes = tx.serialize();
       if (bytes.length > MAX_TX_BYTES) {
-        throw new Error(`transaction too large (${bytes.length} bytes)${cfg.launch.lookupTable ? '' : ': fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)'}`);
+        const hint = !cfg.launch.lookupTable ? ': fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)'
+          : buy ? ': the dev buy needs the buy accounts in LAUNCH_LOOKUP_TABLE (npm run lookup-table -- --extend <table>)' : '';
+        throw new Error(`transaction too large (${bytes.length} bytes)${hint}`);
       }
       const msgBytes = message.serialize();
-      const estimate = { networkFeeLamports: null, accountsLamports: null, simulation: null };
+      // initialBuyLamports: the buy's quoted cost, fees included (what the simulation's balance change contains);
+      // initialBuyMaxLamports: the cap signed in the transaction (quote + slippage); accountsLamports excludes the buy
+      const estimate = { networkFeeLamports: null, accountsLamports: null, simulation: null,
+        initialBuyLamports: buy ? buy.lamports : 0, initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null };
       try { estimate.networkFeeLamports = (await conn.getFeeForMessage(message, 'confirmed')).value; } catch { /* left null */ }
       try {
         const pre = await conn.getBalance(signer, 'confirmed');
@@ -151,7 +230,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         else {
           const post = sim.value.accounts?.[0]?.lamports;
           estimate.simulation = { ok: true, unitsConsumed: sim.value.unitsConsumed };
-          if (post != null) estimate.accountsLamports = pre - post;
+          if (post != null) estimate.accountsLamports = Math.max(0, pre - post - (buy ? buy.lamports : 0));
         }
         estimate.signerBalanceLamports = pre;
       } catch (e) {
@@ -163,12 +242,13 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
 
     reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
 
-    /** Accounts every launch uses (same for any mint and signer): the lookup table's contents. */
+    /** Accounts every launch uses (same for any mint and signer), the dev buy's included: the lookup table's contents. */
     async staticAccounts() {
+      const chain = await chainAccounts();
       const keysOf = async () => {
         const a = web3.Keypair.generate().publicKey, b = web3.Keypair.generate().publicKey, m = web3.Keypair.generate().publicKey;
-        const ixs = await buildInstructions({ name: 'x', symbol: 'X', uri: 'https://x', feeSharing: { mode: 'sharing_config',
-          shareholders: [{ wallet: a.toBase58(), bps: 5000 }, { wallet: b.toBase58(), bps: 5000 }] } }, m, a);
+        const { ixs } = await launchInstructions({ config: { name: 'x', symbol: 'X', uri: 'https://x', initialBuyLamports: 10_000_000,
+          feeSharing: { mode: 'sharing_config', shareholders: [{ wallet: a.toBase58(), bps: 5000 }, { wallet: b.toBase58(), bps: 5000 }] } }, mint: m, signer: a, ...chain });
         return new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()));
       };
       const [x, y] = [await keysOf(), await keysOf()];
@@ -279,6 +359,15 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         }
       } else {
         add('curve creator is the approved recipient', curve && curve.creator.toBase58() === config.feeSharing.shareholders[0].wallet, curve?.creator?.toBase58());
+      }
+      if ((Number(config.initialBuyLamports) || 0) > 0) {
+        // the dev buy landed in the same transaction: the author's Token-2022 account holds tokens
+        const { spl } = sdk();
+        const ata = spl.getAssociatedTokenAddressSync(new web3.PublicKey(intent.mint), new web3.PublicKey(intent.signer_wallet), true, spl.TOKEN_2022_PROGRAM_ID);
+        let amount = null;
+        try { amount = (await conn.getTokenAccountBalance(ata, 'finalized')).value.amount; } catch { /* checked below */ }
+        add('dev buy landed: tokens in the author wallet', amount != null && BigInt(amount) > 0n, amount == null ? `${ata.toBase58()} not visible` : `${amount} base units`);
+        if (amount == null) missing = true;
       }
       const ok = checks.every((c) => c.ok);
       // a missing account on a successful finalized transaction means a lagging node, not a mismatch: retry
