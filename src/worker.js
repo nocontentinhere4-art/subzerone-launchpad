@@ -7,6 +7,7 @@ import { openDb, migrate, backup, getSetting, setSetting } from './db.js';
 import { claim, runJob, enqueue } from './jobs.js';
 import { handlers, onDead } from './pipeline.js';
 import { sweepSubmitted } from './launch.js';
+import { scheduleCoinStats } from './coin-stats.js';
 import { log } from './log.js';
 import { now } from './util.js';
 
@@ -24,6 +25,7 @@ export function makeWorker({ cfg, db, fetchImpl = fetch, id = `${hostname()}:${p
     for (const p of db.all('SELECT project_id FROM launches')) {
       enqueue(db, { type: 'reconcile_fees', key: `fees:${p.project_id}:${hour}`, projectId: p.project_id });
     }
+    scheduleCoinStats(db, cfg, t);                          // launched coins' stats for the city (coin-stats.js)
     db.run('DELETE FROM auth_nonces WHERE expires_at < ?', t - 86_400_000);
     db.run('DELETE FROM oauth_states WHERE expires_at < ?', t - 86_400_000);
     db.run('DELETE FROM sessions WHERE expires_at < ?', t - 30 * 86_400_000);

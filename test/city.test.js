@@ -98,11 +98,11 @@ test('plots race: concurrent claims of one plot, exactly one wins (apartments an
   try {
     const cs = await Promise.all([1, 2, 3, 4, 5].map(() => signedIn(h)));
     const res = await Promise.all(cs.map((c, i) => (i % 2
-      ? c.call('POST', '/api/residents', { name: `Racer ${i}`, look: LOOK, plotId: 'shibuya-3' })
-      : c.call('POST', '/api/ideas', IDEA(c.w, { title: `Race idea ${i}`, plotId: 'shibuya-3' })))));
+      ? c.call('POST', '/api/residents', { name: `Racer ${i}`, look: LOOK, plotId: 'shibuya-4' })
+      : c.call('POST', '/api/ideas', IDEA(c.w, { title: `Race idea ${i}`, plotId: 'shibuya-4' })))));
     assert.equal(res.filter((r) => r.status === 200).length, 1, res.map((r) => r.status).join(','));
     assert.ok(res.filter((r) => r.status !== 200).every((r) => r.status === 409 && r.json.error === 'plot_taken'));
-    assert.equal(h.db.get(`SELECT COUNT(*) n FROM plots WHERE plot_id = 'shibuya-3'`).n, 1);
+    assert.equal(h.db.get(`SELECT COUNT(*) n FROM plots WHERE plot_id = 'shibuya-4'`).n, 1);
     // a losing idea submission leaves nothing behind (same transaction)
     assert.equal(h.db.get('SELECT COUNT(*) n FROM ideas').n + h.db.get('SELECT COUNT(*) n FROM residents').n, 1);
     // and the database guard holds even without the pre-check
@@ -294,7 +294,10 @@ test('roles: founder grants and revokes, others cannot; public view shortens wal
     const w = await stranger.call('GET', '/api/world');
     assert.deepEqual(w.json.plots.find((x) => x.plotId === 'roppongi-1').project,
       { ideaId: 'idea_ramen', slug: 'ramen', name: 'Ramen', ticker: 'RAMEN', stage: 'launched', stageLabel: 'Launched', progress: 1, launched: true, mint: 'MintRamen',
-        logoUrl: null, bannerUrl: null }, 'no art stored: null URLs');
+        logoUrl: null, bannerUrl: null,
+        // launched: the building-lights feed, tier 0 (dark) until the first fetch stores real numbers (coin-stats.test.js)
+        stats: { tier: 0, tierName: 'none', by: null, trend: null, fresh: false, holders: null, marketCapUsd: null, volume24hUsd: null, liquidityUsd: null,
+          priceChange24hPct: null, at: null, source: null, url: null } }, 'no art stored: null URLs');
     assert.ok(!w.text.includes(founder.w.address) && !w.text.includes(mod.address));
   } finally { h.close(); }
 });
@@ -495,32 +498,34 @@ test('rooms v2: Kenney catalog, stacking, wall pieces, window view; v1 rooms sti
   } finally { h.close(); }
 });
 
-// Owner 2026-10-10: the two Shiba plots beside Tokyo Tower are its park. Still valid ids (288, nothing renumbered), but
-// never claimable, as an apartment or with an idea; an existing row on one is left alone and just flagged.
-test('reserved plots: shiba-2 and shiba-5 are listed, refused by every claim path, and flagged in the snapshot', async () => {
+// Owner 2026-10-10: the landmarks' own ground (the tower park and its pitch, the transmitter compound, the Shibuya
+// plaza). Still valid ids (288, nothing renumbered), but never claimable, as an apartment or with an idea; an existing
+// row on one is left alone and just flagged.
+const RESERVED = ['shiba-2', 'shiba-3', 'shiba-5', 'nakano-3', 'shibuya-3'];
+test('reserved plots: the five landmark plots are listed, refused by every claim path, and flagged in the snapshot', async () => {
   const h = await harness();
   try {
     const a = await signedIn(h);
     const o = await a.call('GET', '/api/world/options');
-    assert.deepEqual(o.json.reservedPlotIds, ['shiba-2', 'shiba-5']);
+    assert.deepEqual(o.json.reservedPlotIds, RESERVED);
     assert.ok(o.json.plotIds.includes('shiba-2') && o.json.plotIds.length === 288, 'the ids stay');
     assert.equal(validatePlotId('shiba-2'), 'shiba-2', 'readable');
-    assert.throws(() => validatePlotId('shiba-5', { claim: true }), /plot_reserved|Tokyo Tower park/);
-    for (const plotId of ['shiba-2', 'shiba-5']) {
+    assert.throws(() => validatePlotId('shiba-5', { claim: true }), /plot_reserved|reserved city ground/);
+    for (const plotId of RESERVED) {
       const apt = await a.call('POST', '/api/residents', { name: 'Kenji', look: LOOK, plotId });
       assert.equal(apt.json.error, 'plot_reserved', `${plotId} apartment`);
       const idea = await a.call('POST', '/api/ideas', IDEA(a.w, { plotId }));
       assert.equal(idea.json.error, 'plot_reserved', `${plotId} idea`);
       assert.equal(h.db.get('SELECT COUNT(*) n FROM ideas').n, 0, 'no idea without its plot');
     }
-    assert.throws(() => h.db.tx(() => claimPlot(h.db, { plotId: 'shiba-2', kind: 'apartment', wallet: a.w.address })), /Tokyo Tower park/);
+    assert.throws(() => h.db.tx(() => claimPlot(h.db, { plotId: 'shiba-2', kind: 'apartment', wallet: a.w.address })), /reserved city ground/);
     assert.equal(h.db.get('SELECT COUNT(*) n FROM plots').n, 0);
     // a row claimed before the reservation stays, flagged for the client
     h.db.run(`INSERT INTO plots (plot_id, kind, wallet, claimed_at) VALUES ('shiba-5', 'apartment', ?, 1)`, a.w.address);
     const w = worldView(h.db, h.cfg);
-    assert.deepEqual(w.reservedPlots, ['shiba-2', 'shiba-5']);
+    assert.deepEqual(w.reservedPlots, RESERVED);
     assert.deepEqual(w.plots.map((p) => [p.plotId, p.reserved]), [['shiba-5', true]]);
-    assert.equal((await a.call('POST', '/api/residents', { name: 'Kenji', look: LOOK, plotId: 'shiba-3' })).status, 200, 'the plot next door is fine');
+    assert.equal((await a.call('POST', '/api/residents', { name: 'Kenji', look: LOOK, plotId: 'shiba-4' })).status, 200, 'the plot next door is fine');
     assert.equal(w.plots.length, 1);
   } finally { h.close(); }
 });

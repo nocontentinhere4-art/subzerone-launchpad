@@ -4,9 +4,9 @@ The 3D city (`sub01-launchpad`, Vite/three.js) talks to this service. Code: `src
 world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers),
 `src/trust.js` (vote ledger, disclosure), `src/calendar.js`, `src/telemetry.js`, `src/rituals.js` (omikuji, predictions,
 ema, "while you were away"), `src/diary.js` (SUB-01's diary), `src/postcard.js` (share cards), `src/chat.js` + `src/sub01relay.js` (live chat and
-the relay to SUB-01), routes in `src/app.js`.
+the relay to SUB-01), `src/coin-stats.js` (launched coins' market/holder stats: the building lights), routes in `src/app.js`.
 Tests: `test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`, `test/trust.test.js`, `test/calendar.test.js`,
-`test/telemetry.test.js`, `test/rituals.test.js`, `test/chat.test.js`.
+`test/telemetry.test.js`, `test/rituals.test.js`, `test/chat.test.js`, `test/coin-stats.test.js`.
 
 ## Conventions
 
@@ -55,7 +55,7 @@ Public, `cache-control: public, max-age=3600`.
   "districts": ["shiba", "shinjuku", "…48 names"],
   "plotsPerDistrict": 6,
   "plotIds": ["shiba-1", "shiba-2", "…288 ids"],
-  "reservedPlotIds": ["shiba-2", "shiba-5"],
+  "reservedPlotIds": ["shiba-2", "shiba-3", "shiba-5", "nakano-3", "shibuya-3"],
   "look": {
     "skin": ["#f6d5b8", "#e8b48f", "#c98e66", "#a26a45", "#7a4a2e", "#4f3020"],
     "hair": ["#1b1b1b", "#3b2a20", "#6b4428", "#a87443", "#d9b26f", "#b23a2e", "#e8e8e8", "#4a6cd4"],
@@ -221,7 +221,7 @@ receives). Poll every 3–5 s.
   "now": 1760000000000,
   "sub01": { "state": "idle|working|asleep|offline", "ideaId": "idea_…|null", "plotId": "ginza-3|null",
              "stage": "generating|null", "text": "Building Ramen Radar (building)" },
-  "reservedPlots": ["shiba-2", "shiba-5"],
+  "reservedPlots": ["shiba-2", "shiba-3", "shiba-5", "nakano-3", "shibuya-3"],
   "plots": [
     { "plotId": "shiba-1", "kind": "apartment", "resident": { "name": "Kenji", "look": { …look v2 }, "traits": { …traits },
       "buff": "glow|confetti|petals|null" }, "project": null },
@@ -250,6 +250,9 @@ receives). Poll every 3–5 s.
   are the ones `GET /api/ema` and `GET /api/votes` already show. An idea that goes private again drops back to `null` on
   the next snapshot.
 - `mint` is set only when `launched` is true.
+- `stats` (**launched public projects only**, absent otherwise): the coin's real market and holder numbers and the tier
+  they light, see "Coin stats (building lights)" below. Present from the moment `launched` is true, as tier 0 (dark)
+  until the worker's first fetch has stored real numbers. A private project never has it.
 - `logoUrl` / `bannerUrl`: the project's latest generated logo (PNG) and banner (SVG) as public same-origin paths
   `/meta/<slug>/logo-v<n>.png` and `/meta/<slug>/banner-v<n>.svg` (the files the token metadata links to; immutable,
   `access-control-allow-origin: *`, served only while the idea is public). `null` while the idea is private, before
@@ -269,6 +272,84 @@ receives). Poll every 3–5 s.
   newest first, at most **30**, and only for ideas that are **public now** (a private idea never appears; one published
   later shows its events of the last 24 h). `name`/`ticker` follow the same rules as `project` (current project name
   or idea title; project ticker or the suggested one). `plotId` is null when the idea has no building.
+
+## Coin stats (building lights)
+
+Owner's rule: **real numbers or nothing.** A launched project's building shows its market cap, and its height/lights
+follow real on-chain data: at 10k holders the roof lights up, at 100k the giant sign appears. Nothing is estimated,
+no activity is invented; every number carries its `source` and the time `at` it was fetched; without data a building
+stays dark. Code: `src/coin-stats.js` (`coinTier()` is pure and exported; `THRESHOLDS` is the one constant the city
+should print in its disclosure), table `coin_stats` (migration 007), worker job `coin_stats`.
+
+**Sources.** DexScreener's public API (`/latest/dex/tokens/{mint}`, the Solana pair of the mint with the most liquidity:
+price, market cap (fdv when there is no market cap), liquidity, 24 h volume and trades, 24 h price change, pair age,
+the pair's DexScreener URL). Holders only when the operator configured Helius (`HELIUS_API_KEY` / `HELIUS_URL`): DAS
+`getTokenAccounts`, distinct owners with a balance, page by page, **at most 20 pages of 1,000** per fetch; a bigger
+coin is reported as `{ count: 20000, exact: false, atLeast: true }` (a floor, never an estimate), and the whole service
+spends at most `HELIUS_DAILY_PAGES` (default 1,000) pages a day. Without Helius `holders` is `null`.
+
+**Refresh.** A worker job every **5 minutes** for coins launched less than 24 h ago, every **30 minutes** after, spread
+inside the slot per coin, at most one DexScreener call per 2 s overall (≤ 30/min; the documented limit is 60/min).
+Holders are refreshed every 30 min (young) / 2 h (settled), because each page costs Helius credits. A failed fetch
+keeps the **last good value** (it will show `fresh: false` once it is older than twice the cadence); the error is
+visible only on the per-coin endpoint, never in `/api/world`.
+
+**Mock.** With `LAUNCH_PROVIDER=mock` (local dev; refused in production by config) the mock chain has no DexScreener
+pairs, so the stats come from a deterministic mock source. They are unmistakably marked: `source: "mock"`,
+`mock: true`, `holders.source: "mock"`, `url: null`. Label them in the city. A mock launch under a real provider gets
+nothing.
+
+### `stats` in `/api/world` (launched public projects)
+
+```json
+"stats": { "tier": 3, "tierName": "roof", "by": "holders", "trend": "up", "fresh": true,
+           "holders": { "count": 12345, "exact": true, "atLeast": false, "at": 1760000000000, "source": "helius" },
+           "marketCapUsd": 2345000, "volume24hUsd": 123456.78, "liquidityUsd": 45678.9, "priceChange24hPct": 12.5,
+           "at": 1760000000000, "source": "dexscreener", "url": "https://dexscreener.com/solana/<pair>" }
+```
+
+| field | meaning |
+|---|---|
+| `tier` / `tierName` | `0 none` no data · `1 open` launched with data · `2 lit` holders ≥ 1,000 **or** 24 h volume ≥ $25k · `3 roof` holders ≥ 10,000 **or** market cap ≥ $1M · `4 sign` holders ≥ 100,000 **or** market cap ≥ $10M. Computed server-side by `coinTier()`; the highest line reached by either signal. |
+| `by` | which signal lit the tier: `holders` (preferred when both reach it), `marketCap`, `volume`; `null` at tiers 0–1. |
+| `trend` | from the 24 h price change: `up` ≥ +5 %, `down` ≤ −5 %, else `flat`; `null` when there is no change figure. |
+| `fresh` | fetched within twice its cadence (10 min young / 60 min settled). `false` = show the number dimmed/stale. |
+| `holders` | `{count, exact, atLeast, at, source}` or `null` (no Helius / not counted yet). `atLeast: true` = the count is a floor (capped at 20,000). |
+| `marketCapUsd`, `volume24hUsd`, `liquidityUsd`, `priceChange24hPct` | numbers or `null` (never 0 for "unknown"). |
+| `at` | when the market numbers were fetched (unix ms); `null` before the first fetch. |
+| `source` | `"dexscreener"`, `"mock"` or `null` (no fetch yet). `"mock"` also adds `"mock": true`. |
+| `url` | the coin's DexScreener page (`https://dexscreener.com/...`) or `null`. |
+
+Before the first fetch (or when DexScreener has no pair for the mint yet) everything is `null` and `tier` is 0: the
+building stays dark. Thresholds and tier names are also in `GET /api/disclosure` (`coin_stats.thresholds`,
+`coin_stats.tiers`) and on the per-coin endpoint.
+
+### GET /api/coins/:mint/stats
+
+Public, `cache-control: public, max-age=60`, read from the database only (no network call on the request path). For a
+**launched public** project's mint; a private project, an unknown mint or an unlaunched one → `404 not_found` (its
+existence is not revealed); a mint that is not `[A-Za-z0-9]{3,64}` → `400 bad_mint`. For the office page and any
+"details" sheet in the city:
+
+```json
+{ "mint": "<mint>", "slug": "ramen-radar", "name": "Ramen Radar", "ticker": "RAMEN", "launchedAt": 1760000000000,
+  "tier": 3, "tierName": "roof", "by": "holders", "trend": "up", "fresh": true,
+  "holders": { "count": 12345, "exact": true, "atLeast": false, "at": 1760000000000, "source": "helius" },
+  "marketCapUsd": 2345000, "volume24hUsd": 123456.78, "liquidityUsd": 45678.9, "priceChange24hPct": 12.5,
+  "at": 1760000000000, "source": "dexscreener", "url": "https://dexscreener.com/solana/<pair>",
+  "priceUsd": 0.002345, "txns24h": { "buys": 1234, "sells": 987 }, "pairCreatedAt": 1760000000000, "dex": "pumpswap",
+  "sourceLabel": "DexScreener public API (api.dexscreener.com)", "cadenceMs": 300000,
+  "ok": true, "error": null, "checkedAt": 1760000000000,
+  "thresholds": { "lit": { "holders": 1000, "volume24hUsd": 25000 }, "roof": { "holders": 10000, "marketCapUsd": 1000000 },
+                  "sign": { "holders": 100000, "marketCapUsd": 10000000 } },
+  "tiers": ["none", "open", "lit", "roof", "sign"], "trendPct": 5, "holdersCap": 20000 }
+```
+
+- The first 13 fields after the identity are exactly `stats` from `/api/world`, plus `priceUsd`, `txns24h`,
+  `pairCreatedAt`, `dex`, `sourceLabel`, `cadenceMs`.
+- `ok` / `error` / `checkedAt`: the last refresh attempt. `ok: false` with an `error` (e.g. `"dexscreener HTTP 503"`)
+  means the numbers shown are the last good ones (`at` says from when); `ok: null` = the worker has not looked yet.
+- Never a wallet. Same-origin only (`connect-src 'self'`); the city fetches it like `/api/world`.
 
 ## Rooms
 
@@ -611,11 +692,18 @@ Public, `Cache-Control: public, max-age=3600`. Fixed text from `trust.js`; two v
   "human_gate": "every publication and every transaction is approved/signed by a human", "operator": "Example",
   "x_automation_label": true,
   "chat_replies": "SUB-01's chat replies in the city are generated by the SUB-01 live server: written by a language model, or a fixed answer for questions about being human, money or instructions",
-  "ai_act": "Art. 50 disclosure", "updated_at": "2026-10-10" }
+  "ai_act": "Art. 50 disclosure",
+  "coin_stats": { "text": "A launched project's building lights follow real market and on-chain data only: no estimate, no invented activity. Without data a building stays dark. Mock numbers exist only in local development and are marked source \"mock\".",
+                  "sources": ["DexScreener public API (api.dexscreener.com)", "Helius DAS getTokenAccounts (mainnet.helius-rpc.com): holders = distinct owners with a balance, counted page by page up to 20000 (then reported as \"at least\"); null when Helius is not configured"],
+                  "tiers": ["none", "open", "lit", "roof", "sign"],
+                  "thresholds": { "lit": { "holders": 1000, "volume24hUsd": 25000 }, "roof": { "holders": 10000, "marketCapUsd": 1000000 }, "sign": { "holders": 100000, "marketCapUsd": 10000000 } },
+                  "refresh": "every 5 minutes in the first 24 hours after launch, every 30 minutes after; fresh = fetched within twice that" },
+  "updated_at": "2026-10-10" }
 ```
 
 `datasets` is `[]` and `operator` `null` when unset. Show it wherever SUB-01 speaks or decides (city HUD, room,
-X profile/bio). `updated_at` changes only when the text in `trust.js` changes.
+X profile/bio). `updated_at` changes only when the text in `trust.js` changes. `coin_stats` is the building-lights
+line: print `sources` and `thresholds` next to any building that shows numbers (see "Coin stats").
 
 ## GET /api/calendar
 

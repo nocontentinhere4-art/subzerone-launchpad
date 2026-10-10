@@ -22,6 +22,9 @@ export const POLICIES = {
   confirm_launch: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },
   reconcile_fees: { maxAttempts: 5, timeoutMs: 30_000, backoff: backoff(60_000, 30 * 60_000) },
   publish_x_post: { maxAttempts: 3, timeoutMs: 20_000, backoff: backoff(30_000, 5 * 60_000) },
+  // coin-stats.js: a failed fetch keeps the last good value, the next cadence slot tries again (so few attempts; the
+  // attempts mostly absorb DexScreener pacing deferrals)
+  coin_stats: { maxAttempts: 8, timeoutMs: 45_000, backoff: backoff(5_000, 60_000) },
 };
 
 export function enqueue(db, { type, key, ideaId = null, projectId = null, payload = {}, runAfter = now() }) {

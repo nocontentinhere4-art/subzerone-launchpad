@@ -92,12 +92,20 @@ export function loadConfig(env = process.env) {
       redirectUri: e('X_REDIRECT_URI'),
     },
     market: { sub01RpcUrl: e('SUB01_MARKET_RPC_URL', 'https://api.mainnet-beta.solana.com') },
+    // launched coins' stats for the city's building lights (coin-stats.js). Holders need Helius; without it they are null.
+    coinStats: {
+      enabled: e('COIN_STATS', '1') !== '0',
+      heliusUrl: e('HELIUS_URL') || (e('HELIUS_API_KEY') ? `https://mainnet.helius-rpc.com/?api-key=${e('HELIUS_API_KEY')}` : ''),
+      heliusDailyPages: num('HELIUS_DAILY_PAGES', 1000),     // DAS calls a day (1,000 accounts each); ≈ 10 credits per call
+      dexGapMs: num('DEXSCREENER_MIN_GAP_MS', 2000),          // one DexScreener call per this many ms, all coins together (≤ 30/min)
+    },
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
     // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it
     trust: { datasets: list(e('SUB01_DATASETS'), 20, 80, 'SUB01_DATASETS'), operatorName: e('OPERATOR_NAME') ? list(e('OPERATOR_NAME'), 1, 80, 'OPERATOR_NAME', false)[0] : null },
   };
   if (cfg.sub01FeeWallet && !isSolanaAddress(cfg.sub01FeeWallet)) throw new Error('SUB01_FEE_WALLET is not a valid Solana address');
   if (cfg.cityDist && !isAbsolute(cfg.cityDist)) throw new Error('CITY_DIST must be an absolute path');
+  if (cfg.coinStats.heliusUrl && !/^https:\/\/[^/?#]+\.helius-rpc\.com\//.test(cfg.coinStats.heliusUrl)) throw new Error('HELIUS_URL must be an https://…helius-rpc.com/ URL');
   if (cfg.production) {
     const missing = [];
     if (!cfg.encryptionKey) missing.push('APP_ENCRYPTION_KEY');

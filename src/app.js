@@ -20,6 +20,7 @@ import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover }
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
 import { sub01Market } from './market.js';
+import { coinStatsView } from './coin-stats.js';
 import { brainStatus } from './brain.js';
 import { limits, spentToday } from './budget.js';
 import { listVotes, voteHead, verifyChain, disclosure } from './trust.js';
@@ -426,6 +427,13 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
   const JSON_TYPE = 'application/json; charset=utf-8';
   const disclosureBody = Buffer.from(JSON.stringify(disclosure(cfg)));
   r.get('/api/disclosure', (ctx) => ctx.raw(200, disclosureBody, { 'content-type': JSON_TYPE, 'cache-control': 'public, max-age=3600' }));
+  // a launched public coin's stored stats (coin-stats.js): read from the database only, never a network call here
+  r.get('/api/coins/:mint/stats', (ctx) => {
+    if (!/^[A-Za-z0-9]{3,64}$/.test(ctx.params.mint)) throw new HttpError(400, 'bad_mint', 'a token mint address');
+    const v = coinStatsView(db, ctx.params.mint);
+    if (!v) throw new HttpError(404, 'not_found', 'no launched public project with that mint');
+    return ctx.raw(200, Buffer.from(JSON.stringify(v)), { 'content-type': JSON_TYPE, 'cache-control': 'public, max-age=60' });
+  });
   r.get('/api/votes', (ctx) => listVotes(db, ctx.query));
   r.get('/api/votes/head', () => voteHead(db));
   r.get('/api/votes/verify', (ctx) => verifyChain(db, ctx.query));

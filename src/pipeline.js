@@ -14,6 +14,7 @@ import { buildSiteVersion, setLiveVersion } from './site.js';
 import { planAccount, publishPost } from './x.js';
 import { buildLaunchConfig, configHash, confirmIntent, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
+import { refreshCoinStats } from './coin-stats.js';
 import { id, now, sha256, parseJson } from './util.js';
 
 const BRAIN_WAIT = { asleep: 20 * 60_000 };
@@ -171,6 +172,10 @@ export const handlers = {
 
   async publish_x_post(ctx) {
     return publishPost(ctx.db, ctx.cfg, ctx.payload.postId, ctx.fetchImpl);
+  },
+
+  async coin_stats(ctx) {
+    return refreshCoinStats(ctx.db, ctx.cfg, ctx.payload.mint, { fetchImpl: ctx.fetchImpl, signal: ctx.signal });
   },
 };
 

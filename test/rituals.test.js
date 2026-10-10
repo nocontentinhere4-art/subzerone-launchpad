@@ -98,7 +98,7 @@ test('predictions: public ideas in the queue only, one guess each, closed by the
   try {
     const author = await resident(h, 'Author', 'shiba-1');
     const yui = await resident(h, 'Yui', 'shiba-4');
-    const ken = await resident(h, 'Ken', 'shiba-3');
+    const ken = await resident(h, 'Ken', 'shiba-6');
     const id = (await author.call('POST', '/api/ideas', IDEA(author.w))).json.id;
     // private: not predictable, not visible
     assert.equal((await yui.call('POST', '/api/predictions', { ideaId: id, guess: 'build' })).status, 404);
@@ -200,7 +200,7 @@ test('ema: pinned hash at submission, on the idea and project JSON, public shrin
     const author = await resident(h, 'Author', 'shiba-1');
     const yui = await resident(h, 'Yui', 'shiba-4');
     const before = Date.now();
-    const sub = await author.call('POST', '/api/ideas', IDEA(author.w, { plotId: 'shiba-3' }));
+    const sub = await author.call('POST', '/api/ideas', IDEA(author.w, { plotId: 'shiba-6' }));
     assert.deepEqual(Object.keys(sub.json), ['id', 'pinnedHash', 'pinnedAt']);
     const { id, pinnedHash, pinnedAt } = sub.json;
     assert.equal(pinnedHash, pinHash(IDEA(author.w).title, IDEA(author.w).concept, 1, author.w.address));

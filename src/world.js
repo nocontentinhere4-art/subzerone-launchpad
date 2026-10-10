@@ -5,6 +5,7 @@
 import { audit } from './db.js';
 import { LABELS } from './states.js';
 import { jstDate } from './calendar.js';
+import { publicStats } from './coin-stats.js';
 import { now, HttpError, parseJson, utcDay } from './util.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
@@ -17,9 +18,11 @@ export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku
 export const PLOTS_PER_DISTRICT = 6;
 export const PLOT_IDS = DISTRICTS.flatMap((d) => Array.from({ length: PLOTS_PER_DISTRICT }, (_, i) => `${d}-${i + 1}`));
 const PLOT_SET = new Set(PLOT_IDS);
-// Reserved plots (owner 2026-10-10): the two Shiba plots either side of Tokyo Tower are its park. The ids stay (288 ids,
-// nothing renumbered) but they cannot be claimed any more; a row that already claims one is left alone.
-export const RESERVED_PLOTS = new Set(['shiba-2', 'shiba-5']);
+// Reserved plots (owner 2026-10-10, "no structure in the middle of a street"): the landmarks' own ground. shiba-2 and
+// shiba-3 are the Tokyo Tower park's street front, shiba-5 its floodlit pitch across the street, nakano-3 the broadcast
+// tower's transmitter compound, shibuya-3 the plaza of the Shibuya feature tower (client city-state RESERVED_KIND). The
+// ids stay (288 ids, nothing renumbered) but they cannot be claimed any more; a row that already claims one is left alone.
+export const RESERVED_PLOTS = new Set(['shiba-2', 'shiba-3', 'shiba-5', 'nakano-3', 'shibuya-3']);
 export const RESERVED_PLOT_IDS = [...RESERVED_PLOTS];
 
 export const LOOK = Object.freeze({
@@ -294,7 +297,7 @@ const GEN_STEPS = { 'writing the project identity': 0.5, 'building the website i
 /** A known plot id. With `claim`, a reserved plot (the tower park) is refused too: it can be read but never claimed. */
 export function validatePlotId(plotId, { claim = false } = {}) {
   if (typeof plotId !== 'string' || !PLOT_SET.has(plotId)) throw new HttpError(400, 'bad_plot', 'unknown plot (see /api/world/options)');
-  if (claim && RESERVED_PLOTS.has(plotId)) throw new HttpError(400, 'plot_reserved', `${plotId} is part of the Tokyo Tower park (see /api/world/options.reservedPlotIds)`);
+  if (claim && RESERVED_PLOTS.has(plotId)) throw new HttpError(400, 'plot_reserved', `${plotId} is reserved city ground, a landmark's park, plaza or compound (see /api/world/options.reservedPlotIds)`);
   return plotId;
 }
 
@@ -444,16 +447,19 @@ export function worldView(db, cfg, t = now()) {
     // the same public, immutable /meta/<slug>/… files the token metadata links to (app.js serves them for public ideas only)
     const asset = (kind, v, ext) => (x.slug && v ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : null);
     return { ideaId: x.idea_id, slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
-      logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg') };
+      logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
+      // launched only: real market/holder data for the building lights (coin-stats.js); tier 0 until the first fetch
+      ...(launched ? { stats: publicStats(parseJson(x.cs_json), t) } : {}) };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.slug, p.name pname, p.ticker, l.mint,
+      p.slug, p.name pname, p.ticker, l.mint, cs.json cs_json,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
     LEFT JOIN fortunes f ON f.wallet = r.wallet AND f.date = ? AND f.until > ? AND f.buff != 'none'
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
-    LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id ORDER BY pl.claimed_at`, jstDate(t), t);
+    LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id LEFT JOIN coin_stats cs ON cs.mint = l.mint
+    ORDER BY pl.claimed_at`, jstDate(t), t);
   const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind, ...(RESERVED_PLOTS.has(x.plot_id) ? { reserved: true } : {}),
     // buff: today's omikuji effect (cosmetic, kind only; rituals.js), null when none is active
     resident: x.kind === 'apartment' && x.rname ? { name: x.rname, look: readLook(x.look_json), traits: readTraits(x.traits_json), buff: x.buff || null } : null,

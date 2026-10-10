@@ -1,0 +1,70 @@
+{
+  "schemaVersion": "1.0.0",
+  "pairs": [
+    {
+      "chainId": "solana",
+      "dexId": "pumpswap",
+      "url": "https://dexscreener.com/solana/7pairaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "pairAddress": "7pairaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "labels": ["v1"],
+      "baseToken": { "address": "FixtureMint1111111111111111111111111111111", "name": "Ramen Radar", "symbol": "RAMEN" },
+      "quoteToken": { "address": "So11111111111111111111111111111111111111112", "name": "Wrapped SOL", "symbol": "SOL" },
+      "priceNative": "0.00001234",
+      "priceUsd": "0.002345",
+      "txns": { "m5": { "buys": 3, "sells": 1 }, "h1": { "buys": 40, "sells": 22 }, "h6": { "buys": 300, "sells": 210 }, "h24": { "buys": 1234, "sells": 987 } },
+      "volume": { "h24": 123456.78, "h6": 40000.1, "h1": 9000.2, "m5": 500.3 },
+      "priceChange": { "m5": 0.1, "h1": -2.3, "h6": 5.5, "h24": 12.5 },
+      "liquidity": { "usd": 45678.9, "base": 12345678, "quote": 123.4 },
+      "fdv": 2345000,
+      "marketCap": 2345000,
+      "pairCreatedAt": 1760000000000,
+      "info": { "imageUrl": "https://dd.dexscreener.com/ds-data/tokens/solana/x.png", "websites": [], "socials": [] }
+    },
+    {
+      "chainId": "solana",
+      "dexId": "raydium",
+      "url": "https://dexscreener.com/solana/8pairbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "pairAddress": "8pairbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "baseToken": { "address": "FixtureMint1111111111111111111111111111111", "name": "Ramen Radar", "symbol": "RAMEN" },
+      "quoteToken": { "address": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", "name": "USD Coin", "symbol": "USDC" },
+      "priceNative": "0.0023",
+      "priceUsd": "0.0023",
+      "txns": { "m5": { "buys": 0, "sells": 0 }, "h1": { "buys": 1, "sells": 0 }, "h6": { "buys": 4, "sells": 2 }, "h24": { "buys": 10, "sells": 9 } },
+      "volume": { "h24": 900.5, "h6": 100, "h1": 10, "m5": 0 },
+      "priceChange": { "m5": 0, "h1": 0, "h6": 1.2, "h24": 11.9 },
+      "liquidity": { "usd": 1500.25, "base": 500000, "quote": 700 },
+      "fdv": 2300000,
+      "marketCap": 2300000,
+      "pairCreatedAt": 1760100000000
+    },
+    {
+      "chainId": "solana",
+      "dexId": "raydium",
+      "url": "https://dexscreener.com/solana/9pairccccccccccccccccccccccccccccccccccccccc",
+      "pairAddress": "9pairccccccccccccccccccccccccccccccccccccccc",
+      "baseToken": { "address": "So11111111111111111111111111111111111111112", "name": "Wrapped SOL", "symbol": "SOL" },
+      "quoteToken": { "address": "FixtureMint1111111111111111111111111111111", "name": "Ramen Radar", "symbol": "RAMEN" },
+      "priceNative": "81000",
+      "priceUsd": "190.1",
+      "txns": { "m5": { "buys": 0, "sells": 0 }, "h1": { "buys": 0, "sells": 0 }, "h6": { "buys": 0, "sells": 0 }, "h24": { "buys": 0, "sells": 0 } },
+      "volume": { "h24": 0, "h6": 0, "h1": 0, "m5": 0 },
+      "priceChange": { "m5": 0, "h1": 0, "h6": 0, "h24": 0 },
+      "liquidity": { "usd": 9999999, "base": 1, "quote": 1 },
+      "fdv": 1,
+      "marketCap": 1,
+      "pairCreatedAt": 1760200000000
+    },
+    {
+      "chainId": "ethereum",
+      "dexId": "uniswap",
+      "url": "https://dexscreener.com/ethereum/0xdead",
+      "pairAddress": "0xdead",
+      "baseToken": { "address": "FixtureMint1111111111111111111111111111111", "name": "Not this chain", "symbol": "RAMEN" },
+      "quoteToken": { "address": "0xweth", "name": "WETH", "symbol": "WETH" },
+      "priceUsd": "99",
+      "liquidity": { "usd": 50000000 },
+      "volume": { "h24": 1 },
+      "marketCap": 1
+    }
+  ]
+}
