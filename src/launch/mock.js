@@ -39,6 +39,9 @@ export function makeMockProvider(db) {
         estimate: { networkFeeLamports: 0, accountsLamports: 0, simulation: { ok: true, mock: true } } };
     },
 
+    /** What the wallet will see (review-before-sign): the mock touches no program and no account. */
+    reviewOf() { return { programs: [{ id: 'MockLaunch', name: 'MockLaunch', direct: true }], accountsWritable: 0, signers: 1, launchProgramsOnly: true }; },
+
     /** The wallet signs mockSigningText(hash) with signMessage. */
     verifySigned(intent, signedBase58) {
       let sig;

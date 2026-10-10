@@ -156,9 +156,10 @@ export async function createIntent(db, cfg, project, wallet) {
     // resume (page reload, double click): the same reviewed transaction, never a second one
     const pending = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
     if (pending && pending.signer_wallet === wallet) {
+      const provider = getProvider(cfg, db);
       return { intentId: pending.id, mint: pending.mint, txBase64: pending.tx_base64, messageHash: pending.tx_message_hash,
-        estimate: null, lastValidBlockHeight: pending.last_valid_block_height, mock: getProvider(cfg, db).isMock,
-        txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true };
+        estimate: null, lastValidBlockHeight: pending.last_valid_block_height, mock: provider.isMock,
+        txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true, ...review(provider, pending.tx_base64, pending.network, pending.signer_wallet) };
     }
   }
   if (idea.status !== 'launch_prepared') throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
@@ -176,6 +177,7 @@ export async function createIntent(db, cfg, project, wallet) {
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
   const built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
     signer: config.signer, feeSharing: config.feeSharing });
+  const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
   const t = now();
   db.tx(() => {
@@ -188,7 +190,13 @@ export async function createIntent(db, cfg, project, wallet) {
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
   });
   return { intentId, mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
-    lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes };
+    lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes, ...reviewed };
+}
+
+/** Review-before-sign: what the wallet will show, read from the built transaction (provider.reviewOf). */
+function review(provider, txBase64, network, payer) {
+  const r = provider.reviewOf(txBase64);
+  return { network, feePayer: payer, programs: r.programs, accountsWritable: r.accountsWritable, signers: r.signers, launchProgramsOnly: r.launchProgramsOnly };
 }
 
 /**

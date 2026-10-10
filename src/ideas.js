@@ -213,7 +213,8 @@ export function viewIdea(db, ideaId, viewer) {
     uploads, versions, timeline, project,
     evaluation: evaluation && { decision: evaluation.decision, decidedBy: evaluation.decided_by,
       scores: parseJson(evaluation.scores_json), brain: parseJson(evaluation.brain_json), at: evaluation.created_at,
-      version: evaluation.idea_version },
+      version: evaluation.idea_version, // the vote-ledger row; a passed idea is not linked to it publicly (GET /api/votes shows no titles for those)
+      ledger: (owner || admin || idea.status !== 'declined') ? db.get('SELECT seq, hash FROM vote_ledger WHERE request_id = ?', evaluation.brain_request_id) || null : null },
     job: job && { type: job.type, status: job.status, attempts: job.attempts, maxAttempts: job.max_attempts,
       runAfter: job.run_after, progress: job.progress, lastError: (owner || admin) ? job.last_error : undefined },
   };

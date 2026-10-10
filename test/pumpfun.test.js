@@ -78,3 +78,26 @@ test('pump.fun submit: only a failed preflight counts as rejected; a timeout doe
   const p2 = makePumpfunProvider(cfgDev, { connection: { sendRawTransaction: async () => { throw new TypeError('fetch failed'); } } });
   await assert.rejects(p2.submit({}, Buffer.alloc(1)), (e) => !e.rejected);
 });
+
+test('pump.fun review-before-sign: programs and writable accounts read from the built message', async () => {
+  const { reviewOfMessage, PROGRAMS } = await import('../src/launch/pumpfun.js');
+  const payer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey, curve = web3.Keypair.generate().publicKey;
+  const token2022 = new web3.PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb');
+  const ix = (programId, keys) => new web3.TransactionInstruction({ programId: new web3.PublicKey(programId), keys, data: Buffer.alloc(0) });
+  const msg = new web3.TransactionMessage({ payerKey: payer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: [
+    ix(PROGRAMS.pump, [{ pubkey: mint, isSigner: true, isWritable: true }, { pubkey: curve, isSigner: false, isWritable: true },
+      { pubkey: payer, isSigner: true, isWritable: true }, { pubkey: token2022, isSigner: false, isWritable: false }]),
+    ix(PROGRAMS.pumpFees, [{ pubkey: mint, isSigner: false, isWritable: false }]),
+  ] }).compileToV0Message();
+  const r = reviewOfMessage(msg);
+  assert.deepEqual(r.programs, [{ id: PROGRAMS.pump, name: 'pump.fun (bonding curve)', direct: true },
+    { id: PROGRAMS.pumpFees, name: 'pump.fun fee sharing', direct: true }, { id: token2022.toBase58(), name: 'Token-2022', direct: false }]);
+  assert.deepEqual([r.accountsWritable, r.signers, r.launchProgramsOnly], [3, 2, true]);       // payer, mint, curve; payer + mint sign
+  const b64 = Buffer.from(new web3.VersionedTransaction(msg).serialize()).toString('base64');
+  assert.deepEqual(provider.reviewOf(b64), r);
+  // anything else called directly (here a plain SOL transfer) is named and breaks the "launch programs only" promise
+  const odd = new web3.TransactionMessage({ payerKey: payer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(),
+    instructions: [web3.SystemProgram.transfer({ fromPubkey: payer, toPubkey: curve, lamports: 1 })] }).compileToV0Message();
+  assert.deepEqual(reviewOfMessage(odd).programs, [{ id: '11111111111111111111111111111111', name: 'System Program', direct: true }]);
+  assert.equal(reviewOfMessage(odd).launchProgramsOnly, false);
+});

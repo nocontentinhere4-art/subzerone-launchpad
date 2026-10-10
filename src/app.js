@@ -22,6 +22,9 @@ import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
 import { sub01Market } from './market.js';
 import { brainStatus } from './brain.js';
 import { limits, spentToday } from './budget.js';
+import { listVotes, voteHead, verifyChain, disclosure } from './trust.js';
+import { calendarView } from './calendar.js';
+import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { HttpError, parseJson, now, token } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
@@ -394,6 +397,29 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
   });
   r.post('/api/takeover/:id/withdraw', (ctx) => withdrawTakeover(db, ctx.params.id, requireUser(ctx).wallet));
 
+  // --- trust: vote ledger, disclosure, calendar, telemetry (trust.js, calendar.js, telemetry.js) ------------------------
+  const JSON_TYPE = 'application/json; charset=utf-8';
+  const disclosureBody = Buffer.from(JSON.stringify(disclosure(cfg)));
+  r.get('/api/disclosure', (ctx) => ctx.raw(200, disclosureBody, { 'content-type': JSON_TYPE, 'cache-control': 'public, max-age=3600' }));
+  r.get('/api/votes', (ctx) => listVotes(db, ctx.query));
+  r.get('/api/votes/head', () => voteHead(db));
+  r.get('/api/votes/verify', (ctx) => verifyChain(db, ctx.query));
+  let calendarCache = null;                                  // one snapshot for everyone, at most 60 s old
+  r.get('/api/calendar', (ctx) => {
+    if (!calendarCache || Date.now() - calendarCache.at > 60_000) calendarCache = { at: Date.now(), body: Buffer.from(JSON.stringify(calendarView(db, cfg))) };
+    return ctx.raw(200, calendarCache.body, { 'content-type': JSON_TYPE, 'cache-control': 'public, max-age=60' });
+  });
+  r.post('/api/telemetry', async (ctx) => {
+    if (optedOut(ctx.req.headers)) return { stored: false, reason: 'opted_out' };
+    return recordTelemetry(db, await ctx.body(2_000), ctx.ip);
+  });
+  r.get('/api/admin/telemetry', (ctx) => {
+    requireAdmin(ctx);
+    const d = ctx.query.get('days') ?? '14';
+    if (!/^\d{1,2}$/.test(d) || Number(d) < 1 || Number(d) > 90) throw new HttpError(400, 'bad_request', 'days: 1–90');
+    return telemetryDaily(db, Number(d));
+  });
+
   // --- ledger & SUB-01 token -----------------------------------------------------------------------------------------
   r.get('/api/ledger', () => {
     const rows = db.all(`SELECT p.id, p.slug, p.name, p.ticker, l.mint, l.network, l.provider, l.verified_at FROM launches l JOIN projects p ON p.id = l.project_id ORDER BY l.verified_at DESC`);
@@ -640,7 +666,7 @@ export function createApp({ cfg, db, fetchImpl = fetch }) {
         // state-changing requests must come from our own pages
         const o = req.headers.origin;
         if (o !== origin.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
-        worldCache = null;                                     // a write may change the city; the next read rebuilds it
+        if (url.pathname !== '/api/telemetry') worldCache = null;   // a write may change the city; the next read rebuilds it
       }
       const cookies = parseCookies(req.headers.cookie);
       const ip = clientIp(req, cfg.trustProxy);

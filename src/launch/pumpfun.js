@@ -31,6 +31,36 @@ export const PROGRAMS = {
   pumpSwap: 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
 };
 
+// Programs a reviewer may see in a launch transaction, by id. Anything else is shown as 'unknown program'.
+export const KNOWN_PROGRAMS = Object.freeze({
+  [PROGRAMS.pump]: 'pump.fun (bonding curve)', [PROGRAMS.pumpFees]: 'pump.fun fee sharing', [PROGRAMS.pumpSwap]: 'PumpSwap (AMM)',
+  '11111111111111111111111111111111': 'System Program', ComputeBudget111111111111111111111111111111: 'Compute Budget',
+  TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb: 'Token-2022', TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA: 'SPL Token',
+  ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL: 'Associated Token Account', metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s: 'Metaplex Token Metadata',
+  MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr: 'Memo',
+});
+// the only programs a launch transaction may call directly for the "what this does NOT do" line to hold
+const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget111111111111111111111111111111']);
+
+/**
+ * Review-before-sign, from the compiled message itself: the programs it calls (direct), known programs it passes to
+ * them as accounts (called inside them, direct: false), how many accounts it can write and how many signers it needs.
+ * Program ids are always static keys in a v0 message; lookup-table accounts are counted, not named.
+ */
+export function reviewOfMessage(message) {
+  const keys = message.staticAccountKeys.map((k) => k.toBase58());
+  const direct = [...new Set(message.compiledInstructions.map((ix) => keys[ix.programIdIndex]))];
+  const passed = keys.filter((k) => KNOWN_PROGRAMS[k] && !direct.includes(k));
+  const h = message.header;
+  const writable = (h.numRequiredSignatures - h.numReadonlySignedAccounts) + (keys.length - h.numRequiredSignatures - h.numReadonlyUnsignedAccounts)
+    + (message.addressTableLookups || []).reduce((n, l) => n + l.writableIndexes.length, 0);
+  return {
+    programs: [...direct.map((id) => ({ id, name: KNOWN_PROGRAMS[id] || 'unknown program', direct: true })),
+      ...passed.map((id) => ({ id, name: KNOWN_PROGRAMS[id], direct: false }))],
+    accountsWritable: writable, signers: h.numRequiredSignatures, launchProgramsOnly: direct.every((id) => LAUNCH_DIRECT.has(id)),
+  };
+}
+
 const bnToStr = (x) => (x == null ? null : x.toString());
 
 export function makePumpfunProvider(cfg, { connection } = {}) {
@@ -131,7 +161,8 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         lastValidBlockHeight, mint: mint.toBase58(), estimate, txBytes: bytes.length };
     },
 
-    /** The wallet's signed bytes must be exactly the reviewed message, signed by the expected signer. */
+    reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
+
     /** Accounts every launch uses (same for any mint and signer): the lookup table's contents. */
     async staticAccounts() {
       const keysOf = async () => {
@@ -144,6 +175,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       return [...x].filter((k) => y.has(k)).sort();
     },
 
+    /** The wallet's signed bytes must be exactly the reviewed message, signed by the expected signer. */
     verifySigned(intent, signedBase64) {
       const { web3 } = sdk();
       const tx = web3.VersionedTransaction.deserialize(Buffer.from(signedBase64, 'base64'));

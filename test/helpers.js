@@ -45,8 +45,9 @@ export function fakeBrain(mode = 'build') {
     if (state.seen.has(body.request_id)) return new Response(JSON.stringify({ ...state.seen.get(body.request_id), replayed: true }), { status: 200 });
     const build = state.mode === 'build';
     const rec = { status: 'ok', request_id: body.request_id, version: 'launchpad-eval/1', decision: build ? 'build' : 'pass',
-      networks: { reward: 1, attention: 0.5, language: 0.8 }, stage: 'AWAKE', demo: true,
-      vote: { chosen: build ? 0 : 1, reason: 'chose it: reward areas responded most', spiking: { used: false, net: 'rate', network: 'rate model only' },
+      networks: { reward: 1, attention: 0.5, language: 0.8 }, stage: 'AWAKE', demo: true, mood: { boredom: 0.2, pressure: 0.1, tired: 0 }, gain: 1.1,
+      vote: { chosen: build ? 0 : 1, reason: 'chose it: reward areas responded most', temperature: 0.4, gain: 1.1,
+        spiking: { used: false, net: 'rate', network: 'rate model only', leaned_to: `build: ${body.title}` },
         options: [{ action: 'build', label: `build: ${body.title}`, p: build ? 0.8 : 0.2, value: 1, response: 0.01, chosen: build },
           { action: 'pass', label: 'pass: keep doing what he is doing', p: build ? 0.2 : 0.8, value: 0.1, response: 0.001, chosen: !build }] } };
     state.seen.set(body.request_id, rec);

@@ -25,6 +25,13 @@ function loadDotEnv(path) {
   }
 }
 
+/** Comma list (or one value) of short printable strings, for public text. */
+function list(raw, max, len, name, split = true) {
+  const xs = (split ? raw.split(',') : [raw]).map((x) => x.trim()).filter(Boolean);
+  if (xs.length > max || xs.some((x) => x.length > len || /[\u0000-\u001f\u007f<>`]/.test(x))) throw new Error(`${name}: at most ${max} values of ${len} printable characters`);
+  return xs;
+}
+
 export function loadConfig(env = process.env) {
   if (env === process.env && !env.LAUNCHPAD_NO_DOTENV) loadDotEnv(resolve(ROOT, '.env'));
   const e = (k, d = '') => (env[k] ?? d).toString().trim();
@@ -86,6 +93,8 @@ export function loadConfig(env = process.env) {
     },
     market: { sub01RpcUrl: e('SUB01_MARKET_RPC_URL', 'https://api.mainnet-beta.solana.com') },
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
+    // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it
+    trust: { datasets: list(e('SUB01_DATASETS'), 20, 80, 'SUB01_DATASETS'), operatorName: e('OPERATOR_NAME') ? list(e('OPERATOR_NAME'), 1, 80, 'OPERATOR_NAME', false)[0] : null },
   };
   if (cfg.sub01FeeWallet && !isSolanaAddress(cfg.sub01FeeWallet)) throw new Error('SUB01_FEE_WALLET is not a valid Solana address');
   if (cfg.cityDist && !isAbsolute(cfg.cityDist)) throw new Error('CITY_DIST must be an absolute path');

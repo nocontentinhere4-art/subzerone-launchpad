@@ -2,6 +2,7 @@ import { api, html, raw, short, when, sol, pct, copyButton } from './lib.js';
 import { state, toast, requireSignIn, every, go } from './app.js';
 import { statusChip, brainCard } from './pages.js';
 import { connected, signTransaction, signMessageText } from './wallet.js';
+import { txReview } from './review.js';
 
 const tokenAmount = (base, decimals) => (base == null ? '—' : (Number(base) / 10 ** decimals).toLocaleString());
 
@@ -159,16 +160,7 @@ export async function review(el, slug) {
     }
     try {
       const tx = await api(`/api/projects/${slug}/launch/transaction`, { method: 'POST', body: {} });
-      const e = tx.estimate || {};
-      box.innerHTML = html`<div class="card accent"><h3>${tx.mock ? 'MOCK transaction (nothing on-chain)' : 'Transaction ready'}</h3><div class="kv small">
-        <span>new mint address</span><span class="addr">${tx.mint}</span>
-        ${tx.resumed ? html`<span>request</span><span>resumed: the same transaction you built earlier</span>` : ''}
-        <span>network fee</span><span>${e.networkFeeLamports != null ? sol(e.networkFeeLamports) : 'unknown'}</span>
-        <span>accounts created (rent + program costs)</span><span>${e.accountsLamports != null ? sol(e.accountsLamports) : 'unknown'} <span class="faint">${e.simulation?.ok ? '(from a simulation)' : e.simulation?.err ? `(simulation failed: ${e.simulation.err})` : ''}</span></span>
-        ${e.signerBalanceLamports != null ? html`<span>your balance</span><span>${sol(e.signerBalanceLamports)}</span>` : ''}
-        <span>size</span><span>${tx.txBytes} bytes</span><span>valid until block</span><span>${tx.lastValidBlockHeight}</span></div>
-        <p class="small dim">Your wallet shows the transaction again before you sign. ${tx.mock ? 'For the mock, it asks you to sign a plain text message instead.' : 'Check the network and the amounts there too.'}</p>
-        <p class="row"><button class="primary" id="sign">Sign with ${connected()?.name || 'wallet'}</button> <button id="cancelSign">cancel</button></p></div>`.s;
+      box.innerHTML = txReview(tx, p.launchConfig, state.me.user.wallet, connected()?.name).s;
       box.querySelector('#cancelSign').onclick = async () => { await api(`/api/projects/${slug}/launch/abandon`, { method: 'POST', body: {} }); draw(); };
       box.querySelector('#sign').onclick = async () => {
         let signed;

@@ -1,8 +1,10 @@
 # City API (contract for the city client)
 
 The 3D city (`sub01-launchpad`, Vite/three.js) talks to this service. Code: `src/world.js` (plots, residents, rooms,
-world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers), routes in
-`src/app.js`. Tests: `test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`.
+world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/roles.js` (roles, takeovers),
+`src/trust.js` (vote ledger, disclosure), `src/calendar.js`, `src/telemetry.js`, routes in `src/app.js`. Tests:
+`test/city.test.js`, `test/custom.test.js`, `test/desk.test.js`, `test/trust.test.js`, `test/calendar.test.js`,
+`test/telemetry.test.js`.
 
 ## Conventions
 
@@ -13,7 +15,8 @@ world snapshot, look v2 and traits, unlocks, guestbooks, city events), `src/role
 - Errors: `{ "error": "<code>", "message": "<human sentence>" }` with an HTTP status. Codes used here:
   `400 bad_plot | bad_name | bad_look | bad_traits | bad_room | bad_text | bad_wallet | bad_role | bad_reason | bad_request`,
   `401 sign_in`, `403 forbidden | locked | own_room | not_founder | founder_active`, `404 not_found | no_role`,
-  `409 plot_taken | no_resident | not_launched | already_founder | takeover_open | not_open`, `429 rate_limited`.
+  `409 plot_taken | no_resident | not_launched | already_founder | takeover_open | not_open`, `429 rate_limited`;
+  trust routes: `400 bad_request | bad_telemetry`.
 - `403 locked` carries the names that are not unlocked yet: `{ "error": "locked", "message": "…", "locked": ["halo", "dragon"] }`.
 - `429 rate_limited` carries `retryAfterS` (seconds).
 - Rate limits: the same per-IP/per-wallet token buckets as every other route (reads 400/min, writes 60/min).
@@ -517,6 +520,148 @@ Response: `{ "id", "status": "approved|rejected", "founder": "AbCd…WxYz", "fee
 **A takeover never changes who receives creator fees.** The recipients were written on-chain and locked when the token
 was created; nobody (the founder, the new founder, SUBZERONE) can change them. Every takeover response carries the
 current `feeRecipients` and this sentence in `feeNote`.
+
+## Vote ledger (trust.js)
+
+Every answer of SUB-01's brain (build **and** pass, private ideas included) appends one row, in the same database
+transaction that records the evaluation. Ideas declined by a rule before the brain is asked (duplicate, unclear,
+policy) are not brain votes and add no row; a replayed evaluation adds nothing. The table is append-only (SQLite
+triggers refuse `UPDATE`/`DELETE`) and hash-chained:
+
+```
+hash = sha256( prevHash + canonical({ seq, at, ideaHash, requestHash, decision, networks, vote, mood, stage, gain }) )
+```
+
+- `canonical`: JSON with object keys sorted at every level, no whitespace (`trust.js` `canonical`).
+- genesis `prevHash` = 64 zeros; `seq` runs 1, 2, 3 … without gaps.
+- `ideaHash` = sha256 of `JSON.stringify([title, concept, version])` (the idea version the brain was asked about).
+- `requestHash` = sha256 of the request id `"<ideaId>.v<version>"` (the id itself is shown only for public ideas).
+- `vote` is the brain's vote record **whitelisted**: option labels and `spiking.leaned_to` carry the idea's title, so
+  they are never stored here. `demo: true` = the brain ran in demo mode.
+
+Every field that goes into a hash is in the public output, so **anyone can recompute the whole chain from
+`GET /api/votes` alone** (`test/trust.test.js` does). What a recomputation cannot catch: rows cut off the end of the
+chain. That is what the head is for: an operator publishes `GET /api/votes/head` somewhere we can't rewrite (an
+on-chain memo is the planned later step; **not built yet**).
+
+### GET /api/votes?limit=50&before=<seq>
+
+Public, newest first. `limit` 1–200 (default 50), `before` a seq (exclusive); anything else → `400 bad_request`.
+
+```json
+{ "votes": [
+    { "seq": 2, "at": 1791601080098, "ideaHash": "55a2…", "requestHash": "48a0…", "decision": "pass",
+      "networks": { "reward": 1, "attention": 0.5, "language": 0.8 },
+      "vote": { "chosen": 1, "temperature": 0.4, "reason": "chose it: reward areas responded most",
+        "options": [ { "action": "build", "p": 0.2, "value": 1, "response": 0.01, "chosen": false },
+                     { "action": "pass", "p": 0.8, "value": 0.1, "response": 0.001, "chosen": true } ],
+        "spiking": { "used": false, "net": "rate", "network": "rate model only", "pick": null }, "demo": true },
+      "mood": { "boredom": 0.2, "pressure": 0.1, "tired": 0 }, "stage": "AWAKE", "gain": 1.1,
+      "prevHash": "63a1…", "hash": "e265…", "idea": null },
+    { "seq": 1, "decision": "build", "…": "…", "prevHash": "0000…0000", "hash": "63a1…",
+      "idea": { "ideaId": "idea_…", "requestId": "idea_….v1", "title": "Ramen Radar", "slug": "ramen-radar" } } ],
+  "next": 1,
+  "head": { "seq": 2, "hash": "e265…", "at": 1791601080098 } }
+```
+
+- `idea` is `null` unless the idea is **public and not declined** (private ideas and passed ideas stay anonymous; a
+  passed idea's page does not link its row either). `slug` is `null` until a project exists.
+- `next`: pass it as `before` for the next page; `null` = no more rows.
+- `mood`, `stage`, `gain` are `null` when the brain did not send them. Never a wallet, title or label otherwise.
+- Linked from the idea: `GET /api/ideas/:id` → `evaluation.ledger: { seq, hash } | null`.
+
+### GET /api/votes/head
+
+`{ "seq": 2, "hash": "e265…", "at": 1791601080098 }`. Empty ledger: `{ "seq": 0, "hash": "0000…0000", "at": null }`.
+
+### GET /api/votes/verify?from=&to=
+
+Recomputes `[from, to]` on the server (each hash, each link to the row before, no missing seq). Defaults: `from=1`,
+`to` = head (at most 5000 rows per call; more → `400`).
+
+`{ "ok": true, "broken_at": null, "from": 1, "to": 2, "checked": 2 }` or, after tampering,
+`{ "ok": false, "broken_at": 2, … }` (`broken_at` = first seq that is wrong or missing).
+
+## GET /api/disclosure
+
+Public, `Cache-Control: public, max-age=3600`. Fixed text from `trust.js`; two values come from the environment
+(`SUB01_DATASETS`, comma list, max 20 × 80 characters; `OPERATOR_NAME`, max 80):
+
+```json
+{ "system": "SUB-01", "nature": "AI system driven by a brain-activity model derived from human MRI datasets",
+  "not_conscious": true, "datasets": ["HCP Young Adult 1200"], "decision": "brain vote; reproducible from the ledger",
+  "human_gate": "every publication and every transaction is approved/signed by a human", "operator": "Example",
+  "x_automation_label": true, "ai_act": "Art. 50 disclosure", "updated_at": "2026-10-10" }
+```
+
+`datasets` is `[]` and `operator` `null` when unset. Show it wherever SUB-01 speaks or decides (city HUD, room,
+X profile/bio). `updated_at` changes only when the text in `trust.js` changes.
+
+## GET /api/calendar
+
+Public, `Cache-Control: public, max-age=60` (one server snapshot for everyone, at most 60 s old). Tokyo time (JST,
+UTC+9, no daylight saving); all times unix ms.
+
+```json
+{ "now": 1791601080112, "tokyoDate": "2026-10-10",
+  "weekTheme": { "id": "matsuri", "title": "Matsuri", "kanji": "祭", "text": "Festival week: stalls, drums and paper lanterns in the districts.",
+    "isoWeek": "2026-W41", "starts": 1791126000000, "ends": 1791730800000 },
+  "today": { "starts": 1791558000000, "ends": 1791644400000, "events": [
+    { "kind": "omikuji", "at": 1791558000000, "ends": 1791644400000, "title": "Omikuji: draw the day's fortune",
+      "slug": null, "name": null, "ticker": null, "plotId": null, "time": "00:00 JST" } ] },
+  "upcoming": [
+    { "kind": "omikuji", "at": 1791644400000, "…": "…" },
+    { "kind": "ranking", "at": 1793458740000, "ends": 1793458800000, "title": "Monthly room ranking closes", "slug": null,
+      "name": null, "ticker": null, "plotId": null, "placeholder": true } ] }
+```
+
+- **Week theme**: 8 themes in a fixed order, `hanami, matsuri, neon, rain, obon, moon, snow, newyear`; index = (ISO
+  weeks since Monday 1970-01-05) mod 8, weeks starting Monday 00:00 JST. `starts`/`ends` = that Monday and the next.
+- **Events** (same shape for every kind: `kind, at, ends, title, slug, name, ticker, plotId`; public projects only,
+  never a wallet):
+  - `launch_party`: a public project launched today (JST); `at` = the verified launch time, `ends` = +3 h. Mock
+    launches are hidden in production.
+  - `open_soon` (in `upcoming`): a public project in `launch_prepared` or `awaiting_signature`; expected window
+    `at` = now, `ends` = now + 24 h. It opens only when its submitter signs, so this is an expectation, not a date.
+  - `ranking`: the monthly room ranking closes at 23:59 JST on the month's last day (`placeholder: true`: there is no
+    ranking yet). In `today` on that day, otherwise in `upcoming`.
+  - `omikuji`: daily ritual at 00:00 JST (`time: "00:00 JST"`); today's in `today`, tomorrow's in `upcoming`.
+- `today.events` and `upcoming` are sorted by `at`; `upcoming` has at most 30 entries.
+
+## POST /api/telemetry (anonymous)
+
+No sign-in. The city sends one report per session at most every 30 s (`fetch(…, { method: 'POST', keepalive: true,
+headers: { 'content-type': 'application/json' } })`; the usual `Origin` rule applies, so serve the city from the same
+origin). Strict body: exactly these keys, nothing else (`400 bad_telemetry` otherwise):
+
+```json
+{ "session": "random client id, 16–32 of [A-Za-z0-9_-]", "device": "phone | desktop", "gpu_class": "weak | ok | null",
+  "quality_level": 0, "fps_bucket": "<20 | 20-30 | 30-45 | 45+", "crash": false, "context_lost": false,
+  "memory_mb": 512, "seconds": 90 }
+```
+
+`quality_level` 0–3, `memory_mb` 0–65536 or `null`, `seconds` 0–86400. → `{ "stored": true }`.
+
+- **Opt-out**: a request with `DNT: 1`, `Sec-GPC: 1` or `X-Telemetry: off` is not read or stored →
+  `{ "stored": false, "reason": "opted_out" }`. Offer a "send anonymous performance data" toggle that sets the header.
+- Limits: `429 rate_limited` (with `retryAfterS`) at more than 1 report / 30 s per session or 500 reports per UTC day
+  per IP.
+- **Nothing identifying is stored**: no wallet, no cookie, no IP. The session id and the IP are kept only as sha256 with
+  a per-UTC-day salt; the first report of a new day replaces the salt (yesterday's is gone, so its hashes can't be
+  linked to anything), clears yesterday's IP hashes, and deletes rows older than 90 days. Make the session id a fresh
+  random value per visit (not a stored identifier).
+
+### GET /api/admin/telemetry?days=14 (admin)
+
+Daily aggregates only, newest first (`days` 1–90). Rates are per session (a session counts as crashed / context-lost if
+any of its reports says so; `phoneShare` = sessions on phones); `fps` and `quality` count reports. Rates are `null`
+for a day without sessions.
+
+```json
+{ "days": [ { "day": "2026-10-10", "sessions": 1, "reports": 1, "phoneShare": 1, "crashRate": 0, "contextLossRate": 0,
+    "fps": { "<20": 0, "20-30": 1, "30-45": 0, "45+": 0 }, "quality": { "0": 0, "1": 1, "2": 0, "3": 0 } } ],
+  "since": "2026-10-09", "note": "anonymous: no wallet, cookie or IP; session ids and IPs hashed with a salt that is discarded daily" }
+```
 
 ## Hosting the city on the same origin
 

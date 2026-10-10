@@ -74,6 +74,15 @@ test('complete flow (MOCK provider): idea -> preview -> approved config -> signe
     assert.equal(cfg.feeSharing.mode, 'sharing_config', '80/20 is always an on-chain split');
     assert.deepEqual(cfg.feeSharing.shareholders, [{ wallet: owner.w.address, bps: 8000 }, { wallet: SUB01_WALLET, bps: 2000 }]);
     assert.ok(cfg.irreversible.length >= 2);
+    // review-before-sign: what the wallet will see, read from the built transaction; the same on resume
+    const MOCK_REVIEW = { network: 'mock', feePayer: owner.w.address, programs: [{ id: 'MockLaunch', name: 'MockLaunch', direct: true }],
+      accountsWritable: 0, signers: 1, launchProgramsOnly: true };
+    const built = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    const pick = (j) => Object.fromEntries(Object.keys(MOCK_REVIEW).map((k) => [k, j[k]]));
+    assert.deepEqual(pick(built.json), MOCK_REVIEW);
+    const resumed = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    assert.equal(resumed.json.resumed, true);
+    assert.deepEqual(pick(resumed.json), MOCK_REVIEW);
     const { res } = await signAndSubmit(h, owner, slug);
     assert.equal(res.status, 200, res.text);
     assert.equal(ideaStatus(h.db, ideaId).status, 'confirming');

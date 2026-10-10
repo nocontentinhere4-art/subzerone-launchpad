@@ -63,3 +63,28 @@ Restricted jurisdictions (including the UK and sanctioned regions) and the 18+ r
 - pump (bonding curve): `6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P`
 - pump-fees: `pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ`
 - PumpSwap AMM: `pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA`
+
+## Review before sign
+
+`POST /api/projects/:slug/launch/transaction` (owner only) returns, next to the transaction, what the wallet will
+show, read from the compiled message itself (`reviewOfMessage` in `src/launch/pumpfun.js`; the same on a resumed
+request; example values):
+
+```json
+{ "network": "devnet", "feePayer": "<your wallet>", "mint": "<new mint>",
+  "programs": [ { "id": "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P", "name": "pump.fun (bonding curve)", "direct": true },
+                { "id": "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ", "name": "pump.fun fee sharing", "direct": true } ],
+  "accountsWritable": 9, "signers": 2, "launchProgramsOnly": true, "estimate": { "…": "…" } }
+```
+
+- `direct: true`: a program the transaction calls. `direct: false`: a known program passed to one of them as an
+  account (it runs inside it). Program ids are always static keys in a v0 message; accounts loaded from the lookup
+  table are counted in `accountsWritable`, not named.
+- `launchProgramsOnly`: every directly called program is pump, pump-fees or Compute Budget. Only then does the review
+  box say what the transaction does NOT do (no approvals, no token transfers from the wallet, no initial buy; SOL only
+  for the network fee and rent); otherwise it warns and the Sign button stays disabled, as it does when `feePayer` is
+  not the signed-in wallet. Mock provider: `programs: [{ "id": "MockLaunch", "name": "MockLaunch", "direct": true }]`,
+  `accountsWritable: 0`, `signers: 1`.
+- The box (`public/js/review.js`) lists network, fee payer, new mint, programs, writable accounts, estimated cost and
+  the locked fee split (recipients with bps) before the Sign button; `test/review-ui.test.js` renders it.
+

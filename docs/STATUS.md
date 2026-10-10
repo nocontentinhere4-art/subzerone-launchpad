@@ -1,4 +1,4 @@
-# Feature status (2026-10-09)
+# Feature status (2026-10-10)
 
 **Legend**
 
@@ -45,6 +45,11 @@
 | | City events on `/api/world` (`accepted`, `site_live`, `launched`; last 24 h, max 30, public ideas only, first time each) | Working | tests incl. private-idea check; derived from the status history in `events` |
 | | Desk computer in every room (`desk` on `GET /api/rooms/:plotId`): the owner's projects with framed site (`siteUrl` / owner `previewLink`), X tab (handle, status, owner's latest drafts), launch page and office links, logo/banner URLs, owner's ideas in flight; visitors see public projects only. App CSP `frame-src` adds `<PROJECTS_SCHEME>://*.<PROJECTS_HOST>`, app `frame-ancestors 'self'`; project sites `frame-ancestors 'self' <PUBLIC_ORIGIN>` + sandbox | Working (server) | `test/desk.test.js`; framing of a sandboxed cross-origin site checked in headless Chrome with the same headers. City client tabs not built yet. X cannot be framed (opens in a new tab); posting still needs the paid X API tier |
 | | Single-origin hosting of the city client (`CITY_DIST`): city at `/`, assets immutable, launchpad at `/launchpad` | Working (local test dist) | not yet run against the real city build in a browser; CSP: see DEPLOY.md |
+| Trust | Vote ledger: every brain answer (build and pass, private ideas included) appended in the evaluation's transaction, append-only (DB triggers), sha256 hash chain over canonical JSON; `GET /api/votes` (no titles, labels or wallets for private/passed ideas; recomputable from the output alone), `/api/votes/head`, `/api/votes/verify` | Working | `test/trust.test.js` incl. tamper, re-hash forgery and deleted-row checks; migration `004_trust.sql`. **Not done**: publishing the head on-chain (memo), and anything that catches rows cut off the end before that exists |
+| | `GET /api/disclosure` (fixed text, `SUB01_DATASETS`, `OPERATOR_NAME`) | Working | the dataset list and operator name are still to be filled in by you |
+| | City calendar `GET /api/calendar`: ISO-week themes (8, JST), omikuji, launch parties, open-soon windows, monthly ranking date | Working | `test/calendar.test.js`; the monthly room ranking itself does not exist yet (`placeholder: true`); the city client does not read the calendar yet |
+| | Anonymous telemetry `POST /api/telemetry` (strict, opt-out headers, 1/30 s per session, 500/day per IP, daily-salted hashes, 90-day retention) and `GET /api/admin/telemetry` daily aggregates | Working (server) | `test/telemetry.test.js`; the city client does not send reports yet; no admin UI panel yet (JSON only) |
+| Launch | Review before sign: programs touched, writable accounts, signers, fee payer, network, cost, locked split with bps, "what this does NOT do"; Sign disabled for a foreign payer or a non-launch program | Working (mock) / unit-tested (pump.fun) | `test/review-ui.test.js`, `test/pumpfun.test.js`, `test/flow.test.js`; not yet seen against a real devnet transaction in a browser |
 | Ops | Rate limits, origin checks, redacted structured logs, migrations, daily backups, pauses, caps, dead letters, roles | Working | rate limits are per process: use one web instance (see DEPLOY.md) |
 
 ## Still required

@@ -5,6 +5,7 @@ import { Defer, Permanent, enqueue } from './jobs.js';
 import { transition, note } from './states.js';
 import { currentVersion } from './ideas.js';
 import { askBrain } from './brain.js';
+import { appendVote } from './trust.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
 import { generate, estimateCostUsd } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
@@ -52,9 +53,11 @@ export const handlers = {
     const rec = ans.record;
     const decision = rec.decision === 'build' ? 'selected' : 'declined';
     db.tx(() => {
-      db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at)
+      const ins = db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'brain_vote', ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
       id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(rec), JSON.stringify(scores(pre, rec)), decision, now());
+      // the public vote ledger: one hash-chained row per brain answer, in the same transaction (trust.js)
+      if (ins.changes === 1) appendVote(db, { requestId, title: v.title, concept: v.concept, version: v.version, rec });
       const stored = db.get('SELECT decision FROM evaluations WHERE idea_id = ? AND idea_version = ?', ideaId, v.version);
       const build = rec.vote.options.find((o) => o.label.startsWith('build'));
       transition(db, ideaId, 'evaluating', stored.decision, { actor: 'brain',
