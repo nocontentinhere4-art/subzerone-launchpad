@@ -22,7 +22,7 @@ process.stdin.on('end', () => {
     ? `<p class="chip ok">Launched on ${esc(context.network)} · mint <code>${esc(context.mint)}</code></p>`
     : `<p class="chip">${esc(context.preview ? 'PREVIEW — not launched' : 'Not launched yet')}</p>`;
   const html = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="./logo.png"><link rel="apple-touch-icon" href="./logo.png"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(spec.name)} ($${esc(spec.ticker)})</title>
 <meta name="description" content="${esc(spec.description)}">
 <meta name="referrer" content="no-referrer">

@@ -35,7 +35,9 @@ export function sandboxBuild(input, { timeoutMs = 5000, maxBytes = 300_000 } = {
 // checked on markup only (tags and CSS); text content is escaped by the template and may mention anything
 const TAG_RULES = [
   [/^<script\b/i, 'script tag'], [/\son[a-z]+\s*=/i, 'inline event handler'], [/javascript:/i, 'javascript: URL'],
-  [/^<(iframe|object|embed|form|input|button|link|base|frame|applet|svg|math)\b/i, 'forbidden element'],
+  [/^<(iframe|object|embed|form|input|button|base|frame|applet|svg|math)\b/i, 'forbidden element'],
+  // <link> only as the favicon (rel icon / apple-touch-icon, href checked below against ./logo.png): no stylesheets, no preload
+  [/^<link\b(?!\s+rel=""(?:\s+type="")?\s+href=""\s*\/?>$)/i, 'link element'],
   [/^<meta[^>]+http-equiv/i, 'meta refresh/CSP override'], [/data:text\/html/i, 'html data URL'], [/style\s*=/i, 'inline style attribute'],
 ];
 const CSS_RULES = [[/url\(/i, 'CSS url()'], [/@import/i, 'CSS import'], [/expression\(/i, 'CSS expression'], [/javascript:/i, 'javascript: in CSS']];
@@ -50,6 +52,7 @@ export function validateHtml(html, allowedUrls) {
     // values are checked separately (URLs against the allowlist); text inside alt/content/title is escaped data
     const shape = tag.replace(/"[^"]*"/g, '""');
     for (const [re, why] of TAG_RULES) if (re.test(shape) && !problems.includes(why)) problems.push(why);
+    if (/^<link\b/i.test(tag) && !/\srel="(icon|apple-touch-icon)"/i.test(tag) && !problems.includes('link element')) problems.push('link element');
     for (const m of tag.matchAll(/\b(href|src)\s*=\s*"\s*javascript:/gi)) problems.push(`javascript: URL in ${m[1]}`);
   }
   for (const [re, why] of CSS_RULES) if (re.test(css)) problems.push(why);

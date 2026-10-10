@@ -757,7 +757,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       if (!s) throw new HttpError(404, 'not_found');
       return ctx.raw(200, Buffer.from(s.html), { ...headers, 'content-type': 'text/html; charset=utf-8' });
     }
-    const kind = file === 'logo.png' ? 'logo' : file === 'banner.svg' ? 'banner' : null;
+    const kind = file === 'logo.png' || file === 'favicon.ico' ? 'logo' : file === 'banner.svg' ? 'banner' : null;   // favicon = the coin logo
     if (!kind) throw new HttpError(404, 'not_found');
     const a = db.get('SELECT mime, body FROM assets WHERE project_id = ? AND kind = ? ORDER BY version DESC LIMIT 1', p.id, kind);
     if (!a) throw new HttpError(404, 'not_found');

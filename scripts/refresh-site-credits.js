@@ -16,7 +16,7 @@ const credit = bannerCredit(cfg);
 let sites = 0, banners = 0;
 for (const p of db.all('SELECT * FROM projects WHERE live_site_version IS NOT NULL')) {
   const row = db.get(`SELECT * FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, p.id, p.live_site_version);
-  if (row && !row.html.includes('Made on the SUBZERONE launchpad')) {
+  if (row && !(row.html.includes('Made on the SUBZERONE launchpad') && row.html.includes('rel="icon"'))) {   // old footer or no favicon
     try {
       const context = siteContext(db, cfg, p, { preview: !db.get('SELECT 1 FROM launches WHERE project_id = ?', p.id) });
       const html = await sandboxBuild({ spec: parseJson(row.spec_json), context });
