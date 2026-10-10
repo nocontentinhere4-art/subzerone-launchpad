@@ -69,6 +69,18 @@ export function claim(db, workerId, t = now(), types = null) {
   });
 }
 
+/** Claim one specific queued job by its idempotency key (the in-process kick, kick.js). Same lease as claim(). */
+export function claimKey(db, workerId, key, t = now()) {
+  return db.tx(() => {
+    const j = db.get(`SELECT * FROM jobs WHERE idempotency_key = ? AND status = 'queued' AND run_after <= ?`, key, t);
+    if (!j) return null;
+    const r = db.run(`UPDATE jobs SET status = 'running', attempts = attempts + 1, lease_until = ?, locked_by = ?,
+                      updated_at = ? WHERE id = ? AND status = 'queued'`, t + j.timeout_ms + 5_000, workerId, t, j.id);
+    if (r.changes !== 1) return null;
+    return db.get('SELECT * FROM jobs WHERE id = ?', j.id);
+  });
+}
+
 export function succeed(db, job, result = null) {
   db.run(`UPDATE jobs SET status = 'succeeded', result_json = ?, lease_until = NULL, progress = NULL, updated_at = ?
           WHERE id = ? AND status = 'running'`, result == null ? null : JSON.stringify(result), now(), job.id);

@@ -88,7 +88,8 @@ export async function harness(env = {}, appOpts = {}) {
   const e = makeEnv(env);
   const brain = fakeBrain('build');
   // SUB-01's chat socket: never dialled for real in tests (pass `chat: {connect}` for a fake transport)
-  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl, ...appOpts,
+  // kick: false — these tests drain the queue by hand; the verdict tests pass kick: true for the live path
+  const app = createApp({ cfg: e.cfg, db: e.db, fetchImpl: brain.fetchImpl, kick: false, ...appOpts,
     chat: { connect: () => ({ send() {}, close() {} }), fetchMind: null, ...(appOpts.chat || {}) } });
   const server = createServer(app);
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
@@ -113,5 +114,5 @@ export async function harness(env = {}, appOpts = {}) {
       },
     };
   };
-  return { ...e, brain, server, base, client, app, close: () => { app.chat.close(); server.closeAllConnections(); server.close(); } };
+  return { ...e, brain, server, base, client, app, close: () => { app.kicker.close(); app.chat.close(); server.closeAllConnections(); server.close(); } };
 }

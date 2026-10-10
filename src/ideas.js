@@ -170,6 +170,46 @@ export function editIdea(db, ideaId, wallet, input) {
   });
 }
 
+// --- the revise loop: a passed idea is rewritten and dropped again, each version with its own verdict ---------------
+export const MAX_VERSIONS = 5;
+export const REVISE_GAP_MS = 60_000;
+
+/** When this wallet may resubmit next (ms timestamp), or null if now. One resubmit per minute, all its ideas together. */
+export function reviseWait(db, wallet, t = now()) {
+  const last = db.get(`SELECT MAX(at) at FROM events WHERE actor = ? AND kind = 'revise'`, `wallet:${wallet}`)?.at;
+  return last && t - last < REVISE_GAP_MS ? last + REVISE_GAP_MS : null;
+}
+
+/**
+ * PATCH /api/ideas/:id: a new version of a declined idea, read again right away (evaluate:<id>:v<n>). Every earlier
+ * evaluation stays (history by version); the plot, released when he passed, can be claimed again with `plotId`.
+ * -> {version, key}
+ */
+export function reviseIdea(db, ideaId, wallet, input) {
+  if (isPaused(db, 'submissions')) throw new HttpError(503, 'paused', 'submissions are paused right now');
+  const idea = db.get('SELECT * FROM ideas WHERE id = ?', ideaId);
+  if (!idea || idea.owner_wallet !== wallet) throw new HttpError(404, 'not_found');
+  if (idea.status !== 'declined') throw new HttpError(409, 'not_declined', 'only an idea he passed on can be revised and dropped again');
+  if (idea.current_version >= MAX_VERSIONS) throw new HttpError(409, 'max_versions', `${MAX_VERSIONS} versions is the limit for one idea; start a new one`);
+  const t = now();
+  const wait = reviseWait(db, wallet, t);
+  if (wait) throw new HttpError(429, 'too_fast', 'one resubmit a minute', { retryAfterS: Math.ceil((wait - t) / 1000), nextVersionAt: wait });
+  const v = validateIdea(input);
+  const plotId = input.plotId == null || input.plotId === '' ? null : validatePlotId(input.plotId);
+  return db.tx(() => {
+    const version = idea.current_version + 1;
+    insertVersion(db, ideaId, version, v, wallet, t);
+    db.run('UPDATE ideas SET current_version = ?, updated_at = ? WHERE id = ?', version, t, ideaId);
+    if (plotId) claimPlot(db, { plotId, kind: 'project', wallet, ideaId });
+    audit(db, { actor: `wallet:${wallet}`, kind: 'revise', ideaId, isPublic: true, message: `Version ${version}: revised and dropped in his room again`,
+      data: { version, receiving_wallet: v.receivingWallet } });
+    transition(db, ideaId, 'declined', 'evaluating', { actor: `wallet:${wallet}`, note: `reading version ${version}` });
+    const key = `evaluate:${ideaId}:v${version}`;
+    enqueue(db, { type: 'evaluate', key, ideaId, payload: { version } });
+    return { version, key };
+  });
+}
+
 export function currentVersion(db, ideaId) {
   return db.get(`SELECT v.* FROM idea_versions v JOIN ideas i ON i.id = v.idea_id AND i.current_version = v.version
                  WHERE v.idea_id = ?`, ideaId);
@@ -194,20 +234,30 @@ export function viewIdea(db, ideaId, viewer) {
   const admin = viewer && (viewer.role === 'admin' || viewer.role === 'reviewer');
   if (idea.visibility !== 'public' && !owner && !admin) return null;
   const v = currentVersion(db, ideaId);
-  const versions = (owner || admin)
-    ? db.all('SELECT version, title, receiving_wallet, created_at, content_hash FROM idea_versions WHERE idea_id = ? ORDER BY version', ideaId)
-    : undefined;
+  // every version with its verdict ("v1: pass, v2: build"); the private fields only for the owner and admins
+  const verdicts = new Map(db.all('SELECT idea_version, decision, created_at FROM evaluations WHERE idea_id = ?', ideaId).map((e) => [e.idea_version, e]));
+  const versions = db.all('SELECT version, title, receiving_wallet, created_at, content_hash FROM idea_versions WHERE idea_id = ? ORDER BY version', ideaId)
+    .map((x) => {
+      const e = verdicts.get(x.version);
+      return { version: x.version, at: x.created_at, decision: e ? (e.decision === 'selected' ? 'build' : 'pass') : null, decidedAt: e?.created_at ?? null,
+        ...(owner || admin ? { title: x.title, receiving_wallet: x.receiving_wallet, created_at: x.created_at, content_hash: x.content_hash } : {}) };
+    });
   const timeline = db.all(`SELECT at, actor, kind, message, data_json FROM events WHERE idea_id = ? ${owner || admin ? '' : 'AND public = 1'}
                            ORDER BY at, id`, ideaId).map((e) => ({ ...e, data: parseJson(e.data_json), data_json: undefined,
     actor: e.actor.startsWith('wallet:') || e.actor.startsWith('admin:') ? e.actor.split(':')[0] : e.actor }));
-  const evaluation = db.get('SELECT * FROM evaluations WHERE idea_id = ? ORDER BY created_at DESC LIMIT 1', ideaId);
+  const evaluation = db.get('SELECT * FROM evaluations WHERE idea_id = ? ORDER BY idea_version DESC LIMIT 1', ideaId);
   const uploads = db.all('SELECT id, mime, bytes FROM uploads WHERE idea_id = ?', ideaId);
   const project = db.get('SELECT p.id, p.slug, p.name, p.ticker, l.provider, l.network FROM projects p LEFT JOIN launches l ON l.project_id = p.id WHERE p.idea_id = ?', ideaId);
   const ledger = evaluation && (owner || admin || idea.status !== 'declined')
     ? db.get('SELECT seq, hash FROM vote_ledger WHERE request_id = ?', evaluation.brain_request_id) || null : null;
   const job = db.get(`SELECT type, status, attempts, max_attempts, run_after, progress, last_error FROM jobs
                       WHERE idea_id = ? AND status IN ('queued','running') ORDER BY created_at DESC LIMIT 1`, ideaId);
+  const t = now();
+  // while he is reading: when the next try is due (a queued, deferred evaluate job), so the author sees a time, not a void
+  const eta = ['submitted', 'evaluating'].includes(idea.status) && job?.type === 'evaluate' && job.status === 'queued' && job.run_after > t ? job.run_after : null;
+  const nextVersionAt = owner ? reviseWait(db, idea.owner_wallet, t) : null;
   return {
+    maxVersions: MAX_VERSIONS, canRevise: Boolean(owner && idea.status === 'declined' && idea.current_version < MAX_VERSIONS), nextVersionAt, eta,
     id: idea.id, status: idea.status, statusNote: idea.status_note, visibility: idea.visibility,
     publishedAt: idea.published_at, createdAt: idea.created_at, owner: Boolean(owner), canAdmin: Boolean(admin),
     submittedBy: idea.owner_wallet,
@@ -215,10 +265,11 @@ export function viewIdea(db, ideaId, viewer) {
     title: v.title, concept: v.concept, nameSuggestion: v.name_suggestion, tickerSuggestion: v.ticker_suggestion,
     links: parseJson(v.links_json, []), contacts: parseJson(v.contacts_json, {}), receivingWallet: v.receiving_wallet,
     uploads, versions, timeline, project, pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: ledger?.seq ?? null,
-    evaluation: evaluation && { decision: evaluation.decision, decidedBy: evaluation.decided_by,
+    evaluation: !evaluation ? null : { decision: evaluation.decision, verdict: evaluation.decision === 'selected' ? 'build' : 'pass', decidedBy: evaluation.decided_by,
       scores: parseJson(evaluation.scores_json), brain: parseJson(evaluation.brain_json), at: evaluation.created_at,
       version: evaluation.idea_version, // the vote-ledger row; a passed idea is not linked to it publicly (GET /api/votes shows no titles for those)
-      ledger },
+      ledger,
+      feedback: parseJson(evaluation.feedback_json, null), latencyMs: evaluation.latency_ms ?? null },
     job: job && { type: job.type, status: job.status, attempts: job.attempts, maxAttempts: job.max_attempts,
       runAfter: job.run_after, progress: job.progress, lastError: (owner || admin) ? job.last_error : undefined },
   };

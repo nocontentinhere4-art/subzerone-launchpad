@@ -10,7 +10,7 @@ const EDGES = {
   submitted: ['evaluating', 'cancelled'],
   evaluating: ['selected', 'declined', 'failed', 'cancelled'],
   selected: ['generating', 'failed', 'cancelled'],
-  declined: [],
+  declined: ['evaluating'],                                      // the author revises and drops it again (ideas.js reviseIdea)
   generating: ['preview_ready', 'failed', 'cancelled'],
   preview_ready: ['generating', 'approved', 'cancelled'],         // generating again: a regeneration
   approved: ['launch_prepared', 'preview_ready', 'cancelled'],    // back to preview: the submitter edits again

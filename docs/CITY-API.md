@@ -211,6 +211,68 @@ with the idea (`409 plot_taken`, and then no idea is created). Omitted = the ide
 
 Response: `{ "id": "idea_…", "pinnedHash": "<64 hex>", "pinnedAt": 1791601080098 }`: the idea's ema (see Ema).
 
+The evaluate job is run by the web process right after this answer (kick.js), so the verdict usually lands within a
+second of the drop (a healthy brain answers in ~150 ms). Poll `GET /api/ideas/:id` every 2 s, or listen for the
+`verdict` frame on the chat stream (below).
+
+## Verdicts and feedback (GET /api/ideas/:id additions)
+
+```json
+{ "status": "declined", "statusNote": "…", "version": 2, "maxVersions": 5,
+  "canRevise": true, "nextVersionAt": null, "eta": null,
+  "versions": [ { "version": 1, "decision": "pass", "at": 0, "decidedAt": 0 }, { "version": 2, "decision": "build", "at": 0, "decidedAt": 0 } ],
+  "evaluation": { "decision": "declined", "verdict": "pass", "decidedBy": "brain_vote|policy:<rule>", "version": 2, "at": 0,
+    "latencyMs": 412,
+    "feedback": { "version": "feedback/1", "source": "rules|rules+brain|llm", "confidence": 0.8,
+      "summary": "Pass. Nothing in it was new to me. Give it a twist I have not seen, then drop it again.",
+      "likes": ["reward 1.00 lit up when I read it."],
+      "dislikes": ["Nothing in it was new to me."],
+      "suggestions": [ { "what": "Give it a twist I have not seen", "why": "My novelty check found nothing new in the text.", "how": "One concrete thing no other coin here has: an object, a ritual, a place." } ],
+      "wouldBuildIf": "give it a twist I have not seen.",
+      "context": ["Vote note: chose it: reward areas responded most.", "Read by the demo brain, not the live one."],
+      "facts": { "rules": ["soft:thin"], "networks": [["reward", 1], ["attention", 0.25]], "buildP": 0.2, "novel": false },
+      "polished": null } } }
+```
+
+- `evaluation` is `null` until he decides. `verdict` is `build` | `pass` (`decision` keeps the status names).
+- `latencyMs`: from the drop of that idea version to the verdict, as the author felt it.
+- `feedback` is SUB-01's voice, first person, built deterministically from the scorecard rules that fired (`facts.rules`;
+  `policy:*` declined it before the brain was asked, `soft:*` only talked) and from the brain record (`facts.networks`,
+  `facts.buildP`, `facts.novel`). `wouldBuildIf` is `null` on a build. `context` is what he admits about himself (his
+  vote note, tiredness, demo mode). `source: "llm"` means a language model rewrote the text (`polished` says which and
+  its cost; `rulesText` keeps the original). Never a promise of returns; the generator's guardrails apply to the polish.
+- A private idea's feedback never names another private idea; a duplicate is only named when that earlier idea is public.
+- `versions`: every version with its verdict (`decision` `build` | `pass` | `null` while reading); owners and admins
+  also get `title`, `receiving_wallet`, `created_at`, `content_hash` as before.
+- `canRevise`: the viewer is the author, he passed, and fewer than `maxVersions` versions exist. `nextVersionAt`: when the
+  author may resubmit (one resubmit per 60 s per wallet, across all its ideas), `null` if now.
+- `eta`: while `submitted`/`evaluating` with a deferred retry (brain offline: 5 s, 15 s, 60 s, then minutes; asleep:
+  20 min), the time of the next try; `statusNote` says why in words. Otherwise `null`.
+
+## PATCH /api/ideas/:id (auth, author only): revise and drop again
+
+Body: the same as `POST /api/ideas` (`plotId` optional: the plot he released on the pass can be claimed again).
+Allowed only in `declined`. Writes version `n+1`, moves the idea `declined → evaluating`, enqueues `evaluate:<id>:v<n+1>`
+and kicks it at once. Every earlier evaluation and vote-ledger row stays.
+
+Response: `{ "id": "idea_…", "version": 2, "maxVersions": 5 }`.
+Errors: `404 not_found` (not the author), `409 not_declined`, `409 max_versions` (5 versions per idea),
+`429 too_fast { retryAfterS, nextVersionAt }` (one resubmit a minute per wallet), `400 invalid { errors }`, `409 plot_taken`.
+
+## SSE `verdict` (chat stream)
+
+The moment a verdict lands, the web process writes one frame on `GET /api/chat/stream`:
+
+```
+event: verdict
+data: {"ideaId":"idea_…","version":1,"verdict":"build|pass","status":"selected|declined","summary":"…","latencyMs":412,"at":0,"plotId":"ginza-3|null","private":false,"title":"Ramen Radar"}
+```
+
+- A **public** idea: every stream, with `title`.
+- A **private** idea: only the author's own signed-in streams, `private: true`, **no title** (the view has it).
+- Only verdicts decided in the web process are announced (the kick path, which is the normal one). A verdict the worker
+  process decides later (a long brain outage) reaches the city on the next `/api/world` or `/api/ideas/:id` read.
+
 ## GET /api/world
 
 Public, `cache-control: public, max-age=3`. The server rebuilds the snapshot at most every 3 s (and after any write it
@@ -996,7 +1058,50 @@ data: {"id":12}
 
 `{ "district": "ginza" | null }` → `{ "online": <count> }`. At most every 20 s per wallet (`429`, `retryAfterS`);
 send it on load, on district change and about every 30–60 s while the city is open (entries expire after 90 s).
-`400 bad_district | bad_request`, `409 no_resident`.
+`400 bad_district | bad_request`, `409 no_resident`. A resident is in `online` from the moment their stream opens
+(district `null` until the first ping) and leaves it when their last stream closes.
+
+### Live walkers: POST /api/presence (auth, resident) and the `walker` / `walkers` frames
+
+Residents see each other walk. A client whose resident's model is out (explore mode or a visit) posts where it is;
+the server keeps one in-memory record per wallet and fans it out on the chat stream under an **opaque walker id**
+(a hash of the wallet and a per-process salt: stable while the server runs, never the wallet). Guests have no
+server identity and are not broadcast (`401 sign_in`).
+
+```json
+{ "state": "walk", "x": 29.5, "z": 2.35, "yaw": 1.57, "speed": 2.2,
+  "path": [{ "x": 29.5, "z": 2.35 }, { "x": 43.5, "z": 2.35 }, { "x": 43.5, "z": -38 }], "emote": "wave" }
+```
+
+- `state`: `'walk'` (moving along `path` at `speed` units/s from `x, z`), `'idle'` (standing at `x, z`), `'home'`
+  (the outing ended: the walker disappears; the other fields are ignored). Send the **path** when it changes and a
+  position fix about every 2 s; `yaw` radians (−7…7), `speed` 0…12, `path` at most 24 `{x, z}` (longer paths are
+  cut), `emote` optional (`^[a-z][a-z0-9_-]{0,15}$`). Numbers must lie inside the city box
+  x −120…140, z −120…120 (`400 bad_presence` says which field). Body ≤ 600 bytes (`413`), unknown fields `400`.
+- → `{ "id": "<walker id>", "state": "walk"|"idle", "at": <ms> }`, or `{ "id", "state": "home" }`.
+- At most **2 posts a second per wallet** (`429 rate_limited`, `retryAfterS: 1`); `409 no_resident`; `503 full`
+  above 200 walkers at once.
+- A walker that stops posting for **15 s** goes home by itself; so does one whose wallet logs out or whose last
+  stream closes.
+
+On the stream every change is broadcast, coalesced into one frame per 250 ms (≤ 4 broadcasts a second): a single
+change is `walker`, several changes in the same window are one `walkers` list (the latest fix per walker).
+`hello.walkers` carries the current snapshot (same shape) and `hello.you.walker` the connecting resident's own id,
+so a client can skip its own frames.
+
+```text
+event: walker
+data: {"id":"9f1c0a7e3b2d4c55","name":"Aiko","plotId":"ginza-2","look":{"skin":"#c98e66","hair":"#1b1b1b","hairStyle":"bun",
+       "top":"#ff6600","bottom":"#222222","outfit":"hoodie","accessories":[],"accessoryColor":null,"pet":null},
+       "state":"walk","x":29.5,"z":2.35,"yaw":1.57,"path":[{"x":29.5,"z":2.35},{"x":43.5,"z":2.35}],"speed":2.2,"at":1760090000000}
+
+event: walkers
+data: [{"id":"9f1c0a7e3b2d4c55", …}, {"id":"0b77d2e1a9c3f004","name":"Bo","plotId":"ueno-1","state":"home","at":1760090003000}]
+```
+
+- `look` is the resident's stored look (skin, hair, hairStyle, top, bottom, outfit, accessories, accessoryColor,
+  pet), so other clients draw the right figure. `emote` is present only when the client sent one.
+- A `home` frame is short: `{id, name, plotId, state: 'home', at}`.
 
 ### POST /api/chat (auth, resident)
 

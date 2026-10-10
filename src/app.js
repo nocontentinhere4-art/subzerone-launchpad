@@ -5,7 +5,8 @@ import { join, extname, normalize, sep } from 'node:path';
 import { ROOT, SUB01 } from './config.js';
 import { router, parseCookies, readJson, clientIp, rateLimiter, securityHeaders, APP_CSP, sendJson, sendError } from './http.js';
 import { issueNonce, verifySignIn, sessionUser, signOut } from './auth.js';
-import { submitIdea, editIdea, publishIdea, viewIdea, readUpload, currentVersion, LIMITS } from './ideas.js';
+import { submitIdea, editIdea, reviseIdea, publishIdea, viewIdea, readUpload, currentVersion, LIMITS, MAX_VERSIONS } from './ideas.js';
+import { createKicker } from './kick.js';
 import { transition, LABELS, STAGES } from './states.js';
 import { audit, getSetting, setSetting, PAUSES, isPaused, backup } from './db.js';
 import { enqueue, retryDead, cancelJobs } from './jobs.js';
@@ -43,8 +44,10 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
 const COOKIE = 'lp_session';
 const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_ready', 'approved', 'launch_prepared', 'awaiting_signature', 'confirming'];
 
-/** `chat`: {connect, fetchMind, relayOpts, limits} for tests (the SUB-01 transport and quotas; see chat.js). */
-export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
+/** `chat`: {connect, fetchMind, relayOpts, limits} for tests (the SUB-01 transport and quotas; see chat.js).
+ *  `kick`: run an idea's evaluate job in this process right after the submit answers (kick.js); tests that drain the
+ *  queue by hand pass false. */
+export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true }) {
   const r = router();
   const limit = rateLimiter();
   const origin = new URL(cfg.publicOrigin);
@@ -109,6 +112,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
   });
   r.post('/api/auth/logout', async (ctx) => {
     signOut(db, ctx.cookies[COOKIE]);
+    chat.leave(ctx.user?.wallet);                            // the walker goes home with the session
     ctx.setCookie(`${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureCookie ? '; Secure' : ''}`);
     return { ok: true };
   });
@@ -146,12 +150,22 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
     const ideaId = submitIdea(db, cfg, u.wallet, b);
     log.info('idea submitted', { idea: ideaId });
     const pin = db.get('SELECT pinned_hash, pinned_at FROM ideas WHERE id = ?', ideaId);
+    wake(`evaluate:${ideaId}:v1`);                           // his verdict in seconds, not on the worker's next sweep
     return { id: ideaId, pinnedHash: pin.pinned_hash, pinnedAt: pin.pinned_at };
   }, { bodyLimit: 7_000_000 });
   r.get('/api/ideas/:id', (ctx) => {
     const v = viewIdea(db, ctx.params.id, ctx.user);
     if (!v) throw new HttpError(404, 'not_found', 'not found, or private');
     return v;
+  });
+  // the revise loop: a passed idea, rewritten and read again (ideas.js reviseIdea: 409 not_declined | max_versions, 429 too_fast)
+  r.patch('/api/ideas/:id', async (ctx) => {
+    const u = requireUser(ctx);
+    limit('write', u.wallet);
+    const out = reviseIdea(db, ctx.params.id, u.wallet, await ctx.body(64_000));
+    log.info('idea revised', { idea: ctx.params.id, version: out.version });
+    wake(out.key);
+    return { id: ctx.params.id, version: out.version, maxVersions: MAX_VERSIONS };
   });
   r.put('/api/ideas/:id', async (ctx) => { const u = requireUser(ctx); limit('write', u.wallet); return { version: editIdea(db, ctx.params.id, u.wallet, await ctx.body()) }; });
   r.post('/api/ideas/:id/publish', async (ctx) => { const u = requireUser(ctx); const b = await ctx.body(); publishIdea(db, ctx.params.id, u.wallet, b.public === true); return { ok: true }; });
@@ -420,8 +434,29 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
   r.post('/api/chat/presence', async (ctx) => chat.ping(requireUser(ctx), await ctx.body(1_000)));
   r.post('/api/chat/report', async (ctx) => chat.report(requireUser(ctx), await ctx.body(1_000)));
   r.post('/api/chat/sub01', async (ctx) => chat.sub01(requireUser(ctx), await ctx.body(4_000)));
+  // live walkers (chat.js validateWalk / walk; frames `walker` / `walkers` on the stream): guests get the 401
+  r.post('/api/presence', async (ctx) => chat.walk(requireUser(ctx), await ctx.body(600)));
   r.get('/api/admin/chat', (ctx) => { requireAdmin(ctx); return chat.adminList(ctx.query); });
   r.del('/api/admin/chat/:id', (ctx) => chat.adminDelete(requireAdmin(ctx), ctx.params.id));
+
+  // --- the verdict, live (kick.js, pipeline.js tellVerdict; SSE `verdict` in docs/CITY-API.md) -------------------------
+  // A public idea's verdict goes to every stream; a private idea's only to its author's own streams, never with its title
+  // on the public stream. Either way the city's next /api/world read sees the new status at once.
+  const onVerdict = (v) => {
+    const idea = db.get('SELECT visibility, owner_wallet FROM ideas WHERE id = ?', v.ideaId);
+    if (!idea) return;
+    worldCache = null;
+    const plot = db.get(`SELECT plot_id FROM plots WHERE idea_id = ? AND kind = 'project'`, v.ideaId);
+    const base = { ideaId: v.ideaId, version: v.version, verdict: v.verdict, status: v.decision, summary: v.summary, latencyMs: v.latencyMs, at: v.at, plotId: plot?.plot_id ?? null };
+    if (idea.visibility === 'public') {
+      const title = db.get('SELECT title FROM idea_versions WHERE idea_id = ? AND version = ?', v.ideaId, v.version)?.title ?? null;
+      chat.broadcast('verdict', { ...base, title, private: false });
+    } else {
+      chat.sendTo(idea.owner_wallet, 'verdict', { ...base, private: true });
+    }
+  };
+  const kicker = createKicker({ db, cfg, fetchImpl, services: { onVerdict } });
+  const wake = (key) => { if (kick) setImmediate(() => kicker.kick(key)); };
 
   // --- trust: vote ledger, disclosure, calendar, telemetry (trust.js, calendar.js, telemetry.js) ------------------------
   const JSON_TYPE = 'application/json; charset=utf-8';
@@ -767,6 +802,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
   }
 
   handle.chat = chat;                                         // tests and server shutdown
+  handle.kicker = kicker;                                     // tests: await kicker.idle() for the verdict
   return handle;
   async function handle(req, res) {
     const reqId = token(6);
@@ -797,7 +833,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {} }) {
         raw: (status, body, headers) => { res.writeHead(status, headers); res.end(body); return RAW; },
         redirect: (to) => { res.writeHead(302, { location: to, 'cache-control': 'no-store' }); res.end(); return RAW; },
       };
-      limit(req.method === 'GET' ? 'read' : 'write', ctx.user?.wallet || ip);
+      // presence fixes come every ~2 s while a resident walks: their own rule, not the 60/min of real writes
+      limit(req.method === 'GET' ? 'read' : url.pathname === '/api/presence' ? 'presence' : 'write', ctx.user?.wallet || ip);
       const out = await route.handler(ctx);
       if (out !== RAW) sendJson(res, 200, out ?? { ok: true });
     } catch (err) {

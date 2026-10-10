@@ -87,10 +87,13 @@ test('chat stream: SSE handshake, hello, msg fan-out to every viewer, names only
     assert.equal(anon.res.status, 200);
     assert.match(anon.res.headers.get('content-type'), /^text\/event-stream/);
     assert.equal(anon.res.headers.get('cache-control'), 'no-cache, no-transform');
-    assert.deepEqual(await anon.next('hello'), { you: null, online: [], recent: [] });
+    assert.deepEqual(await anon.next('hello'), { you: null, online: [], recent: [], walkers: [] });
     assert.deepEqual(await anon.next('sub01'), { state: 'offline', atDesk: false, waiting: 0 });
     const mine = await sse(h, a);
-    assert.deepEqual((await mine.next('hello')).you, { name: 'Aiko' });
+    const you = (await mine.next('hello')).you;
+    assert.equal(you.name, 'Aiko');
+    assert.match(you.walker, /^[0-9a-f]{16}$/);                // her own walker id (presence.test.js), not her wallet
+    assert.ok(!a.w.address.includes(you.walker));
 
     const r = await a.call('POST', '/api/chat', { text: '  hello   city ‮ ', plotId: 'ginza-2' });
     assert.equal(r.status, 200, r.text);

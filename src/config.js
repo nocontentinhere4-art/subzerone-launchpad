@@ -60,7 +60,8 @@ export function loadConfig(env = process.env) {
       url: e('BRAIN_URL'),                              // the SUB-01 live server, e.g. https://subzerone.live
       secret: e('LAUNCHPAD_BRAIN_SECRET'),
       publicRoomUrl: e('BRAIN_PUBLIC_URL', SUB01.website),
-      timeoutMs: num('BRAIN_TIMEOUT_MS', 20000),
+      // a healthy brain answers in well under a second; an idea must not wait longer than this on a sick one
+      timeoutMs: num('BRAIN_TIMEOUT_MS', 8000),
     },
     generator: {
       provider: e('GENERATOR', 'template'),             // template | anthropic

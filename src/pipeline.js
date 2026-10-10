@@ -1,7 +1,9 @@
 // Stage handlers for the job queue. Each handler re-reads state first (so duplicate delivery is a no-op), writes its
 // output with unique keys, moves the idea through states.js, and reports progress in plain words.
 import { audit, isPaused } from './db.js';
-import { Defer, Permanent, enqueue } from './jobs.js';
+import { Defer, Permanent, enqueue, POLICIES } from './jobs.js';
+import { buildFeedback, polishFeedback } from './feedback.js';
+import { log } from './log.js';
 import { transition, note } from './states.js';
 import { currentVersion } from './ideas.js';
 import { askBrain } from './brain.js';
@@ -18,6 +20,17 @@ import { refreshCoinStats } from './coin-stats.js';
 import { id, now, sha256, parseJson } from './util.js';
 
 const BRAIN_WAIT = { asleep: 20 * 60_000 };
+// brain offline: short retries first (the author is watching), then the job policy's minutes
+export const UNAVAILABLE_BACKOFF = [5_000, 15_000, 60_000];
+const POLISH_TIMEOUT_MS = 12_000;
+
+/** What the city hears the moment a verdict lands (app.js forwards it over the chat stream; SSE `verdict`). */
+function tellVerdict(ctx, { ideaId, version, decision, requestId, feedback, latencyMs }) {
+  if (typeof ctx.onVerdict !== 'function') return;
+  try {
+    ctx.onVerdict({ ideaId, version, decision, verdict: decision === 'selected' ? 'build' : 'pass', requestId, summary: feedback.summary, latencyMs, at: now() });
+  } catch (e) { log.error('onVerdict failed', e); }
+}
 
 export const handlers = {
   async evaluate(ctx) {
@@ -28,49 +41,71 @@ export const handlers = {
     if (isPaused(db, 'evaluation')) throw new Defer('evaluation paused by an admin', 10 * 60_000);
     if (idea.status === 'submitted') transition(db, ideaId, 'submitted', 'evaluating', { note: 'reading it' });
     const v = currentVersion(db, ideaId);
-    const others = db.all(`SELECT i.id, v.title, v.concept FROM ideas i JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
+    const others = db.all(`SELECT i.id, i.visibility, v.title, v.concept FROM ideas i JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
                            WHERE i.id != ? AND i.created_at <= ?`, ideaId, idea.created_at);
     const input = { title: v.title, concept: v.concept, nameSuggestion: v.name_suggestion, tickerSuggestion: v.ticker_suggestion };
     const pre = preGate(input, others);
     const requestId = `${ideaId}.v${v.version}`;
+    const latency = () => Math.max(0, now() - v.created_at);       // from the drop of this version to the verdict
     if (pre.declined) {
+      const feedback = buildFeedback({ input, pre, rec: null, decision: 'declined', others });
+      const latencyMs = latency();
       db.tx(() => {
-        db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at)
-                VALUES (?, ?, ?, ?, ?, 'null', ?, 'declined', ?, ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
-        id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(scores(pre, null)), pre.declined.decidedBy, now());
+        db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at, feedback_json, latency_ms)
+                VALUES (?, ?, ?, ?, ?, 'null', ?, 'declined', ?, ?, ?, ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
+        id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(scores(pre, null)), pre.declined.decidedBy, now(), JSON.stringify(feedback), latencyMs);
         transition(db, ideaId, 'evaluating', 'declined', { actor: 'system', note: `declined by rule before reaching SUB-01: ${pre.declined.why}` });
       });
-      return { decision: 'declined', by: pre.declined.decidedBy };
+      tellVerdict(ctx, { ideaId, version: v.version, decision: 'declined', requestId, feedback, latencyMs });
+      return { decision: 'declined', by: pre.declined.decidedBy, latencyMs };
     }
     ctx.progress('asking SUB-01\'s brain');
     const ans = await askBrain(cfg, { requestId, title: v.title, concept: v.concept }, { signal: ctx.signal, fetchImpl: ctx.fetchImpl });
     if (ans.kind === 'asleep') {
-      note(db, ideaId, `SUB-01 is asleep (${ans.stage}). Your idea waits by his bed; he looks at it when he wakes.`, { actor: 'brain' });
+      note(db, ideaId, `SUB-01 is asleep (${ans.stage}). Your idea waits by his bed; he reads it when he wakes.`, { actor: 'brain',
+        data: { retry_at: now() + BRAIN_WAIT.asleep } });
       throw new Defer(`brain asleep (${ans.stage})`, BRAIN_WAIT.asleep);
     }
     if (ans.kind === 'unavailable') {
-      note(db, ideaId, `Waiting for SUB-01's brain (${ans.reason}). Nothing has been decided; no other system decides for him.`, { actor: 'system' });
-      throw new Defer(`brain unavailable: ${ans.reason}`);
+      const delay = UNAVAILABLE_BACKOFF[Math.max(0, ctx.job.attempts - 1)] ?? POLICIES.evaluate.backoff(ctx.job.attempts);
+      const inS = Math.round(delay / 1000);
+      note(db, ideaId, `SUB-01 is offline right now (${ans.reason}). Your idea waits by his door; he reads it the moment he is back. ` +
+        `Next try in ${inS < 90 ? `${inS} s` : `${Math.round(inS / 60)} min`}. Nothing has been decided; no other system decides for him.`,
+      { actor: 'system', data: { retry_at: now() + delay } });
+      throw new Defer(`brain unavailable: ${ans.reason}`, delay);
     }
     const rec = ans.record;
     const decision = rec.decision === 'build' ? 'selected' : 'declined';
+    const feedback = buildFeedback({ input, pre, rec, decision, others });
+    const latencyMs = latency();
+    let evalId = null;
     db.tx(() => {
-      const ins = db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'brain_vote', ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
-      id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(rec), JSON.stringify(scores(pre, rec)), decision, now());
+      const ins = db.run(`INSERT INTO evaluations (id, idea_id, idea_version, scorecard_version, brain_request_id, brain_json, scores_json, decision, decided_by, created_at, feedback_json, latency_ms)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'brain_vote', ?, ?, ?) ON CONFLICT(idea_id, idea_version) DO NOTHING`,
+      id('eval'), ideaId, v.version, SCORECARD_VERSION, requestId, JSON.stringify(rec), JSON.stringify(scores(pre, rec)), decision, now(), JSON.stringify(feedback), latencyMs);
       // the public vote ledger: one hash-chained row per brain answer, in the same transaction (trust.js)
       if (ins.changes === 1) {
         appendVote(db, { requestId, title: v.title, concept: v.concept, version: v.version, rec });
         settlePredictions(db, ideaId, rec.decision === 'build' ? 'build' : 'pass');   // residents' guesses, scored in this transaction
       }
-      const stored = db.get('SELECT decision FROM evaluations WHERE idea_id = ? AND idea_version = ?', ideaId, v.version);
+      const stored = db.get('SELECT id, decision FROM evaluations WHERE idea_id = ? AND idea_version = ?', ideaId, v.version);
+      evalId = stored.id;
       const build = rec.vote.options.find((o) => o.label.startsWith('build'));
       transition(db, ideaId, 'evaluating', stored.decision, { actor: 'brain',
         note: `brain vote: ${stored.decision === 'selected' ? 'build' : 'pass'} (build ${Math.round(build.p * 100)}%, ${rec.vote.spiking?.network || 'rate model'})${rec.demo ? ' [brain in demo mode]' : ''}`,
         data: { request_id: requestId } });
       if (stored.decision === 'selected') enqueue(db, { type: 'generate', key: `generate:${ideaId}:1`, ideaId, payload: {} });
     });
-    return { decision };
+    tellVerdict(ctx, { ideaId, version: v.version, decision, requestId, feedback, latencyMs });
+    // the optional language-model polish, after the verdict is out: capped, never a reason to fail the job
+    if (cfg.generator.provider === 'anthropic' && evalId) {
+      ctx.progress('polishing the feedback');
+      const signal = AbortSignal.any([ctx.signal, AbortSignal.timeout(POLISH_TIMEOUT_MS)]);
+      const polish = await polishFeedback(db, cfg, { evaluationId: evalId, idea: v, signal, fetchImpl: ctx.fetchImpl, jobId: ctx.job.id });
+      if (!polish.done) log.info('feedback not polished', { idea: ideaId, why: polish.why });
+      return { decision, latencyMs, polished: polish.done };
+    }
+    return { decision, latencyMs };
   },
 
   async generate(ctx) {

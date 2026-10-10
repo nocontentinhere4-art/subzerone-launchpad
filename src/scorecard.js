@@ -4,7 +4,7 @@
 // Nothing here scores an idea by promised returns; an idea that promises returns is declined by policy.
 export const SCORECARD_VERSION = 'scorecard/1';
 
-const RETURNS = /\b(guarantee[ds]?|guaranteed returns?|passive income|profit[- ]?shar\w*|dividends?|revenue share|yield|apy|apr|roi|\d+\s?x\s+(gains?|returns?)|to the moon|moon ?shot|get rich|risk[- ]free|staking rewards?|holders? (get|earn|receive)|airdrop to holders)\b/i;
+export const RETURNS = /\b(guarantee[ds]?|guaranteed returns?|passive income|profit[- ]?shar\w*|dividends?|revenue share|yield|apy|apr|roi|\d+\s?x\s+(gains?|returns?)|to the moon|moon ?shot|get rich|risk[- ]free|staking rewards?|holders? (get|earn|receive)|airdrop to holders)\b/i;
 const HATE = /\b(nigg\w*|faggot\w*|kike\w*|chink\w*|gook\w*|tranny|retard\w*)\b/i;
 const HARM = /\b(kys|kill yourself|suicide challenge|child (porn|sexual)|cp\b|loli)\b/i;
 const IMPERSONATE = /\b(official (token|coin) of|endorsed by|partnered with|backed by)\b/i;

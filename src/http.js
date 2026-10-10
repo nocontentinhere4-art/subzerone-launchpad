@@ -12,7 +12,7 @@ export function router() {
   };
   return {
     get: (p, h, o) => add('GET', p, h, o), post: (p, h, o) => add('POST', p, h, o), put: (p, h, o) => add('PUT', p, h, o),
-    del: (p, h, o) => add('DELETE', p, h, o),
+    del: (p, h, o) => add('DELETE', p, h, o), patch: (p, h, o) => add('PATCH', p, h, o),
     match(method, path) {
       for (const r of routes) {
         if (r.method !== method && !(method === 'HEAD' && r.method === 'GET')) continue;
@@ -58,7 +58,7 @@ export function clientIp(req, trustProxy) {
 /** Token buckets keyed by (bucket, key). Single-process; see docs/OPERATIONS.md for multi-instance. */
 export function rateLimiter() {
   const buckets = new Map();
-  const RULES = { auth: [10, 60_000], submit: [6, 3_600_000], write: [60, 60_000], read: [400, 60_000], brain: [20, 60_000] };
+  const RULES = { auth: [10, 60_000], submit: [6, 3_600_000], write: [60, 60_000], read: [400, 60_000], brain: [20, 60_000], presence: [150, 60_000] };
   setInterval(() => { const t = Date.now(); for (const [k, b] of buckets) if (t - b.t > 3_600_000) buckets.delete(k); }, 600_000).unref();
   return (rule, key) => {
     const [cap, per] = RULES[rule];
