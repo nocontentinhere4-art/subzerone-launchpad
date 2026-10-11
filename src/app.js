@@ -88,6 +88,18 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
 
   // --- public config & health --------------------------------------------------------------------------------------
   r.get('/healthz', () => ({ ok: true }));
+  // RFC 9116: who to contact and where the code lives (reputation scanners and wallets look for it; 2026-10-11)
+  r.get('/.well-known/security.txt', (ctx) => ctx.raw(200, Buffer.from([
+    'Contact: https://github.com/nocontentinhere4-art/subzerone-launchpad/security/advisories/new',
+    'Contact: https://x.com/SUBZERONE01',
+    `Canonical: ${cfg.publicOrigin}/.well-known/security.txt`,
+    'Policy: https://github.com/nocontentinhere4-art/subzerone-launchpad/blob/main/SECURITY.md',
+    'Preferred-Languages: en, it',
+    `Expires: ${new Date(Date.now() + 365 * 86400000).toISOString()}`,
+    '', '# SUBZERONE: a memecoin launchpad lived as a 3D Tokyo city. Open source:',
+    '# https://github.com/nocontentinhere4-art/subzerone-launchpad (server)',
+    '# https://github.com/nocontentinhere4-art/sub01-launchpad (client)', ''].join('\n')),
+  { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' }));
   r.get('/api/config', async () => {
     const provider = getProvider(cfg, db);
     return {
