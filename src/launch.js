@@ -215,7 +215,7 @@ export async function buildLaunchConfig(db, cfg, project) {
     attributes: [{ trait_type: 'built_by', value: 'SUB-01 (SUBZERONE launchpad)' }],
   };
   const metaHash = createHash('sha256').update(JSON.stringify(metadata)).digest('hex').slice(0, 16);
-  const uri = `${cfg.publicOrigin}/meta/${project.slug}/${metaHash}.json`;
+  const uri = `${cfg.publicOrigin}/m/${metaHash}.json`;        // short on purpose: every byte counts in a 1232-byte transaction (app.js serves /m/)
   if (uri.length > 200) throw new Permanent('metadata URI longer than 200 characters');
   // the dev buy: read fresh (the author may have changed it since the job picked up the row), checked against the cap
   const initialBuyLamports = Number(db.get('SELECT initial_buy_lamports FROM projects WHERE id = ?', project.id)?.initial_buy_lamports ?? 0);
@@ -283,21 +283,8 @@ export async function createIntent(db, cfg, project, wallet) {
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
   const buyLamports = Number(config.initialBuyLamports) || 0;
-  let built;
-  try {
-    built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
-      signer: config.signer, feeSharing: config.feeSharing, initialBuyLamports: buyLamports });
-  } catch (e) {
-    if (e?.code) throw new HttpError(409, e.code, e.message);     // tx_too_large, buy_completes_curve, buy_too_small: the author's choice to change
-    throw e;
-  }
-  // nothing is stored for a transaction the network would reject: the author sees why and keeps the prepared state
+  const built = await buildChecked(provider, config, buyLamports);
   const est = built.estimate || {};
-  if (est.simulation && est.simulation.ok === false) throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));
-  if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
-    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
-    if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
-  }
   const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
   const t = now();
@@ -315,6 +302,53 @@ export async function createIntent(db, cfg, project, wallet) {
   });
   return { intentId, mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
     lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes, ...reviewed };
+}
+
+/** provider.prepare with the checks the author must see as a sentence, never as a 500; nothing is stored when it fails. */
+async function buildChecked(provider, config, buyLamports, opts = {}) {
+  let built;
+  try {
+    built = await provider.prepare({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
+      signer: config.signer, feeSharing: config.feeSharing, initialBuyLamports: buyLamports }, opts);
+  } catch (e) {
+    if (e?.code) throw new HttpError(409, e.code, e.message);     // tx_too_large, buy_completes_curve, buy_too_small: the author's choice to change
+    throw e;
+  }
+  const est = built.estimate || {};
+  if (est.simulation && est.simulation.ok === false) throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));
+  if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
+    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
+    if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
+  }
+  return built;
+}
+
+/** Right before the wallet opens: the SAME transaction (same mint, same instructions, same review) with a fresh
+ *  blockhash, so a minute spent reading the review never hands the wallet an expired transaction (Phantom simulates
+ *  before signing and calls an expired one "could be malicious"). -> the same shape as createIntent. */
+export async function refreshIntent(db, cfg, project, wallet) {
+  const provider = getProvider(cfg, db);
+  const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!intent) throw new HttpError(409, 'no_intent', 'no transaction is waiting for a signature');
+  if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  const config = parseJson(intent.config_json);
+  const current = () => ({ intentId: intent.id, mint: intent.mint, txBase64: intent.tx_base64, messageHash: intent.tx_message_hash,
+    estimate: intent.estimate_json ? parseJson(intent.estimate_json) : null, lastValidBlockHeight: intent.last_valid_block_height, mock: provider.isMock,
+    txBytes: Buffer.from(intent.tx_base64, 'base64').length, resumed: true, ...review(provider, intent.tx_base64, intent.network, intent.signer_wallet) });
+  if (provider.isMock || !intent.mint_secret_enc) return current();          // the mock has no blockhash; no key → sign what was reviewed
+  let mintSecret;
+  try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { return current(); }
+  const built = await buildChecked(provider, config, Number(config.initialBuyLamports) || 0, { mintSecret });
+  mintSecret = null;
+  if (built.mint !== intent.mint) throw new HttpError(500, 'mint_mismatch', 'the refreshed transaction is not for the same mint');
+  const before = review(provider, intent.tx_base64, intent.network, intent.signer_wallet), after = review(provider, built.txBase64, built.network ?? intent.network, intent.signer_wallet);
+  if (JSON.stringify(before.programs) !== JSON.stringify(after.programs) || before.signers !== after.signers) {
+    throw new HttpError(409, 'config_changed', 'the launch program changed since the review; prepare again');
+  }
+  db.run(`UPDATE launch_intents SET tx_base64 = ?, tx_message_hash = ?, last_valid_block_height = ?, estimate_json = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
+    built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(built.estimate ?? null), now(), intent.id);
+  return { intentId: intent.id, mint: intent.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
+    lastValidBlockHeight: built.lastValidBlockHeight, mock: false, txBytes: built.txBytes, resumed: true, refreshed: true, ...after };
 }
 
 /** A failed preparation simulation in one plain sentence: funds first, else the last useful program log line. */

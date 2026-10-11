@@ -14,7 +14,7 @@ import { buildSiteVersion, setLiveVersion, siteCsp } from './site.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
-  INITIAL_BUY_STATES } from './launch.js';
+  INITIAL_BUY_STATES, refreshIntent } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
   unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
@@ -334,6 +334,11 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     limit('write', u.wallet);
     return createIntent(db, cfg, p, u.wallet);
   });
+  r.post('/api/projects/:slug/launch/refresh', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    return refreshIntent(db, cfg, p, u.wallet);
+  });
   r.post('/api/projects/:slug/launch/signed', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);
     const b = await ctx.body(64_000);
@@ -603,6 +608,21 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   r.get('/api/token', async () => sub01Market(db, cfg, fetchImpl));
 
   // --- token metadata (frozen in the reviewed launch configuration) ---------------------------------------------------
+  // Token metadata by hash alone (the launch URI since 2026-10-11; /meta/<slug>/<hash>.json stays for older tokens).
+  r.get('/m/:file', (ctx) => {
+    const m = ctx.params.file.match(/^([0-9a-f]{16})\.json$/);
+    if (!m) throw new HttpError(404, 'not_found');
+    const tail = `/m/${m[1]}.json`;
+    const rows = [...db.all('SELECT project_id, config_json FROM launch_intents'), ...db.all('SELECT id project_id, launch_config_json config_json FROM projects WHERE launch_config_json IS NOT NULL')];
+    for (const row of rows) {
+      const c = parseJson(row.config_json);
+      if (!c?.token?.uri?.endsWith(tail)) continue;
+      const p = db.get('SELECT idea_id FROM projects WHERE id = ?', row.project_id);
+      if (!p || db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id)?.visibility !== 'public') throw new HttpError(404, 'not_found');
+      return ctx.raw(200, Buffer.from(JSON.stringify(c.token.metadata)), { 'content-type': 'application/json', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
+    }
+    throw new HttpError(404, 'not_found');
+  });
   r.get('/meta/:slug/:file', (ctx) => {
     const p = projectBySlug(ctx.params.slug);
     if (!p) throw new HttpError(404, 'not_found');

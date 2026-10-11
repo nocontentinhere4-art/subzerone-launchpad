@@ -116,7 +116,10 @@ if (tx.mock) {
   signed = submitter.signText(mockSigningText(tx.messageHash));
 } else {
   const kp = devnetKeypair(process.env.DEMO_WALLET || 'demo-submitter');
-  const vt = web3.VersionedTransaction.deserialize(Buffer.from(tx.txBase64, 'base64'));
+  // the city refreshes the blockhash right before the wallet opens (same mint, same instructions)
+  const fresh = await submitter.call('POST', `/api/projects/${slug}/launch/refresh`, {});
+  step('refreshed right before signing', { refreshed: fresh.refreshed === true, sameMint: fresh.mint === tx.mint, bytes: fresh.txBytes });
+  const vt = web3.VersionedTransaction.deserialize(Buffer.from(fresh.txBase64, 'base64'));
   vt.sign([kp]);
   signed = Buffer.from(vt.serialize()).toString('base64');
 }

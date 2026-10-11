@@ -258,9 +258,10 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
      * Build the creation transaction for review. -> {txBase64, messageHash, lastValidBlockHeight, mint, estimate}
      * config: {name, symbol, uri, signer, feeSharing: {mode, shareholders:[{wallet,bps}]}}
      */
-    async prepare(config) {
+    async prepare(config, { mintSecret = null } = {}) {
       const signer = new web3.PublicKey(config.signer);
-      const mintKp = web3.Keypair.generate();
+      // refresh (same intent, fresh blockhash right before the wallet opens): the intent's own mint key, not a new one
+      const mintKp = mintSecret ? web3.Keypair.fromSecretKey(Buffer.from(mintSecret, 'base64')) : web3.Keypair.generate();
       const mint = mintKp.publicKey;
       // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing (+ buy_v2)
       const { ixs, buy } = await buildInstructions(config, mint, signer);
