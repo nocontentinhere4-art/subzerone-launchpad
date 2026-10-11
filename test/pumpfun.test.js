@@ -10,20 +10,34 @@ const web3 = require('@solana/web3.js');
 
 function prepared() {
   const payer = web3.Keypair.generate(), mint = web3.Keypair.generate();
-  const ix = web3.SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: mint.publicKey, lamports: 1 });
+  // the mint is the second required signer, as in a real create_v2 launch
+  const ix = web3.SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint.publicKey, lamports: 1, space: 0, programId: web3.SystemProgram.programId });
   const msg = new web3.TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: [ix] }).compileToV0Message();
   const tx = new web3.VersionedTransaction(msg);
-  const intent = { signer_wallet: payer.publicKey.toBase58(), tx_message_hash: createHash('sha256').update(msg.serialize()).digest('hex') };
-  return { payer, tx, msg, intent };
+  const intent = { signer_wallet: payer.publicKey.toBase58(), mint: mint.publicKey.toBase58(), tx_message_hash: createHash('sha256').update(msg.serialize()).digest('hex') };
+  const mintSecret = Buffer.from(mint.secretKey).toString('base64');
+  return { payer, mint, mintSecret, tx, msg, intent };
 }
 
 const provider = makePumpfunProvider({ launch: { rpcUrl: 'http://127.0.0.1:1', network: 'devnet' } }, { connection: {} });
 
-test('pump.fun: a correctly signed reviewed transaction verifies', () => {
-  const { payer, tx, intent } = prepared();
+test('pump.fun: the wallet signs first, the server adds the mint signature second (Phantom order), both verify', () => {
+  const { payer, mint, mintSecret, tx, intent } = prepared();
+  assert.ok(tx.signatures[1].every((b) => b === 0), 'the reviewed bytes carry an empty mint slot');
   tx.sign([payer]);
-  const out = provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64'));
+  const out = provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64'), { mintSecret });
   assert.equal(out.signature.length > 80, true);
+  const sent = web3.VersionedTransaction.deserialize(out.raw);
+  assert.equal(sent.signatures.length, 2);
+  assert.ok(!sent.signatures[1].every((b) => b === 0), 'the mint slot is filled before the broadcast');
+  const { verifyWalletSignature } = require('../src/util.js');
+  assert.ok(verifyWalletSignature(payer.publicKey.toBase58(), sent.message.serialize(), sent.signatures[0]));
+  assert.ok(verifyWalletSignature(mint.publicKey.toBase58(), sent.message.serialize(), sent.signatures[1]));
+  // no secret (wiped or lost) → the author must prepare again; a foreign secret is refused
+  const { payer: p2, tx: t2, intent: i2 } = prepared(); t2.sign([p2]);
+  assert.throws(() => provider.verifySigned(i2, Buffer.from(t2.serialize()).toString('base64')), /mint key is gone/);
+  const { payer: p3, tx: t3, intent: i3 } = prepared(); t3.sign([p3]);
+  assert.throws(() => provider.verifySigned(i3, Buffer.from(t3.serialize()).toString('base64'), { mintSecret }), /does not match/);
 });
 
 test('pump.fun: a transaction that differs from the reviewed one is refused', () => {

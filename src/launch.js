@@ -8,7 +8,7 @@ import { transition, note } from './states.js';
 import { currentVersion, validateReceivingWallet } from './ideas.js';
 import { makeMockProvider } from './launch/mock.js';
 import { makePumpfunProvider, TOO_LARGE_NOTE } from './launch/pumpfun.js';
-import { id, now, HttpError, parseJson, isSolanaAddress } from './util.js';
+import { id, now, HttpError, parseJson, isSolanaAddress, encrypt, decrypt } from './util.js';
 
 export const MAX_RECIPIENTS = 8;
 let cached = null;
@@ -302,11 +302,13 @@ export async function createIntent(db, cfg, project, wallet) {
   const intentId = id('intent');
   const t = now();
   db.tx(() => {
-    db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint,
+    // the mint key signs after the wallet (verifySigned): kept encrypted until the broadcast, then wiped
+    const mintSecretEnc = built.mintSecret ? encrypt(cfg.encryptionKey, built.mintSecret) : null;
+    db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint, mint_secret_enc,
               signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?)`,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?)`,
     intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
-    config.feeSharing.allocationId, built.mint, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
+    config.feeSharing.allocationId, built.mint, mintSecretEnc, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
     buyLamports > 0 && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, t, t);
     transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
@@ -367,7 +369,7 @@ export function abandonIntent(db, project, wallet, reason = 'signature request c
   const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status IN ('prepared','awaiting_signature')`, project.id);
   if (!intent) throw new HttpError(409, 'no_intent');
   db.tx(() => {
-    db.run(`UPDATE launch_intents SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ?`, reason, now(), intent.id);
+    db.run(`UPDATE launch_intents SET status = 'cancelled', error = ?, mint_secret_enc = NULL, updated_at = ? WHERE id = ?`, reason, now(), intent.id);
     transition(db, project.idea_id, 'awaiting_signature', 'launch_prepared', { actor: `wallet:${wallet}`, note: `${reason}; nothing was created` });
   });
 }
@@ -379,10 +381,13 @@ export async function submitSigned(db, cfg, project, wallet, signed) {
   if (!intent) throw new HttpError(409, 'no_intent', 'no transaction is waiting for a signature');
   if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
   let checked;
-  try { checked = provider.verifySigned(intent, signed); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
-  // persist first: if we crash after broadcasting, reconciliation finds the signature
+  let mintSecret = null;
+  if (intent.mint_secret_enc) { try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { mintSecret = null; } }
+  try { checked = provider.verifySigned(intent, signed, { mintSecret }); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
+  mintSecret = null;
+  // persist first: if we crash after broadcasting, reconciliation finds the signature; the mint key is wiped here
   db.tx(() => {
-    db.run(`UPDATE launch_intents SET status = 'submitted', tx_signature = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
+    db.run(`UPDATE launch_intents SET status = 'submitted', tx_signature = ?, mint_secret_enc = NULL, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
       checked.signature, now(), intent.id);
     transition(db, project.idea_id, 'awaiting_signature', 'confirming', { actor: `wallet:${wallet}`,
       note: 'signed; broadcast and waiting for the network', data: { signature: checked.signature } });
@@ -422,7 +427,7 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
   if (st.state === 'pending' || st.state === 'confirmed') throw new Defer(`waiting for finalization (${st.state})`, 4000);
   if (st.state === 'expired') {
     db.tx(() => {
-      db.run(`UPDATE launch_intents SET status = 'expired', error = 'blockhash expired before the transaction landed', updated_at = ? WHERE id = ?`, now(), intent.id);
+      db.run(`UPDATE launch_intents SET status = 'expired', error = 'blockhash expired before the transaction landed', mint_secret_enc = NULL, updated_at = ? WHERE id = ?`, now(), intent.id);
       transition(db, project.idea_id, 'confirming', 'launch_prepared', { note: 'the transaction expired before it landed; nothing was created. You can sign a new one.' });
     });
     return { state: 'expired' };

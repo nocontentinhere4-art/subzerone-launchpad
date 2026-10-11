@@ -268,8 +268,12 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const message = new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs })
         .compileToV0Message(await lookupTables());
       const tx = new web3.VersionedTransaction(message);
-      let bytes = null;                                   // web3 refuses to encode far beyond the packet size (signing serializes too)
-      try { tx.sign([mintKp]); bytes = tx.serialize(); } catch (e) { if (!/overruns/.test(e.message)) throw e; }   // the mint key signs now and is never stored
+      // Signing order (Phantom support, 2026-10-11): the wallet signs the untouched transaction FIRST; the mint key signs
+      // afterwards, server-side, in verifySigned. Phantom's Lighthouse flags transactions that arrive with another
+      // signer already on them. So the bytes shown for review carry an empty mint slot; the secret travels back to the
+      // caller once, is stored encrypted on the intent, and is wiped after the broadcast.
+      let bytes = null;                                   // web3 refuses to encode far beyond the packet size
+      try { bytes = tx.serialize(); } catch (e) { if (!/overruns/.test(e.message)) throw e; }
       if (!bytes || bytes.length > MAX_TX_BYTES) {
         const size = bytes ? `${bytes.length} bytes` : 'over 1232 bytes';
         // an operator problem (no table) is a plain error; with a buy it is the author's choice to change
@@ -300,7 +304,8 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         estimate.simulation = { ok: false, err: e.message };
       }
       return { txBase64: Buffer.from(bytes).toString('base64'), messageHash: createHash('sha256').update(msgBytes).digest('hex'),
-        lastValidBlockHeight, mint: mint.toBase58(), estimate, txBytes: bytes.length };
+        lastValidBlockHeight, mint: mint.toBase58(), estimate, txBytes: bytes.length,
+        mintSecret: Buffer.from(mintKp.secretKey).toString('base64') };
     },
 
     reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
@@ -325,7 +330,9 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     },
 
     /** The wallet's signed bytes must be exactly the reviewed message, signed by the expected signer. */
-    verifySigned(intent, signedBase64) {
+    /** The wallet signed the reviewed bytes: check them, then add the mint key's signature (second, as Phantom asks)
+     *  from the secret the intent kept (mintSecret, base64). -> {signature, raw} ready to broadcast. */
+    verifySigned(intent, signedBase64, { mintSecret = null } = {}) {
       const { web3 } = sdk();
       const tx = web3.VersionedTransaction.deserialize(Buffer.from(signedBase64, 'base64'));
       const msgBytes = tx.message.serialize();
@@ -336,6 +343,16 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const sig = tx.signatures[0];
       if (!sig || sig.every((b) => b === 0)) throw new Error('missing wallet signature');
       if (!verifyWalletSignature(intent.signer_wallet, msgBytes, sig)) throw new Error('wallet signature does not verify');
+      const mintIndex = keys.indexOf(intent.mint);
+      if (mintIndex < 0 || mintIndex >= tx.message.header.numRequiredSignatures) throw new Error('the mint is not a signer of this transaction');
+      const mintSig = tx.signatures[mintIndex];
+      if (!mintSig || mintSig.every((b) => b === 0)) {
+        if (!mintSecret) throw new Error('the mint key is gone; prepare the transaction again');
+        const mintKp = web3.Keypair.fromSecretKey(Buffer.from(mintSecret, 'base64'));
+        if (mintKp.publicKey.toBase58() !== intent.mint) throw new Error('the stored mint key does not match the transaction');
+        tx.sign([mintKp]);                                 // sets only the mint's slot; the wallet's signature stays as it came
+      }
+      if (!verifyWalletSignature(intent.mint, msgBytes, tx.signatures[mintIndex])) throw new Error('mint signature does not verify');
       return { signature: b58encode(sig), raw: Buffer.from(tx.serialize()) };
     },
 
