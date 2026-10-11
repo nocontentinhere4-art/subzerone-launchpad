@@ -265,7 +265,7 @@ export async function createIntent(db, cfg, project, wallet) {
     if (pending && pending.signer_wallet === wallet) {
       const provider = getProvider(cfg, db);
       return { intentId: pending.id, mint: pending.mint, txBase64: pending.tx_base64, messageHash: pending.tx_message_hash,
-        estimate: null, lastValidBlockHeight: pending.last_valid_block_height, mock: provider.isMock,
+        estimate: pending.estimate_json ? parseJson(pending.estimate_json) : null, lastValidBlockHeight: pending.last_valid_block_height, mock: provider.isMock,
         txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true, ...review(provider, pending.tx_base64, pending.network, pending.signer_wallet) };
     }
   }
@@ -305,11 +305,11 @@ export async function createIntent(db, cfg, project, wallet) {
     // the mint key signs after the wallet (verifySigned): kept encrypted until the broadcast, then wiped
     const mintSecretEnc = built.mintSecret ? encrypt(cfg.encryptionKey, built.mintSecret) : null;
     db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint, mint_secret_enc,
-              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?)`,
+              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, estimate_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?)`,
     intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
     config.feeSharing.allocationId, built.mint, mintSecretEnc, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
-    buyLamports > 0 && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, t, t);
+    buyLamports > 0 && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, JSON.stringify(built.estimate ?? null), t, t);
     transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
   });
