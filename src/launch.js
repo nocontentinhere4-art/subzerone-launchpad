@@ -417,7 +417,7 @@ export async function submitSigned(db, cfg, project, wallet, signed) {
   let checked;
   let mintSecret = null;
   if (intent.mint_secret_enc) { try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { mintSecret = null; } }
-  try { checked = provider.verifySigned(intent, signed, { mintSecret }); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
+  try { checked = await provider.verifySigned(intent, signed, { mintSecret }); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
   mintSecret = null;
   // persist first: if we crash after broadcasting, reconciliation finds the signature; the mint key is wiped here
   db.tx(() => {

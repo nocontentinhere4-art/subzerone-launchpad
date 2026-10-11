@@ -44,6 +44,8 @@ export const KNOWN_PROGRAMS = Object.freeze({
 });
 // the only programs a launch transaction may call directly for the "what this does NOT do" line to hold: pump, pump-fees,
 // compute budget, and the Associated Token Account program (the dev buy creates the author's own token account)
+// Programs a wallet may add when it signs (Phantom: Lighthouse balance assertions, compute-budget priority fee).
+const WALLET_GUARDS = new Set(['ComputeBudget111111111111111111111111111111', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95']);
 const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget111111111111111111111111111111', 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']);
 // The dev buy's cost cap: quote + 5% (500 bps). The curve is fresh at creation, so the SDK quote is what the program
 // charges; the margin only covers rounding and a fee-schedule change between preparation and landing.
@@ -220,6 +222,39 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
   }
 
   /** The launch lookup table (static program accounts), so create + locked fee split fits in one transaction. */
+  /** The signed message differs from the reviewed one: it must be the same launch with wallet guards added. */
+  async function sameLaunch(web3, intent, tx) {
+    const reviewed = web3.VersionedTransaction.deserialize(Buffer.from(intent.tx_base64, 'base64')).message;
+    const signed = tx.message;
+    const tables = await lookupTables();
+    let a, b;
+    try {
+      a = web3.TransactionMessage.decompile(reviewed, { addressLookupTableAccounts: tables });
+      b = web3.TransactionMessage.decompile(signed, { addressLookupTableAccounts: signed.addressTableLookups?.length ? await tablesFor(signed) : [] });
+    } catch { throw new Error('signed transaction differs from the reviewed one'); }
+    if (b.payerKey.toBase58() !== a.payerKey.toBase58()) throw new Error('signed transaction differs from the reviewed one (payer)');
+    if (b.recentBlockhash !== a.recentBlockhash) throw new Error('signed transaction differs from the reviewed one (blockhash)');
+    const key = (ix) => JSON.stringify([ix.programId.toBase58(), Buffer.from(ix.data).toString('base64'), ix.keys.map((k) => [k.pubkey.toBase58(), k.isSigner, k.isWritable])]);
+    const ours = a.instructions.map(key);
+    let i = 0;
+    for (const ix of b.instructions) {
+      if (i < ours.length && key(ix) === ours[i]) { i++; continue; }
+      if (!WALLET_GUARDS.has(ix.programId.toBase58())) throw new Error(`signed transaction differs from the reviewed one (an instruction for ${ix.programId.toBase58()} was added)`);
+      // a guard may read accounts, never sign for anyone but the payer
+      if (ix.keys.some((k) => k.isSigner && !k.pubkey.equals(a.payerKey))) throw new Error('signed transaction differs from the reviewed one (an added instruction asks for another signer)');
+    }
+    if (i !== ours.length) throw new Error('signed transaction differs from the reviewed one (instructions missing or changed)');
+  }
+  async function tablesFor(message) {
+    const out = [];
+    for (const l of message.addressTableLookups) {
+      const r = await conn.getAddressLookupTable(l.accountKey);
+      if (!r.value) throw new Error('lookup table not found');
+      out.push(r.value);
+    }
+    return out;
+  }
+
   async function lookupTables() {
     if (!cfg.launch.lookupTable) return [];
     const r = await conn.getAddressLookupTable(new web3.PublicKey(cfg.launch.lookupTable));
@@ -331,14 +366,17 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     },
 
     /** The wallet's signed bytes must be exactly the reviewed message, signed by the expected signer. */
-    /** The wallet signed the reviewed bytes: check them, then add the mint key's signature (second, as Phantom asks)
-     *  from the secret the intent kept (mintSecret, base64). -> {signature, raw} ready to broadcast. */
-    verifySigned(intent, signedBase64, { mintSecret = null } = {}) {
+    /** The wallet signed: check it is the reviewed transaction, then add the mint key's signature (second, as Phantom
+     *  asks) from the secret the intent kept (mintSecret, base64). -> {signature, raw} ready to broadcast.
+     *  Phantom may ADD its own instructions when it signs (Lighthouse balance guards, a compute-budget priority fee):
+     *  then the bytes differ from the review. Accepted only when the payer, the blockhash and every one of our
+     *  instructions are unchanged and in order, and each extra instruction belongs to those two programs. */
+    async verifySigned(intent, signedBase64, { mintSecret = null } = {}) {
       const { web3 } = sdk();
       const tx = web3.VersionedTransaction.deserialize(Buffer.from(signedBase64, 'base64'));
       const msgBytes = tx.message.serialize();
       const hash = createHash('sha256').update(msgBytes).digest('hex');
-      if (hash !== intent.tx_message_hash) throw new Error('signed transaction differs from the reviewed one');
+      if (hash !== intent.tx_message_hash) await sameLaunch(web3, intent, tx);
       const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
       if (keys[0] !== intent.signer_wallet) throw new Error('payer is not the expected wallet');
       const sig = tx.signatures[0];

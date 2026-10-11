@@ -12,20 +12,26 @@ function prepared() {
   const payer = web3.Keypair.generate(), mint = web3.Keypair.generate();
   // the mint is the second required signer, as in a real create_v2 launch
   const ix = web3.SystemProgram.createAccount({ fromPubkey: payer.publicKey, newAccountPubkey: mint.publicKey, lamports: 1, space: 0, programId: web3.SystemProgram.programId });
-  const msg = new web3.TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: [ix] }).compileToV0Message();
+  const blockhash = web3.Keypair.generate().publicKey.toBase58();
+  const msg = new web3.TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: blockhash, instructions: [ix] }).compileToV0Message();
   const tx = new web3.VersionedTransaction(msg);
-  const intent = { signer_wallet: payer.publicKey.toBase58(), mint: mint.publicKey.toBase58(), tx_message_hash: createHash('sha256').update(msg.serialize()).digest('hex') };
+  const intent = { signer_wallet: payer.publicKey.toBase58(), mint: mint.publicKey.toBase58(), tx_base64: Buffer.from(tx.serialize()).toString('base64'),
+    tx_message_hash: createHash('sha256').update(msg.serialize()).digest('hex') };
   const mintSecret = Buffer.from(mint.secretKey).toString('base64');
-  return { payer, mint, mintSecret, tx, msg, intent };
+  // what a wallet returns when it adds its own instructions before ours / after ours
+  const withExtra = (before, after = []) => new web3.VersionedTransaction(new web3.TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: blockhash,
+    instructions: [...before, ix, ...after] }).compileToV0Message());
+  return { payer, mint, mintSecret, tx, msg, intent, withExtra };
 }
+const LIGHTHOUSE = new web3.PublicKey('L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95');
 
 const provider = makePumpfunProvider({ launch: { rpcUrl: 'http://127.0.0.1:1', network: 'devnet' } }, { connection: {} });
 
-test('pump.fun: the wallet signs first, the server adds the mint signature second (Phantom order), both verify', () => {
+test('pump.fun: the wallet signs first, the server adds the mint signature second (Phantom order), both verify', async () => {
   const { payer, mint, mintSecret, tx, intent } = prepared();
   assert.ok(tx.signatures[1].every((b) => b === 0), 'the reviewed bytes carry an empty mint slot');
   tx.sign([payer]);
-  const out = provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64'), { mintSecret });
+  const out = await provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64'), { mintSecret });
   assert.equal(out.signature.length > 80, true);
   const sent = web3.VersionedTransaction.deserialize(out.raw);
   assert.equal(sent.signatures.length, 2);
@@ -35,25 +41,40 @@ test('pump.fun: the wallet signs first, the server adds the mint signature secon
   assert.ok(verifyWalletSignature(mint.publicKey.toBase58(), sent.message.serialize(), sent.signatures[1]));
   // no secret (wiped or lost) → the author must prepare again; a foreign secret is refused
   const { payer: p2, tx: t2, intent: i2 } = prepared(); t2.sign([p2]);
-  assert.throws(() => provider.verifySigned(i2, Buffer.from(t2.serialize()).toString('base64')), /mint key is gone/);
+  await assert.rejects(() => provider.verifySigned(i2, Buffer.from(t2.serialize()).toString('base64')), /mint key is gone/);
   const { payer: p3, tx: t3, intent: i3 } = prepared(); t3.sign([p3]);
-  assert.throws(() => provider.verifySigned(i3, Buffer.from(t3.serialize()).toString('base64'), { mintSecret }), /does not match/);
+  await assert.rejects(() => provider.verifySigned(i3, Buffer.from(t3.serialize()).toString('base64'), { mintSecret }), /does not match/);
 });
 
-test('pump.fun: a transaction that differs from the reviewed one is refused', () => {
+test('pump.fun: Phantom adding Lighthouse / compute-budget instructions is accepted; anything else added is refused', async () => {
+  const { payer, mintSecret, intent, withExtra } = prepared();
+  const cu = web3.ComputeBudgetProgram.setComputeUnitPrice({ microLamports: 1000 });
+  const guard = new web3.TransactionInstruction({ programId: LIGHTHOUSE, keys: [{ pubkey: payer.publicKey, isSigner: false, isWritable: false }], data: Buffer.from([1, 2, 3]) });
+  const ok = withExtra([cu], [guard]); ok.sign([payer]);
+  const out = await provider.verifySigned(intent, Buffer.from(ok.serialize()).toString('base64'), { mintSecret });
+  assert.equal(web3.VersionedTransaction.deserialize(out.raw).message.compiledInstructions.length, 3, 'broadcast as the wallet returned it');
+  const steal = web3.SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: web3.Keypair.generate().publicKey, lamports: 5 });
+  const bad = withExtra([], [steal]); bad.sign([payer]);
+  await assert.rejects(() => provider.verifySigned(intent, Buffer.from(bad.serialize()).toString('base64'), { mintSecret }), /was added/);
+  const empty = withExtra([cu]).message; const noOurs = new web3.VersionedTransaction(new web3.TransactionMessage({ payerKey: payer.publicKey, recentBlockhash: empty.recentBlockhash, instructions: [cu] }).compileToV0Message());
+  noOurs.sign([payer]);
+  await assert.rejects(() => provider.verifySigned(intent, Buffer.from(noOurs.serialize()).toString('base64'), { mintSecret }), /differs from the reviewed/);
+});
+
+test('pump.fun: a transaction that differs from the reviewed one is refused', async () => {
   const { payer, intent } = prepared();
   const other = prepared();
   other.tx.sign([other.payer]);
-  assert.throws(() => provider.verifySigned(intent, Buffer.from(other.tx.serialize()).toString('base64')), /differs from the reviewed/);
+  await assert.rejects(() => provider.verifySigned(intent, Buffer.from(other.tx.serialize()).toString('base64')), /differs from the reviewed/);
   assert.ok(payer);
 });
 
-test('pump.fun: unsigned or wrongly signed transactions are refused', () => {
+test('pump.fun: unsigned or wrongly signed transactions are refused', async () => {
   const { tx, intent } = prepared();
-  assert.throws(() => provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64')), /missing wallet signature/);
+  await assert.rejects(() => provider.verifySigned(intent, Buffer.from(tx.serialize()).toString('base64')), /missing wallet signature/);
   const { tx: tx2, intent: intent2 } = prepared();
   tx2.signatures[0] = new Uint8Array(64).fill(7);
-  assert.throws(() => provider.verifySigned(intent2, Buffer.from(tx2.serialize()).toString('base64')), /does not verify/);
+  await assert.rejects(() => provider.verifySigned(intent2, Buffer.from(tx2.serialize()).toString('base64')), /does not verify/);
 });
 
 function fakeConn({ status = null, height = 0, mintExists = false, sigs = [] } = {}) {
