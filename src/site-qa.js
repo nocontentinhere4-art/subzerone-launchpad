@@ -292,7 +292,7 @@ export async function publishSite(db, cfg, project, version, actor, { browser = 
   // mustPublish: a rebuild that only brings the site up to date with the chain (the coin was launched): an older version
   // saying "not launched" is worse than any QA issue, so it goes live and the issues stay in the report
   const hold = gate && !mustPublish && issues.length > 0 && prev != null && prev !== version;
-  if (issues.length) log.warn('site-qa issues', { slug: project.slug, version, held: hold, issues: issues.slice(0, 5).map((x) => `${x.viewport || ''}: ${String(x.text || x.message || '').slice(0, 160)}`) });
+  if (issues.length) log.warn('site-qa issues', { slug: project.slug, version, held: hold, issues: issues.slice(0, 5).map((x) => `${x.viewport || ''} ${x.check || ''}: ${String(x.detail ?? '').slice(0, 200)}`) });
   const report = { static: { passed: st.passed }, browser: { state: browserState, note: browserNote, viewports: br.viewports, ms: br.ms }, issues, warnings };
   db.run(`UPDATE site_qa SET status = ?, browser = ?, browser_note = ?, issues = ?, warnings = ?, report_json = ?, shots_json = ?, held = ?, ticket_hash = NULL,
             ticket_until = NULL, runtime_ms = ?, finished_at = ? WHERE id = ?`,
