@@ -75,8 +75,9 @@ export function loadConfig(env = process.env) {
     // the coin art (coinart.js): black-and-white lettermarks. Higgsfield first, Recraft's own API second, the local
     // generator (no AI) when neither key is set or a provider fails. Model paths: docs/COIN-ART.md says what to check.
     art: {
-      hfKeyId: e('HF_API_KEY_ID'),
-      hfKeySecret: e('HF_API_KEY_SECRET'),
+      // the pair, or one combined HF_API_KEY="<id>:<secret>" (the form the Authorization header takes)
+      hfKeyId: e('HF_API_KEY_ID') || (e('HF_API_KEY').includes(':') ? e('HF_API_KEY').slice(0, e('HF_API_KEY').indexOf(':')).trim() : ''),
+      hfKeySecret: e('HF_API_KEY_SECRET') || (e('HF_API_KEY').includes(':') ? e('HF_API_KEY').slice(e('HF_API_KEY').indexOf(':') + 1).trim() : ''),
       hfBase: e('HF_API_BASE', 'https://api.higgsfield.ai'),
       hfLogoModel: e('HF_LOGO_MODEL', 'recraft/v4.1/text-to-image'),
       hfBannerModel: e('HF_BANNER_MODEL', 'recraft/v4.1/text-to-image'),

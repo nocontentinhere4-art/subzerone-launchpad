@@ -26,7 +26,7 @@ provider, model, request id, prompt and symbol. Paths are unchanged (`/meta/<slu
 
 | Variable | Default | Notes |
 | - | - | - |
-| `HF_API_KEY_ID`, `HF_API_KEY_SECRET` | – | from console.higgsfield.ai (API keys) |
+| `HF_API_KEY_ID`, `HF_API_KEY_SECRET` | – | from console.higgsfield.ai (API keys); or one `HF_API_KEY=<id>:<secret>` |
 | `HF_LOGO_MODEL`, `HF_BANNER_MODEL` | `recraft/v4.1/text-to-image` | the endpoint path after `https://api.higgsfield.ai/` |
 | `HF_PARAMS` | – | JSON merged into the body, for an endpoint that takes extra fields |
 | `RECRAFT_API_KEY`, `RECRAFT_MODEL` | – , `recraftv4_1_vector` | Recraft's own API (SVG output, $0.08/image) |

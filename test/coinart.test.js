@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT } from '../src/config.js';
+import { ROOT, loadConfig } from '../src/config.js';
 import { makeCoinArt, higgsfieldImage, recraftImages, premadeArt, download, logoPrompt, bannerPrompt, initialOf, HF_POLL } from '../src/coinart.js';
 import { sanitizeSvg, normalizeImage, ArtError, sniff, localVariants, localLogoSvg, renderPng } from '../src/coinart-render.js';
 import { pickSymbol, PICTOGRAMS } from '../src/coinart-glyphs.js';
@@ -347,4 +347,11 @@ test('art choice: launch_prepared -> the configuration is rebuilt with the new l
     assert.equal(locked.json.error ?? locked.json.code, 'intent_exists');
     assert.equal((await owner.call('GET', `/api/projects/${slug}/art`)).json.locked, true);
   } finally { h.close(); }
+});
+
+test('config: HF_API_KEY="id:secret" works like the two variables; the pair wins when both are set', () => {
+  const art = (env) => loadConfig({ LAUNCHPAD_NO_DOTENV: '1', ...env }).art;
+  assert.deepEqual([art({ HF_API_KEY: 'kid:ks:ec' }).hfKeyId, art({ HF_API_KEY: 'kid:ks:ec' }).hfKeySecret], ['kid', 'ks:ec']);
+  assert.deepEqual([art({ HF_API_KEY: 'x:y', HF_API_KEY_ID: 'a', HF_API_KEY_SECRET: 'b' }).hfKeyId, art({ HF_API_KEY: 'x:y', HF_API_KEY_ID: 'a', HF_API_KEY_SECRET: 'b' }).hfKeySecret], ['a', 'b']);
+  assert.deepEqual([art({ HF_API_KEY: 'nocolon' }).hfKeyId, art({}).hfKeySecret], ['', '']);
 });
