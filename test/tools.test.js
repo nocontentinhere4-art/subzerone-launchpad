@@ -7,7 +7,7 @@ import { request } from 'node:http';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { harness, user, drain, IDEA, wallet } from './helpers.js';
-import { validateTools, pickTools, readConcept, conceptTime, lastJst, nextJst, parseJstLocal, defaultConfig, LIBS, CATALOG, TOOL_IDS } from '../src/tools.js';
+import { validateTools, pickTools, readConcept, conceptTime, lastJst, nextJst, parseJstLocal, defaultConfig, LIBS, CATALOG, TOOL_IDS, TRUST } from '../src/tools.js';
 import { chooseTools, templateGenerate, validateSpec } from '../src/generator.js';
 import { toolsBeside } from '../src/composer.js';
 import { validateHtml, sandboxBuild, siteCsp } from '../src/site.js';
@@ -45,6 +45,8 @@ async function konbini(h, extra = {}) {
   return Object.assign(k, { owner, slug, host, origin, site, ideaId: sub.json.id, project: () => h.db.get('SELECT * FROM projects WHERE slug = ?', slug) });
 }
 const TP = { TRUST_PROXY: '1' };
+// SUB-01's pick ends with the holder tools on every coin (holder-tools.test.js covers them); these tests read the rest
+const own = (list) => list.map((t) => t.id ?? t).filter((id) => !TRUST.includes(id));
 
 /** Pretend the coin launched (mock network), as the confirm job would record it. */
 function fakeLaunch(h, slug, { network = 'mock', provider = 'mock' } = {}) {
@@ -62,12 +64,12 @@ function fakeLaunch(h, slug, { network = 'mock', provider = 'mock' } = {}) {
 // --- schemas and SUB-01's pick ---------------------------------------------------------------------------------------
 test('SUB-01 picks 3–4 generic tools plus at most one idea-specific one, by keywords (en/it/ja) and the brain', () => {
   const k = pickTools({ name: 'Konbini Confession', concept: KONBINI, networks: { language: 1 } });
-  assert.deepEqual(k.map((t) => t.id), ['token', 'drop', 'wall', 'event']);
+  assert.deepEqual(k.map((t) => t.id), ['token', 'drop', 'wall', 'event', ...TRUST], 'the holder tools on every coin');
   assert.equal(k[1].config.revealJst, '23:00');
   assert.match(k[1].config.prompt, /^Drop your confession\. It stays private; one is featured here every day at 23:00 JST\.$/);
   assert.equal(k[3].config.daily, '23:00');
   assert.equal(pickTools({ name: 'X', concept: KONBINI, networks: { reward: 1 } })[2].id, 'poll', 'reward / control -> poll');
-  assert.deepEqual(pickTools({ name: 'Ramen Radar', concept: 'A hand-drawn map of the best late-night ramen in Tokyo.', networks: {} }).map((t) => t.id), ['token', 'wall', 'memes', 'map']);
+  assert.deepEqual(own(pickTools({ name: 'Ramen Radar', concept: 'A hand-drawn map of the best late-night ramen in Tokyo.', networks: {} })), ['token', 'wall', 'memes', 'map']);
   assert.equal(readConcept('lofi beats per gatti, alle 23').extra, 'synth');
   assert.equal(readConcept('un gioco: fai punteggio ogni sera').extra, 'game');
   assert.equal(readConcept('maiban himitsu wo okuru').drop, true);
@@ -76,7 +78,7 @@ test('SUB-01 picks 3–4 generic tools plus at most one idea-specific one, by ke
   assert.equal(conceptTime('ogni notte a mezzanotte'), '00:00');
   assert.equal(conceptTime('22ji ni'), '22:00');
   for (const c of [KONBINI, 'cats', 'a game with a map and music and a chart and secrets every night, lol']) {
-    const list = pickTools({ name: 'N', concept: c, networks: { visual: 1 } });
+    const list = pickTools({ name: 'N', concept: c, networks: { visual: 1 } }).filter((t) => !TRUST.includes(t.id));
     const generic = list.filter((t) => !['map', 'synth', 'game', 'chart'].includes(t.id));
     assert.ok(generic.length >= 3 && generic.length <= 4 && list.length <= 5 && list[0].id === 'token', c);
   }
@@ -330,7 +332,7 @@ test('room PC: PUT /tools rebuilds the site; owner only; frozen between approval
     const k = await konbini(h);
     const view = (await k.owner.call('GET', `/api/projects/${k.slug}/tools`)).json;
     assert.equal(view.editable, true);
-    assert.deepEqual(view.tools.map((t) => t.id), ['token'], 'the idea app took over the drop box, the poll and the event');
+    assert.deepEqual(own(view.tools), ['token'], 'the idea app took over the drop box, the poll and the event');
     assert.deepEqual(Object.keys(view.catalog).sort(), [...TOOL_IDS].sort());
     const before = k.project().live_site_version;
     const put = await k.owner.call('PUT', `/api/projects/${k.slug}/tools`, { tools: [{ id: 'token' }, { id: 'event', config: { title: 'Receipt printing', at: '2030-01-01T23:00' } }, { id: 'memes' }, { id: 'map' }] });
@@ -385,9 +387,9 @@ test('backfill: launched coins without tools get SUB-01\'s pick as a new public 
     h.db.run('UPDATE site_versions SET spec_json = ? WHERE id = ?', JSON.stringify(old), row.id);   // as built before 2026-10-12
     fakeLaunch(h, k.slug);
     const out = await backfillTools(h.db, h.cfg);
-    assert.deepEqual(out.added.map((a) => [a.slug, a.tools]), [[k.slug, ['token', 'drop', 'poll', 'event']]]);
+    assert.deepEqual(out.added.map((a) => [a.slug, own(a.tools)]), [[k.slug, ['token', 'drop', 'poll', 'event']]]);
     assert.equal(k.project().live_site_version, p.live_site_version + 1);
-    assert.match(h.db.get(`SELECT message FROM events WHERE kind = 'tools' ORDER BY id DESC LIMIT 1`).message, /^SUB-01 added tools to the site: token, drop, poll, event/);
+    assert.match(h.db.get(`SELECT message FROM events WHERE kind = 'tools' ORDER BY id DESC LIMIT 1`).message, /^SUB-01 added tools to the site: token, drop, poll, event, trades, holders, devwatch, fees, alerts/);
     assert.deepEqual((await backfillTools(h.db, h.cfg)).added, [], 'idempotent');
   } finally { h.close(); }
 });

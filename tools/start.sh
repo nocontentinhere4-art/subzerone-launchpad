@@ -19,6 +19,7 @@ done
 $NODE scripts/refresh-site-credits.js || echo "start: refresh-site-credits failed (continuing)" >&2
 $NODE scripts/backfill-site-tools.js || echo "start: backfill-site-tools failed (continuing)" >&2
 $NODE scripts/backfill-app.js || echo "start: backfill-app failed (continuing)" >&2
+$NODE scripts/backfill-holder-tools.js || echo "start: backfill-holder-tools failed (continuing)" >&2   # after the app: it appends to the tools the app left
 
 $NODE src/worker.js &
 WORKER=$!

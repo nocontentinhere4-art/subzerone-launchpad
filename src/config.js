@@ -101,6 +101,10 @@ export function loadConfig(env = process.env) {
       heliusDailyPages: num('HELIUS_DAILY_PAGES', 1000),     // DAS calls a day (1,000 accounts each); ≈ 10 credits per call
       dexGapMs: num('DEXSCREENER_MIN_GAP_MS', 2000),          // one DexScreener call per this many ms, all coins together (≤ 30/min)
     },
+    // the coin sites' holder tools (onchain.js, holder-tools.js): read-only chain reads. RPC: ONCHAIN_RPC_URL, else Helius
+    // (mainnet), else SOLANA_RPC_URL when the coin is on that network, else the public endpoint. Bounded per day.
+    onchain: { rpcUrl: e('ONCHAIN_RPC_URL'), dailyCalls: num('ONCHAIN_DAILY_CALLS', 15000), txPerPoll: num('ONCHAIN_TX_PER_POLL', 30),
+      minGapMs: e('ONCHAIN_MIN_GAP_MS') ? num('ONCHAIN_MIN_GAP_MS', 110) : null },     // pacing between calls; default by endpoint
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
     // the app composer's dev-only "reveal now" trigger (app-api.js); refused in production whatever the variable says
     appDevTrigger: e('APP_DEV_TRIGGER') === '1' && deployEnv !== 'production',
@@ -109,6 +113,7 @@ export function loadConfig(env = process.env) {
   };
   if (cfg.sub01FeeWallet && !isSolanaAddress(cfg.sub01FeeWallet)) throw new Error('SUB01_FEE_WALLET is not a valid Solana address');
   if (cfg.cityDist && !isAbsolute(cfg.cityDist)) throw new Error('CITY_DIST must be an absolute path');
+  if (cfg.onchain.rpcUrl && !/^https:\/\//.test(cfg.onchain.rpcUrl)) throw new Error('ONCHAIN_RPC_URL must be an https:// URL');
   if (cfg.coinStats.heliusUrl && !/^https:\/\/[^/?#]+\.helius-rpc\.com\//.test(cfg.coinStats.heliusUrl)) throw new Error('HELIUS_URL must be an https://…helius-rpc.com/ URL');
   if (cfg.production) {
     const missing = [];

@@ -12,7 +12,7 @@ import { transition, LABELS, STAGES } from './states.js';
 import { audit, getSetting, setSetting, PAUSES, isPaused, backup } from './db.js';
 import { enqueue, retryDead, cancelJobs } from './jobs.js';
 import { buildSiteVersion, setLiveVersion, siteCspFor } from './site.js';
-import { CATALOG, EXTRAS, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
+import { CATALOG, EXTRAS, TRUST, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
 import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
 import { registerAppRoutes } from './app-api.js';
 import { validateSpec } from './generator.js';
@@ -292,7 +292,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const spec = liveSpec(db, p);
     return { editable: owner && TOOL_STATES.includes(idea.status), status: idea.status,
       lockedNote: TOOL_STATES.includes(idea.status) ? null : 'The site is frozen between your approval and the launch; tools can change again after the launch (or reopen the preview).',
-      tools: spec?.tools || [], catalog: CATALOG, extras: EXTRAS, libs: LIBS, holderChecks: Boolean(cfg.coinStats.heliusUrl),
+      tools: spec?.tools || [], catalog: CATALOG, extras: EXTRAS, trust: TRUST, libs: LIBS, holderChecks: Boolean(cfg.coinStats.heliusUrl),
       liveSiteVersion: p.live_site_version, inbox: ownerInbox(db, cfg, p) };
   });
   r.put('/api/projects/:slug/tools', async (ctx) => {

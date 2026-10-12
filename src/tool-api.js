@@ -11,6 +11,7 @@ import { shortWallet } from './world.js';
 import { publicStats } from './coin-stats.js';
 import { toolOf, lastJst, nextJst, parseJstLocal, jstDay } from './tools.js';
 import { createAppApi } from './app-api.js';
+import { createHolderTools, HOLDER_PATHS } from './holder-tools.js';
 import { HttpError, id, now, parseJson, sha256, token, isSolanaAddress, verifyWalletSignature, b58decode, b58encode } from './util.js';
 
 export const LIMITS = Object.freeze({
@@ -173,6 +174,7 @@ export function eventNext(conf, t = now()) {
 /** `limit(rule, key)` is app.js's rate limiter. Returns handle(ctx) -> {status, body, headers?}. */
 export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
   const isHolder = createHolderCheck({ cfg, fetchImpl });
+  const holderTools = createHolderTools({ db, cfg, fetchImpl });
   // the idea app's endpoints (/_api/app*, app-api.js) share the signing, the caps and the holder checks
   const appApi = createAppApi({ db, cfg, fetchImpl, limit, h: { issue, consume, ipHash, launchOf, holderMode, isHolder } });
   // a tool's config: the site's tool, or the app's block of the same kind (the app's map is the map tool)
@@ -219,7 +221,9 @@ export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
         case '/_api/poll': return { body: pollState(db, cfg, project, conf(spec, 'poll')) };
         case '/_api/drop': return { body: dropState(db, project, conf(spec, 'drop'), t) };
         case '/_api/map': return { body: mapState(db, project, conf(spec, 'map')) };
-        default: throw new HttpError(404, 'not_found');
+        default:
+          if (HOLDER_PATHS[path]) { conf(spec, HOLDER_PATHS[path]); return holderTools.handle(path, project); }   // holder-tools.js
+          throw new HttpError(404, 'not_found');
       }
     }
     if (method !== 'POST') throw new HttpError(405, 'method_not_allowed');

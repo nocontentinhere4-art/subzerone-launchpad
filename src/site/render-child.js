@@ -9,7 +9,14 @@ const esc = (s) => String(s ?? '').replace(/[&<>"'`]/g, (c) => ({ '&': '&amp;', 
 const color = (c, d) => (/^#[0-9a-fA-F]{6}$/.test(String(c)) ? c : d);
 const KIT_CSS = '<link rel="stylesheet" href="/_kit/site-kit.v1.css">';
 const KIT_JS = '<script src="/_kit/site-kit.v1.js" defer></script>';
-const NAMES = { token: 'Token', wall: 'Community wall', poll: 'Poll', drop: 'Drop box', event: 'Next event', memes: 'Meme maker', map: 'Map', synth: 'Sound toy', game: 'Mini-game', chart: 'Chart' };
+const NAMES = { token: 'Token', wall: 'Community wall', poll: 'Poll', drop: 'Drop box', event: 'Next event', memes: 'Meme maker', map: 'Map', synth: 'Sound toy', game: 'Mini-game', chart: 'Chart',
+  trades: 'Live trades', holders: 'Holders', devwatch: 'Dev watch', fees: 'Fee ledger', alerts: 'Alerts' };
+// the holder tools (tools.js TRUST): read from the chain by the live site; title and what each one shows
+const TRUST = { trades: ['Every buy and sell', 'Each trade on the bonding curve, decoded from the chain: time, side, SOL, tokens and the wallet, with the dev, top-10 holders and first buys flagged.'],
+  holders: ['Who holds it', 'The top 20 holders and their share of the supply, the bonding curve labelled and left out, and how concentrated it is, in plain words.'],
+  devwatch: ['Watch the dev', 'The author wallet: the dev buy at launch, what it holds now, and every sale with its time and size.'],
+  fees: ['Where the fees go', 'The creator fees of this coin: who gets what, as locked on chain when it launched (SUB-01 keeps 20%), what was paid out and what is waiting.'],
+  alerts: ['Alerts', 'Get told when the market cap crosses a line you set, or when the dev sells. Kept in your browser only.'] };
 const DASH = '—';
 
 let input = '';
@@ -53,6 +60,10 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
     case 'map': return tool(t, c.title || 'Map', `<div class="map" data-map></div>${(c.places || []).length ? `<ul class="places">${c.places.map((p) => `<li>${esc(p.name)}</li>`).join('')}</ul>` : ''}<p class="fine">Map data © OpenStreetMap contributors.</p>`, { wide: true });
     case 'synth': return tool(t, c.title || 'Sound toy', `<p>An eight-step loop on the ${esc(c.scale)} scale at ${esc(c.bpm)} BPM. Tap the grid, press play.</p>`);
     case 'game': return tool(t, c.title || 'Mini-game', '<p>Thirty seconds: catch the falling coins, dodge the red ones.</p>', { wide: true });
+    case 'trades': case 'holders': case 'devwatch': case 'fees': case 'alerts': {
+      const note = tk.state === 'pre-launch' ? 'Goes live at launch: there is no coin on chain yet.' : tk.state === 'mock' ? 'MOCK launch: no blockchain, nothing to read.' : 'Reads the chain on the live site.';
+      return tool(t, TRUST[t.id][0], `<p>${esc(TRUST[t.id][1])}</p>`, { wide: t.id === 'trades' || t.id === 'holders', note });
+    }
     case 'chart': return tool(t, c.title || 'Chart', `<div class="chart" data-chart></div><p class="fine">Price over the last ${c.range === '7d' ? 'week' : 'day'}, from the stored samples. No samples, no line.</p>`, { wide: true });
     default: return '';
   }
@@ -92,7 +103,8 @@ ${s.blocks.map((b, i) => `<div class="app-block app-${esc(b.type)}" data-type="$
 function render({ spec, context }) {
   const p = spec.palette || {};
   const accent = color(p.accent, '#fb752b'), second = color(p.second, '#ff9a3c');
-  const tools = Array.isArray(spec.tools) ? spec.tools : [];
+  const all = Array.isArray(spec.tools) ? spec.tools : [];
+  const tools = all.filter((t) => !TRUST[t.id]), trust = all.filter((t) => TRUST[t.id]);
   const tk = context.token || {};
   const links = (context.links || []).map((l) => link(l, 'btn')).join('');
   const sections = spec.sections.map((s, i) => `<article class="card reveal${i === 0 ? ' big' : ''}"><h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p></article>`).join('\n');
@@ -122,9 +134,10 @@ ${appHtml(spec.app)}
 <div class="bento">
 ${sections}
 </div>
+${trust.length ? `<h2 class="sec">Check the chain</h2>\n<div class="tools trust">\n${trust.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
 ${tools.length ? `<h2 class="sec">On this site</h2>\n<div class="tools">\n${tools.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
 <nav>${links}</nav>
 <footer>Idea by <code>${esc(context.submitter)}</code>. Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>
-and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${tools.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
-</main>${tools.length || spec.app ? KIT_JS : ''}</body></html>`;
+and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${all.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
+</main>${all.length || spec.app ? KIT_JS : ''}</body></html>`;
 }

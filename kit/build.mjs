@@ -25,6 +25,13 @@ mkdirSync(join(OUT, 'fonts'), { recursive: true });
 const VENDOR = { anime: LIBS.anime.file, leaflet: LIBS.leaflet.file, leafletCss: LIBS.leaflet.css, tone: LIBS.tone.file, kaplay: LIBS.kaplay.file,
   uplot: LIBS.uplot.file, uplotCss: LIBS.uplot.css, qrcode: LIBS.qrcode.file, pq: LIBS.pq.file };
 const common = { bundle: true, minify: true, target: ['es2020', 'chrome100', 'firefox100', 'safari15'], legalComments: 'eof', logLevel: 'warning', charset: 'utf8' };
+// the holder tools (kit/src/tools/holder-tools.js): our own code, a chunk named by its content hash (vendor files are cached a year)
+{
+  const out = await build({ ...common, entryPoints: [join(ROOT, 'kit/src/tools/holder-tools.js')], format: 'esm', write: false });
+  const code = out.outputFiles[0].contents;
+  VENDOR.holderTools = `holder-tools.${createHash('sha256').update(code).digest('hex').slice(0, 10)}.js`;
+  writeFileSync(join(OUT, 'vendor', VENDOR.holderTools), code);
+}
 
 // the idea app's interpreter (kit/app/*.js, docs/APP-COMPOSER.md): its own module next to the core, loaded only on
 // sites that carry an app, cached like the core (a day) so the two never drift apart for long

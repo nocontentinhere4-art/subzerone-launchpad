@@ -15,8 +15,9 @@ transaction: the tools read stored or public chain data and ask wallets for **si
 | Validator allowance, CSP, sandbox | `src/site.js` |
 | Routing (`/_kit`, `/_api`), owner endpoints | `src/app.js` |
 | The kit's source and build | `kit/src/*`, `kit/build.mjs` → `public/_kit/` (committed) |
-| Data | `migrations/012_site_tools.sql` |
-| Tests | `test/tools.test.js` (14 tests) |
+| Data | `migrations/012_site_tools.sql`, `migrations/015_holder_tools.sql` (chain copy of the holder tools) |
+| Tests | `test/tools.test.js` (14 tests), `test/holder-tools.test.js` (14 tests, real mainnet fixtures in `test/fixtures/onchain/`) |
+| Holder tools: chain layer, endpoints, backfill, mainnet check | `src/onchain.js`, `src/holder-tools.js`, `kit/src/tools/holder-tools.js`, `scripts/check-holder-tools.js` (section "Holder tools" below) |
 
 ## Architecture decision: origin and sandbox
 
@@ -91,6 +92,11 @@ the one-line fallback (CSP and the validator do the real work).
 | `synth` *(extra)* | An 8-step sequencer on a scale that fits the idea (pentatonic, minor, major, in-sen), Tone.js. | — | — |
 | `game` *(extra)* | A 30-second "catch the coins, dodge the red ones" game with the coin logo, KAPLAY; best score per device. | — | — |
 | `chart` *(extra)* | Price over 24 h / 7 d from the stored samples, uPlot. Fewer than two samples: a sentence, no line. | `coin_samples` | — |
+| `trades` *(holder)* | Live buy/sell feed of the bonding curve: time, side, SOL, tokens, wallet (Solscan), flags dev / top 10 / first buy; 24 h totals. | chain (`chain_trades`) | — |
+| `holders` *(holder)* | Top 20 holders, % of supply, the curve and the PumpSwap pool labelled and left out, top-10 / top-1 %, holder count, a risk line in plain words. | chain | — |
+| `devwatch` *(holder)* | The author wallet: dev buy vs balance now, every move in or out with time and size, a status line. | chain | — |
+| `fees` *(holder)* | Creator-fee ledger: the locked split read from the sharing config, paid out (decoded payouts) + waiting (vault, curve, AMM) = accrued, per shareholder. | chain + `fee_observations` | — |
+| `alerts` *(holder)* | "Tell me when MC > X / < Y or when the dev sells": localStorage only, polled while the page is open, toast + Notification. | `/_api/token`, `/_api/devwatch` | — |
 
 At most 6 tools per site and at most one extra. Every config is validated strictly (`validateTools`: unknown fields,
 duplicates, sizes, markup characters, the financial-promises filter of `validateSpec` over the whole spec).
@@ -176,6 +182,57 @@ Existing launched coins: `scripts/backfill-site-tools.js` (run by `tools/start.s
 idempotent, never fatal) gives every launched coin whose live spec has no `tools` key SUB-01's pick as a new site
 version, set live, with the public audit line "SUB-01 added tools to the site: …". A spec with `tools: []` (the author
 switched everything off) is left alone.
+
+## Holder tools (2026-10-12)
+
+The trust layer on every coin site, on top of the six tools above (they do not count toward the limit of 6): **trades,
+holders, devwatch, fees, alerts**. SUB-01 gives all five to every coin (`pickTools` appends `TRUST`); before the launch
+they render in their own section "Check the chain" with what each one does and "Goes live at launch"; on a MOCK launch
+they say there is no chain. The author can switch them off in the room PC like any tool (`kind: 'trust'` in the catalog,
+`trust` in `GET /api/projects/:slug/tools`).
+
+**Honest data.** Every number is read from the chain (decoded pump.fun events, account balances, the sharing config)
+or it is `null` and the page shows "—" with the reason. Nothing is estimated: accrued fees are *paid out + waiting*, both
+read on chain; holder counts are counted (Helius DAS) or shown as "—" / "≥ N"; the dev status says when the author
+account's history is still loading; the 24 h trade totals appear only once the history read covers a full day.
+
+**Where the data comes from** (`src/onchain.js`, read-only, no key ever signs):
+
+| Tool | Source | Cadence (only while a page asks) |
+|---|---|---|
+| trades | `getSignaturesForAddress(bondingCurvePda(mint))` → `getTransaction` (json, `maxSupportedTransactionVersion: 1`) → `TradeEvent` decoded with `PUMP_SDK.decodeTradeEventBc`, from the self-CPI event instructions (never truncated) or the program's own `Program data:` lines, never both. Incremental: `chain_cursors` (newest / oldest signature), `chain_sigs` (queue, failed transactions never fetched), `chain_trades`. Newest first, then older history page by page. | one step per 15 s per coin, ≤ `ONCHAIN_TX_PER_POLL` (30) transactions |
+| holders | Helius DAS `getTokenAccounts` (every account, ≤ 5 pages from the shared Helius page budget) → exact top 20 and count; else RPC `getTokenLargestAccounts` + `getMultipleAccounts` (owners): exact top 20, count from coin stats or "—". Excluded and labelled: `bondingCurvePda`, `canonicalPumpPoolPda`; labelled: the author, SUB-01, off-curve owners ("program account"). Supply from `getTokenSupply`. | 5 min per coin |
+| devwatch | the author's Token-2022 ATA history (same walker): per transaction the author's token change from pre/post balances, classified `dev buy` (the launch transaction), `buy`/`sell` (a `TradeEvent` of the author), `sell (PumpSwap)`, `out`/`in` (a transfer, or a sale through another program); balance now = `getTokenAccountsByOwner(author, mint)`; the dev buy = `launch_intents.buy_tokens_base` (reviewed, exact-out) or the launch transaction's own change | 30 s |
+| fees | the sharing config `feeSharingConfigPda(mint)` decoded (shareholders, `adminRevoked`), its history → `DistributeCreatorFeesEvent` (paid out), waiting = creator vault `creatorVaultPda(sharingConfig)` balance − rent + the curve's unswept `creator_fee` (+ the PumpSwap creator vault's WSOL after a migration). Cross-check: the sum of the curve trades' creator fees. The hourly `feeLedger` (reconcile job) rides along as `ledger`. | 60 s |
+| alerts | the visitor's browser: `/_api/token` (stored DexScreener market cap) and `/_api/devwatch`, every minute while the page is open | — |
+
+After a migration to PumpSwap the trades feed says so and links DexScreener (AMM trades are not decoded here).
+
+**API** (project host, same rules as the other `/_api` reads: 300/min per IP, no cookies):
+`GET /_api/trades` → `{state, migrated, note, history:{complete, listed, done, oldestAt}, last24h, trades:[{sig, at, side, sol, tokens, wallet, short, walletUrl, txUrl, flags}], source, syncing, error}`;
+`GET /_api/holders` → `{holders:[{rank, owner, pct, amount, label, excluded, url}], top10Pct, top1Pct, count, countExact, countSource, risk:{level, line}, supply, source}`;
+`GET /_api/devwatch` → `{author, devBuy, devBuySource, balance, heldPct, sold, status, level, moves:[{sig, at, kind, tokens, sol}], history}`;
+`GET /_api/fees` → `{sharingConfig, adminRevoked, shareholders:[{address, label, pct, accrued, received, waiting}], accrued, distributed, waiting, waitingParts, distributions, fromTrades, ledger}`.
+`state` is `pre-launch` / `mock` / `live`; amounts are SOL and whole tokens.
+
+**RPC and cost.** `ONCHAIN_RPC_URL` if set, else Helius for mainnet coins (`HELIUS_API_KEY`), else `SOLANA_RPC_URL` when it
+is the coin's network, else the public endpoint. Paced (public 450 ms, others 110 ms; `ONCHAIN_MIN_GAP_MS`), retried on
+429, counted per UTC day against `ONCHAIN_DAILY_CALLS` (15,000; the tools say when it is used up). A new coin's whole
+history is read once (one `getTransaction` per successful curve transaction), then only the new signatures. Measured
+2026-10-12: the public mainnet RPC served ~13–30 `getTransaction` a minute from this machine, too slow for a busy coin's
+backfill; Helius served ~150 a minute. **Production should run the holder tools on Helius (or a paid RPC).**
+
+**Kit.** `kit/src/tools/holder-tools.js` is built as its own chunk, `/_kit/vendor/holder-tools.<hash>.js` (4.7 KB gzip),
+loaded only on sites that carry the tools, on the core's helpers (text only, no HTML sinks; the test greps the chunk).
+Polls pause while the tab is hidden. Styles: `kit/src/tools/holder-tools.css` (imported by `site-kit.css`).
+
+**Existing coins.** `scripts/backfill-holder-tools.js` (boot, after `backfill-site-tools.js` and `backfill-app.js`, idempotent) runs `backfillHolderTools`: every launched
+coin whose live site lacks any holder tool gets them appended as a new site version, set live, with the public audit
+line "SUB-01 added holder tools to the site: …". Once per coin (the audit line is the marker): a coin whose author
+later removes them, or switched every tool off (`tools: []`), is left alone.
+
+**Mainnet check.** `node scripts/check-holder-tools.js <mint>…` reads a coin's whole history through the same code and
+prints the decoded trades, holders, dev status and fee numbers (results below, "Verified on mainnet").
 
 ## Bundle and sizes
 
@@ -270,3 +327,23 @@ counted (the wallet signed exactly the message above); a drop submitted, then fe
 API and shown as "Today's pick"; the token panel showed the mock numbers (marked MOCK), copy and QR; the meme maker
 downloaded a 640×640 PNG; the event exported an `.ics`; the map loaded OSM tiles and took a pin; the synth played; the
 game ran. Screenshots: `kit-*.png` in the session scratchpad.
+
+## Verified on mainnet: the holder tools (2026-10-12, read-only)
+
+`scripts/check-holder-tools.js` over the whole history of two SUBZERONE coins (Helius RPC for the history read: the
+public RPC served too few `getTransaction` a minute; nothing signed or sent). Both coins: author `HMPUiULX…6STQ`, no dev
+buy, split locked 80% author / 20% SUB-01 (`4o16Xj4E…VjVAg`), admin revoked, not migrated.
+
+| | Konbini Confession `8NmKmy…a8w7` | DIDDY `FPZCgk…6vX5` |
+|---|---|---|
+| curve signatures (failed) | 4,879 (2,428) | 1,799 (815) |
+| trades decoded | 2,387: 1,335 buys, 1,052 sells, 611 wallets; 573.53 SOL in, 567.06 out | 176: 100 buys, 76 sells, 52 wallets; 42.42 SOL in, 40.22 out |
+| holders (DAS, exact) | 24; curve 80.97%; top 10 hold 18.6% of the supply, 97.9% of circulation: high | 5; curve 92.67%; 4 wallets hold 7.3% of the supply, 100% of circulation: high |
+| dev | no dev buy, holds 0 | no dev buy, holds 0 |
+| fees accrued = paid + waiting | 3.421748 = 3.387247 (6 payouts) + 0.034500 SOL | 0.247906 = 0.212174 (1 payout) + 0.035732 SOL |
+| cross-check: Σ creator fee of the trades | 3.421748 SOL (equal) | 0.247906 SOL (equal) |
+
+The two ledgers agree to the lamport once the vault's rent is read on chain (`getMinimumBalanceForRentExemption(0)` =
+650,240 lamports on 2026-10-12; a hard-coded 890,880 was off by exactly the difference). Screenshots of each tool on the
+local Konbini site with this data: `util-*.png` in the session scratchpad.
+

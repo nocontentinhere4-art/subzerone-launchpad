@@ -9,7 +9,8 @@
   "uplot": "uplot-1.6.32.js",
   "uplotCss": "uplot-1.6.32.css",
   "qrcode": "qrcode-2.0.4.js",
-  "pq": "noble-post-quantum-0.7.1.js"
+  "pq": "noble-post-quantum-0.7.1.js",
+  "holderTools": "holder-tools.698a9c9dca.js"
  },
  "files": {
   "LICENSES.txt": {
@@ -48,19 +49,24 @@
    "sha256": "48a6549a1e899ab7c3820b9b7f4cad8661fd4ab0ee2d614e0d5ad7e489a235d2"
   },
   "site-kit.v1.css": {
-   "bytes": 15469,
-   "gzip": 4101,
-   "sha256": "823532b547e04fe1d09440ef0098590ce4f1ce2b5a9dd7a9b52085e4b6249be1"
+   "bytes": 19783,
+   "gzip": 4986,
+   "sha256": "31d623c6a5541802e73572df480d9fb19d3e36cf611e946c859cdb2ec008b1fa"
   },
   "site-kit.v1.js": {
-   "bytes": 34337,
-   "gzip": 14239,
-   "sha256": "1d2e30a2be96d3070183c8ba4edabf42f66b131e0a717511732995dbfdca4a78"
+   "bytes": 34627,
+   "gzip": 14383,
+   "sha256": "986e21962d3624ff130bf3db5a260bd17d966065161fec1bb737d352b71e70de"
   },
   "vendor/anime-4.5.0.js": {
    "bytes": 39995,
    "gzip": 15938,
    "sha256": "3cd5f2adebc65aa554ec2ffa9177984c4c263166997c690025509b894e3f00c0"
+  },
+  "vendor/holder-tools.698a9c9dca.js": {
+   "bytes": 12076,
+   "gzip": 4877,
+   "sha256": "698a9c9dcada00c1d8a34587b455ec4072025a597ae88d9e4101632467cc79c0"
   },
   "vendor/kaplay-3001.0.19.js": {
    "bytes": 190127,

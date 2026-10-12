@@ -1,0 +1,54 @@
+/* The holder tools (holder-tools.js): live trades, holders, dev watch, fee ledger, alerts. Same tokens as site-kit.css. */
+.tools.trust{grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr))}
+.flag{display:inline-block;font:700 10px/1 var(--mono);letter-spacing:.08em;padding:4px 6px;border-radius:6px;border:1px solid var(--line);color:var(--dim);margin-left:6px;vertical-align:middle;white-space:nowrap}
+.flag.ok{color:#7be3a6;border-color:rgba(61,220,132,.35);background:rgba(61,220,132,.08)}
+.flag.warn{color:#ffb36b;border-color:rgba(251,117,43,.45);background:rgba(251,117,43,.1)}
+.flag.info{color:#9cc3ff;border-color:rgba(120,170,255,.35);background:rgba(120,170,255,.08)}
+.lnk{color:var(--fg);text-decoration:none;font-family:var(--mono);font-size:13px;border-bottom:1px dotted var(--dim)}
+.lnk:hover{color:var(--brand);border-color:var(--brand)}
+.lnk.tx{border:0;color:var(--dim);justify-self:end}
+.num{font:600 13px/1.2 var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+.num.dim,.dim{color:var(--dim)}
+.tt{font:12px/1.2 var(--mono);color:var(--dim);white-space:nowrap}
+.stats .wide{grid-column:1/-1;margin:0}
+.stat small{display:block;margin-top:6px}
+/* trades */
+.trades-h,.trade{display:grid;grid-template-columns:104px 46px 1fr 1fr 1.6fr 18px;gap:10px;align-items:center}
+.lock{display:flex;flex-wrap:wrap;align-items:center;gap:6px}.lock .flag{margin:0}
+.trades-h{font:10px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--dim);padding:8px 10px 6px;border-bottom:1px solid var(--line)}
+.trades-h span:nth-child(3),.trades-h span:nth-child(4){text-align:right}
+.trades{list-style:none;margin:0;padding:0;max-height:440px;overflow:auto}
+.trade{padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.04)}
+.trade:hover{background:rgba(255,255,255,.03)}
+.side{font:800 11px/1 var(--mono);letter-spacing:.08em;padding:5px 0;border-radius:6px;text-align:center}
+.side.buy{color:#06140c;background:#3ddc84}.side.sell{color:#1a0508;background:#ff5a6a}
+.who{display:flex;flex-wrap:wrap;align-items:center;gap:2px;min-width:0}
+/* holders */
+.risk{font:700 17px/1.4 var(--sans);padding:12px 14px;border-radius:12px;border:1px solid var(--line);background:rgba(0,0,0,.25)}
+.risk.high{border-color:rgba(255,90,106,.5);background:rgba(255,90,106,.08)}
+.risk.moderate{border-color:rgba(251,117,43,.45);background:rgba(251,117,43,.07)}
+.risk.low{border-color:rgba(61,220,132,.4);background:rgba(61,220,132,.06)}
+.holders,.moves{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:4px;max-height:460px;overflow:auto}
+.holders li{position:relative;display:grid;grid-template-columns:38px 1fr 70px;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.22);overflow:hidden}
+.holders li.excluded{opacity:.6}
+.holders .rank{font:700 12px var(--mono);color:var(--dim)}
+.hbar{position:absolute;left:0;bottom:0;height:3px;background:linear-gradient(90deg,var(--brand),var(--ac2));border-radius:2px}
+.holders li.excluded .hbar{background:var(--dim)}
+/* dev watch, payouts */
+.moves li{display:grid;grid-template-columns:120px auto 1fr 1fr 18px;gap:10px;align-items:center;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.22)}
+.moves li.fine{display:block}
+.moves .flag{margin:0;justify-self:start}
+/* fees */
+.split{display:grid;gap:10px;margin:8px 0 16px}
+.share{position:relative;padding:12px 14px 14px;border-radius:12px;background:rgba(0,0,0,.25);border:1px solid var(--line);overflow:hidden}
+.share-h{display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin-bottom:4px}
+.share-h b{font:800 20px/1 var(--mono)}
+.share .hbar{height:4px}
+/* alerts */
+.alert-form{display:grid;grid-template-columns:1.3fr 1fr auto;gap:8px}
+select{width:100%;background:rgba(0,0,0,.35);color:var(--fg);border:1px solid var(--line);border-radius:12px;padding:11px 12px;font:15px/1.5 var(--sans)}
+.toasts{position:fixed;right:16px;bottom:16px;display:grid;gap:8px;z-index:60;max-width:min(380px,calc(100vw - 32px))}
+.toast{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:start;padding:12px 14px;border-radius:14px;background:rgba(18,18,24,.96);border:1px solid var(--brand);box-shadow:0 18px 40px -16px var(--brand);font-size:14px}
+.toast b{font:800 11px/1.6 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--brand)}
+.toast .x{background:none;border:0;color:var(--dim);font-size:18px;line-height:1;cursor:pointer}
+@media(max-width:560px){.trades-h,.trade{grid-template-columns:62px 40px 1fr 1.3fr 16px}.trade .tt{font-size:10px;white-space:normal}.trades-h span:nth-child(4),.trade .num.dim{display:none}.alert-form{grid-template-columns:1fr}.moves li{grid-template-columns:1fr auto auto 16px}.moves .num.dim{display:none}}

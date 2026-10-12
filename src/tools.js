@@ -8,7 +8,10 @@ import { rankedNetworks } from './art.js';
 // only that site loads (lazily, from /_kit/vendor/).
 export const GENERIC = ['token', 'wall', 'poll', 'drop', 'event', 'memes'];
 export const EXTRAS = ['map', 'synth', 'game', 'chart'];
-export const TOOL_IDS = [...GENERIC, ...EXTRAS];
+// Holder tools (holder-tools.js, onchain.js): the trust layer every coin gets, on top of the MAX_TOOLS above. Real chain
+// data only; before the launch they show a "goes live at launch" state. alerts runs in the visitor's browser.
+export const TRUST = ['trades', 'holders', 'devwatch', 'fees', 'alerts'];
+export const TOOL_IDS = [...GENERIC, ...EXTRAS, ...TRUST];
 export const MAX_TOOLS = 6;
 
 // Libraries the extras (and the motion layer) load; the file names are what /_kit/vendor/ serves (kit/build.mjs).
@@ -51,6 +54,11 @@ export const CATALOG = Object.freeze({
     fields: [{ key: 'title', label: 'Title', type: 'text', max: 60 }] },
   chart: { name: 'Price chart', line: 'The coin\'s price and market cap over the last day or week, from the stored samples.', kind: 'extra', lib: 'uplot',
     fields: [{ key: 'title', label: 'Title', type: 'text', max: 60 }, { key: 'range', label: 'Range', type: 'choice', choices: ['24h', '7d'] }] },
+  trades: { name: 'Live trades', line: 'Every buy and sell on the bonding curve, decoded from the chain: time, side, SOL, tokens, wallet, and flags for the dev, top-10 holders and first buys.', kind: 'trust', fields: [] },
+  holders: { name: 'Holders', line: 'The top 20 holders with their share of the supply, the bonding curve labelled and left out, concentration in plain words.', kind: 'trust', fields: [] },
+  devwatch: { name: 'Dev watch', line: 'The author wallet: the dev buy at launch, what it holds now, every sale with time and size.', kind: 'trust', fields: [] },
+  fees: { name: 'Fee ledger', line: 'Creator fees of the coin: the split locked on chain at launch (read from the sharing config), what was paid out and what is waiting.', kind: 'trust', fields: [] },
+  alerts: { name: 'Alerts', line: 'Visitors set "tell me when the market cap passes X or the dev sells"; kept in their browser only.', kind: 'trust', fields: [] },
 });
 
 const SCALES = ['pentatonic', 'minor', 'major', 'insen'];
@@ -156,6 +164,7 @@ const SCHEMAS = {
     return { title: text('synth', c.title, 'title', 1, 60) || 'Sound toy', scale, bpm };
   },
   game: (c) => { keys('game', c, ['title']); return { title: text('game', c.title, 'title', 1, 60) || 'Mini-game' }; },
+  ...Object.fromEntries(TRUST.map((id) => [id, (c) => { keys(id, c, []); return {}; }])),
   chart: (c) => {
     keys('chart', c, ['title', 'range']);
     const range = c.range ?? '24h';
@@ -168,7 +177,7 @@ const SCHEMAS = {
  * Rules: an array of at most MAX_TOOLS {id, config}, each id once, at most one extra. */
 export function validateTools(list) {
   if (!Array.isArray(list)) throw new ToolError('tools: an array');
-  if (list.length > MAX_TOOLS) throw new ToolError(`tools: at most ${MAX_TOOLS}`);
+  if (list.length > MAX_TOOLS + TRUST.length) throw new ToolError(`tools: at most ${MAX_TOOLS}`);
   const seen = new Set();
   const out = list.map((t) => {
     if (!t || typeof t !== 'object' || Array.isArray(t)) throw new ToolError('tools: each one is {id, config}');
@@ -179,6 +188,7 @@ export function validateTools(list) {
     seen.add(t.id);
     return { id: t.id, config: SCHEMAS[t.id](t.config ?? {}) };
   });
+  if (out.filter((t) => !TRUST.includes(t.id)).length > MAX_TOOLS) throw new ToolError(`tools: at most ${MAX_TOOLS} (plus the holder tools)`);
   if (out.filter((t) => EXTRAS.includes(t.id)).length > 1) throw new ToolError('tools: at most one idea-specific tool');
   return out;
 }
@@ -250,6 +260,7 @@ export function defaultConfig(id, { name = 'this coin', concept = '' } = {}) {
     case 'synth': return { title: `${name}: sound toy`.slice(0, 60), scale: / (japan|tokyo|kyoto|wa|nihon|giappon|insen) /.test(fold(concept)) ? 'insen' : 'pentatonic', bpm: 96 };
     case 'game': return { title: `Catch the ${name.slice(0, 40)}` };
     case 'chart': return { title: `${name}: price chart`.slice(0, 60), range: '24h' };
+    case 'trades': case 'holders': case 'devwatch': case 'fees': case 'alerts': return {};
     default: throw new ToolError(`unknown tool ${id}`);
   }
 }
@@ -265,7 +276,8 @@ export function readConcept(concept) {
 }
 
 /** SUB-01's pick for a new site: 3–4 generic tools (always the token panel; wall or poll by the brain's dominant network;
- * drop, event, memes when the concept calls for them) plus at most one extra when the concept fits. */
+ * drop, event, memes when the concept calls for them) plus at most one extra when the concept fits, then the holder
+ * tools (TRUST) on every coin. */
 export function pickTools({ name, concept, networks }) {
   const r = readConcept(concept);
   const top = rankedNetworks(networks).find((n) => LANGUAGE_NETS.has(n.group) || REWARD_NETS.has(n.group));
@@ -277,6 +289,6 @@ export function pickTools({ name, concept, networks }) {
   if (r.memes) ids.push('memes');
   const generic = ids.slice(0, 4);
   if (generic.length < 3) generic.push('memes');
-  const list = r.extra ? [...generic, r.extra] : generic;
+  const list = [...(r.extra ? [...generic, r.extra] : generic), ...TRUST];
   return validateTools(list.map((id) => ({ id, config: defaultConfig(id, { name, concept }) })));
 }

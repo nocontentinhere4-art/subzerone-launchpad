@@ -4,6 +4,7 @@
    Archivo and JetBrains Mono, SIL OFL 1.1. The looks (gradient title, bento grid, glass cards, shimmer button,
    ticker strip) are written here from scratch in plain CSS after the patterns of Kokonut UI (MIT); no component code
    was copied and no React or Tailwind ships to a coin site. */
+@import "./tools/holder-tools.css";
 @font-face{font-family:"Archivo";font-style:normal;font-weight:400;font-display:swap;src:url(/_kit/fonts/archivo-400.woff2) format("woff2")}
 @font-face{font-family:"Archivo";font-style:normal;font-weight:700;font-display:swap;src:url(/_kit/fonts/archivo-700.woff2) format("woff2")}
 @font-face{font-family:"Archivo";font-style:normal;font-weight:800;font-display:swap;src:url(/_kit/fonts/archivo-800.woff2) format("woff2")}

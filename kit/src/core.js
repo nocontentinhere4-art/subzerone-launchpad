@@ -404,6 +404,16 @@ const TOOLS = {
   },
 };
 
+// the holder tools (trades, holders, devwatch, fees, alerts): kit/src/tools/holder-tools.js, a chunk of its own
+// (/_kit/vendor/holder-tools.<hash>.js) loaded once on the sites that carry them, run on the same helpers as the core
+let holder = null;
+for (const id of ['trades', 'holders', 'devwatch', 'fees', 'alerts']) {
+  TOOLS[id] = async (sec, slot, conf) => {
+    holder ??= vendor('holderTools').then((m) => m.holderTools({ h, api, msg, say, busy, usd, count, slideIn, store, isNum, DASH, doc, win }));
+    return (await holder)[id](sec, slot, conf);
+  };
+}
+
 function runGame(kaplay, cv, m, best, setBest, done) {
   const k = kaplay({ canvas: cv, width: 640, height: 480, global: false, background: [11, 11, 16], letterbox: true, loadingScreen: false, burp: false, crisp: true, touchToMouse: true, maxFPS: 60, focus: false });
   k.loadSprite('logo', './logo.png');
