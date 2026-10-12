@@ -141,6 +141,12 @@ export function appFeatures(app, { name = 'this coin' } = {}) {
     switch (b.type) {
       case 'launch': {
         const s = b.split || {};
+        // a launchpad for launchpads (family.js): the coins launched here are launchpads; fees flow up the tree
+        if (b.children === 'launchpads' || b.children === 'choice') {
+          const c2 = Math.max(5000, (s.creator || 0) - 1000);
+          t = `Anyone can launch ${b.children === 'choice' ? 'a coin or a launchpad' : 'a launchpad'} from this site with their own wallet: a real pump.fun coin whose own site launches coins too, down to 5 generations. SUB-01 reads each one first. Creator fees flow up the family tree, split on-chain and locked at launch: ${pct(s.creator)} to the coin's creator and ${pct(s.parent)} to the parent launchpad's author (from the second generation ${pct(c2)} to the creator, ${pct(s.parent)} to the parent's author and ${pct(s.creator - c2)} to the grandparent's author), and ${pct(s.sub01)} to SUB-01. The fees go to creators up the tree, never to buyers or holders.`;
+          break;
+        }
         t = `Anyone can launch a real pump.fun coin from this site with their own wallet. SUB-01 reads each one first, and its creator fees are split on-chain and locked at launch: ${pct(s.creator)} to the coin's creator, ${pct(s.parent)} to ${name}'s author, ${pct(s.sub01)} to SUB-01.` +
           `${b.devBuy ? ' The creator can add a dev buy.' : ''}${b.list ? ' Every coin launched here is listed on the page.' : ''}`;
         break;
@@ -175,6 +181,9 @@ export function appFeatures(app, { name = 'this coin' } = {}) {
         break;
       case 'note':
         t = `${b.title}: ${b.body}`;
+        break;
+      case 'tree':
+        t = `${b.title}: the live family tree of every launchpad born here, who launched whom, with each one's launch time and depth${b.rankings ? ', the fastest-growing branch (launches in the last 24 hours) and the launchpads with the most descendants' : ''}.`;
         break;
       default:
         break;
@@ -220,6 +229,7 @@ function templateTagline(app, name) {
   if (!app) return null;
   const one = app.noun?.one || 'entry', many = app.noun?.many || 'entries', sched = blockOf(app, 'schedule');
   const t = {
+    'launchpad-family': 'Launch a launchpad. Its fees flow up the family tree.',
     launchpad: blockOf(app, 'pq') ? 'The launchpad with a post-quantum registry of every launch.' : 'Launch a real coin from this page, with the fees split on-chain.',
     pq: 'A post-quantum signed record of this coin, checked in your browser.',
     ritual: `Send a ${one}. At ${sched?.at || 'the set hour'} JST, one is chosen and printed.`,

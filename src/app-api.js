@@ -403,6 +403,8 @@ export function registerAppRoutes(r, deps) {
     const { validateSpec } = await import('./generator.js');
     const cur = liveSpec(db, p), spec = { ...cur };
     spec.app = app;                                      // null = switched off by the author (the backfill leaves it alone)
+    // a launchpad for launchpads keeps only its coin's own tools (composer.js toolsBeside: no wall, memes or map beside it)
+    if (app) { const { toolsBeside, isFamilyApp } = await import('./composer.js'); if (isFamilyApp(app) && Array.isArray(cur.tools)) spec.tools = toolsBeside(cur.tools, app); }
     try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
     const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
     const pub = await (await import('./site-qa.js')).publishSite(db, cfg, p, site.version, `wallet:${u.wallet}`);   // SUB-01's QA first

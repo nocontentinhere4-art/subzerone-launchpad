@@ -11,7 +11,12 @@
 //   - the job child_build: when SUB-01 votes build, the project is made from what the visitor signed (their name,
 //     ticker, description, image; a template site, no language model), its allocation is the signed one, and the
 //     launch configuration is prepared right away (the visitor's signed message is their approval);
-//   - every child launch is signed into the parent's post-quantum registry (pq.js events, kind child.launch).
+//   - every child launch is signed into the parent's post-quantum registry (pq.js events, kind child.launch);
+//   - launchpad families (family.js): the block's `children` option makes every coin launched here a launchpad too
+//     (or lets the launcher choose), with its own launch block and family tree, down to MAX_DEPTH; from depth 2 the
+//     grandparent's author gets a share too (creator 60 / parent 10 / grandparent 10 / SUB-01 20);
+//   - in the city, a coin launched here has no plot of its own: it is a smaller building in its family's
+//     neighbourhood around the root launchpad's building (world.js `family`, the city client's family.js).
 import { timingSafeEqual } from 'node:crypto';
 import { audit, isPaused } from './db.js';
 import { Defer, Permanent, enqueue } from './jobs.js';
@@ -24,7 +29,7 @@ import { getProvider, allocationStatement, feeMode, validateRecipients, CHILD_SP
 import { blockOf } from './app-blocks.js';
 import { liveSpec, issue, consume, ipHash } from './tool-api.js';
 import { publicStats } from './coin-stats.js';
-import { PLOT_IDS, RESERVED_PLOTS } from './world.js';
+import { familySplit, childKind, launchpadState, ancestors, forgetTree, rootOf, authorOf, MAX_DEPTH, familyBps } from './family.js';
 import { mockSigningText } from './launch/mock.js';
 import { HttpError, id, now, parseJson, sha256, token } from './util.js';
 
@@ -38,8 +43,10 @@ export function launchBlockOf(db, parent) {
   const spec = liveSpec(db, parent);
   const b = blockOf(spec?.app, 'launch');
   if (!b) throw new HttpError(404, 'launch_off', 'this site does not launch coins');
-  if (parent.parent_project_id) throw new HttpError(404, 'launch_off', 'a coin launched from another site does not launch coins itself');
-  return { spec, block: b };
+  // a coin of a family launches coins only when it was launched as a launchpad (what its creator signed), above MAX_DEPTH
+  const st = launchpadState(db, parent);
+  if (!st.launchpad) throw new HttpError(404, 'launch_off', st.depth >= MAX_DEPTH ? `this coin is at the family's maximum depth (${MAX_DEPTH}): it does not launch coins` : 'a coin launched from another site does not launch coins itself');
+  return { spec, block: b, depth: st.depth };
 }
 const parentLaunched = (db, parent) => db.get('SELECT 1 FROM launches WHERE project_id = ?', parent.id);
 
@@ -50,20 +57,7 @@ const parentLaunched = (db, parent) => db.get('SELECT 1 FROM launches WHERE proj
  * CHILD_SPLIT_POLICY, the same check buildLaunchConfig repeats before the transaction exists.
  */
 export function splitFor(db, cfg, parent, block, wallet) {
-  const sub01 = requireSub01Wallet(cfg);
-  if (wallet === sub01) throw new HttpError(400, 'bad_wallet', 'that is SUB-01\'s own wallet; launch with yours');
-  const author = currentVersion(db, parent.idea_id).receiving_wallet;
-  const s = block.split;
-  let rows = [{ label: 'Creator', wallet, bps: s.creator, role: 'submitter' }];
-  const sub = { label: SUB01_LABEL, wallet: sub01, bps: s.sub01, role: 'sub01' };
-  if (s.parent > 0) {
-    if (author === wallet) rows[0].bps += s.parent;
-    else if (author === sub01) sub.bps += s.parent;
-    else rows.push({ label: clip(`Author of ${parent.name}`, 40), wallet: author, bps: s.parent, role: 'parent' });
-  }
-  rows.push(sub);
-  rows = validateRecipients(cfg, rows, wallet, CHILD_SPLIT_POLICY);
-  return { recipients: rows, statement: allocationStatement(rows, feeMode(rows, wallet)) };
+  return familySplit(db, cfg, parent, block.split, wallet);   // creator / parent / grandparent (depth >= 2) / SUB-01 (family.js)
 }
 
 /** The visitor's fields, normalised exactly as stored (and as hashed into the signed message). */
@@ -79,28 +73,27 @@ export function coinFields(cfg, b) {
   return { name, ticker, description, initialBuyLamports };
 }
 
-const payloadOf = (parent, f, imageSha256, recipients) => ({ parent: parent.slug, name: f.name, ticker: f.ticker, description: f.description, imageSha256,
-  initialBuyLamports: f.initialBuyLamports, recipients: recipients.map(({ wallet, bps, role }) => ({ wallet, bps, role })) });
+const payloadOf = (parent, f, imageSha256, recipients, kind) => ({ parent: parent.slug, name: f.name, ticker: f.ticker, description: f.description, imageSha256,
+  initialBuyLamports: f.initialBuyLamports, recipients: recipients.map(({ wallet, bps, role }) => ({ wallet, bps, role })),
+  ...(kind.mode !== 'coins' ? { launchpad: kind.launchpad, depth: kind.depth } : {}) });
 
-function summaryOf(parent, f, imageSha256, recipients, provider) {
-  const who = { submitter: 'you, the creator', parent: `${parent.name}'s author`, sub01: 'SUB-01' };
+function summaryOf(db, parent, f, imageSha256, recipients, provider, kind) {
+  const gp = ancestors(db, parent)[0];
+  const who = { submitter: 'you, the creator', parent: `${parent.name}'s author`, grandparent: `${gp?.name}'s author (the grandparent launchpad)`, sub01: 'SUB-01' };
   return [
-    `Launch a coin from ${parent.name} ($${parent.ticker}): "${f.name}" ($${f.ticker}), on ${provider.isMock ? 'the MOCK provider (no blockchain)' : `pump.fun, Solana ${provider.network}`}.`,
+    `Launch a ${kind.launchpad ? 'LAUNCHPAD' : 'coin'} from ${parent.name} ($${parent.ticker}): "${f.name}" ($${f.ticker}), on ${provider.isMock ? 'the MOCK provider (no blockchain)' : `pump.fun, Solana ${provider.network}`}.`,
+    ...(kind.mode !== 'coins' ? [kind.launchpad ? `It is a launchpad: its own site launches coins too (depth ${kind.depth} of at most ${MAX_DEPTH} in this family).`
+      : `It is a coin, not a launchpad${kind.can ? '' : ` (depth ${kind.depth} is the family's maximum)`}.`] : []),
     `Image sha256: ${imageSha256}`,
     `Creator fees, split on-chain and locked at launch: ${recipients.map((r) => `${pct(r.bps)} to ${who[r.role]} (${r.wallet})`).join('; ')}.`,
+    'The creator fees go to the creators up the family tree and SUB-01. Buying or holding the coin pays nobody anything.',
     f.initialBuyLamports > 0 ? `Dev buy: ${solString(f.initialBuyLamports)} SOL of your own coin, a separate signature after the launch.` : 'Dev buy: none.',
     'SUB-01 reads it first. If he builds it you review the launch transaction and sign it; this message creates and pays nothing. The coin, its name, image and description are public.',
   ].join('\n');
 }
 
-/** A free plot for the child's building: the parent's district first, then the next districts in city order. */
-function freePlot(db, parent) {
-  const taken = new Set(db.all('SELECT plot_id FROM plots').map((r) => r.plot_id));
-  const home = db.get('SELECT plot_id FROM plots WHERE idea_id = ?', parent.idea_id)?.plot_id;
-  const at = home ? Math.max(0, PLOT_IDS.indexOf(home) - (Number(home.split('-').pop()) - 1)) : 0;
-  const order = [...PLOT_IDS.slice(at), ...PLOT_IDS.slice(0, at)];
-  return order.find((p) => !taken.has(p) && !RESERVED_PLOTS.has(p)) || null;
-}
+// The child's building: no plot of its own (the 288 city addresses would run out in one busy family). The city draws it
+// as a smaller building in its family's neighbourhood, around the root launchpad's building (world.js `family`).
 
 const keyMatches = (row, key) => {
   if (typeof key !== 'string' || key.length < 20 || key.length > 100) return false;
@@ -112,12 +105,12 @@ const keyMatches = (row, key) => {
 const siteUrlOf = (cfg, slug) => `${cfg.projectsScheme}://${slug}.${cfg.projectsHost}/`;
 
 /** The parent's side: the split it offers, its numbers, the coins launched here. */
-export function parentView(db, cfg, parent, block, { before } = {}) {
+export function parentView(db, cfg, parent, block, { before, depth = 0 } = {}) {
   const provider = getProvider(cfg, db);
-  const author = currentVersion(db, parent.idea_id).receiving_wallet;
-  const kids = db.all(`SELECT p.id, p.slug, p.name, p.ticker, l.mint, l.network, l.provider, l.verified_at, cs.json cs_json,
+  const author = authorOf(db, parent);
+  const kids = db.all(`SELECT p.id, p.slug, p.name, p.ticker, l.mint, l.network, l.provider, l.verified_at, cs.json cs_json, c.as_launchpad,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v
-    FROM projects p JOIN launches l ON l.project_id = p.id LEFT JOIN coin_stats cs ON cs.mint = l.mint
+    FROM projects p JOIN launches l ON l.project_id = p.id LEFT JOIN coin_stats cs ON cs.mint = l.mint LEFT JOIN child_launches c ON c.idea_id = p.idea_id AND c.parent_project_id = p.parent_project_id
     WHERE p.parent_project_id = ? ${Number.isFinite(before) ? 'AND l.verified_at < ?' : ''} ORDER BY l.verified_at DESC LIMIT ?`,
   parent.id, ...(Number.isFinite(before) ? [before] : []), LIMITS.list);
   const all = db.all(`SELECT i.status, cs.json cs_json FROM child_launches c JOIN ideas i ON i.id = c.idea_id
@@ -127,6 +120,11 @@ export function parentView(db, cfg, parent, block, { before } = {}) {
   const total = (k) => (stats.some((s) => typeof s[k] === 'number') ? stats.reduce((a, s) => a + (typeof s[k] === 'number' ? s[k] : 0), 0) : null);
   return {
     title: block.title, prompt: block.prompt, split: block.split, devBuy: block.devBuy,
+    // the family (family.js): what a coin launched here is, where this site sits, the split a coin launched here gets
+    childrenMode: block.children || 'coins', depth, maxDepth: MAX_DEPTH, childDepth: depth + 1, childCanBeLaunchpad: depth + 1 < MAX_DEPTH,
+    familySplit: (({ grandparentProject, ...r }) => r)(familyBps(db, parent, block.split)),
+    ancestors: ancestors(db, parent).map((a) => ({ name: a.name, ticker: a.ticker, slug: a.slug, siteUrl: a.live_site_version ? siteUrlOf(cfg, a.slug) : null })),
+    root: rootOf(db, parent).slug,
     maxDevBuySol: block.devBuy ? maxInitialBuyLamports(cfg) / 1e9 : 0, minDescription: LIMITS.description[0],
     authorWallet: author, sub01Wallet: cfg.sub01FeeWallet || null,
     provider: provider ? { name: provider.name, network: provider.network, mock: provider.isMock, label: provider.label } : null,
@@ -137,7 +135,7 @@ export function parentView(db, cfg, parent, block, { before } = {}) {
     counts: { launched: all.filter((r) => r.status === 'launched').length, inProgress: all.filter((r) => !['launched', 'declined', 'cancelled', 'failed'].includes(r.status)).length,
       passed: all.filter((r) => r.status === 'declined').length, volume24hUsd: total('volume24hUsd'), marketCapUsd: total('marketCapUsd') },
     children: kids.map((k) => { const s = publicStats(parseJson(k.cs_json)); return { name: k.name, ticker: k.ticker, slug: k.slug, siteUrl: siteUrlOf(cfg, k.slug),
-      mint: k.mint, network: k.network, mock: k.provider === 'mock', launchedAt: k.verified_at, logoUrl: k.logo_v ? `/_api/launch/logo/${k.slug}` : null,
+      mint: k.mint, network: k.network, mock: k.provider === 'mock', launchedAt: k.verified_at, logoUrl: k.logo_v ? `/_api/launch/logo/${k.slug}` : null, launchpad: Boolean(k.as_launchpad),
       marketCapUsd: s.marketCapUsd, volume24hUsd: s.volume24hUsd }; }),
     next: kids.length === LIMITS.list ? kids[kids.length - 1].verified_at : null,
     pq: Boolean(blockOf(liveSpec(db, parent)?.app, 'pq')),
@@ -160,6 +158,7 @@ export function childView(db, cfg, cl) {
     id: cl.id, status: idea.status, stageLabel: LABELS[idea.status] || idea.status, note: idea.status_note, updatedAt: idea.updated_at,
     coin: { name: cl.name, ticker: cl.ticker, description: cl.description, imageUrl: `/_api/launch/${cl.id}/image`, imageSha256: cl.image_sha256 },
     wallet: cl.wallet, recipients: parseJson(cl.recipients_json, []), statement: cl.statement, initialBuyLamports: cl.initial_buy_lamports,
+    launchpad: Boolean(cl.as_launchpad), depth: cl.depth,
     verdict: ev ? { verdict: ev.decision === 'selected' ? 'build' : 'pass', buildPct: build ? Math.round(build.p * 100) : null, latencyMs: ev.latency_ms ?? null,
       summary: fb?.summary ?? null, likes: fb?.likes ?? [], dislikes: fb?.dislikes ?? [], suggestions: fb?.suggestions ?? [] } : null,
     project: p ? { slug: p.slug, siteUrl: p.live_site_version ? siteUrlOf(cfg, p.slug) : null, cityUrl: `${cfg.publicOrigin}/#project/${p.slug}` } : null,
@@ -188,7 +187,7 @@ export async function childBuild(ctx) {
   const parent = db.get('SELECT * FROM projects WHERE id = ?', cl.parent_project_id);
   if (idea.status === 'selected') transition(db, ideaId, 'selected', 'generating', { actor: 'system', note: `SUB-01 builds its site; the coin is launched from ${parent.name}` });
   const { templateGenerate, chooseTools, validateSpec, brainNote } = await import('./generator.js');
-  const { composeRules, toolsBeside } = await import('./composer.js');
+  const { composeRules, toolsBeside, launchpadFamilyApp } = await import('./composer.js');
   const { bannerSvg } = await import('./art.js');
   const { bannerCredit, buildSiteVersion } = await import('./site.js');
   const { publishSite } = await import('./site-qa.js');
@@ -200,13 +199,19 @@ export async function childBuild(ctx) {
   ctx.progress('writing the coin page from what its creator signed');
   // the template only (no language model): the visitor's own words, nothing invented, no cost
   const base = templateGenerate({ idea: v, brain }).spec;
-  const split = recipients.map((r) => `${pct(r.bps)} ${r.role === 'submitter' ? 'to its creator' : r.role === 'parent' ? `to ${parent.name}'s author` : 'to SUB-01'}`).join(', ');
+  const gp = ancestors(db, parent)[0];
+  const split = recipients.map((r) => `${pct(r.bps)} ${r.role === 'submitter' ? 'to its creator' : r.role === 'parent' ? `to ${parent.name}'s author` : r.role === 'grandparent' ? `to ${gp?.name}'s author` : 'to SUB-01'}`).join(', ');
+  const parentBlock = blockOf(liveSpec(db, parent)?.app, 'launch');
+  const pad = Boolean(cl.as_launchpad);
   const spec = { ...base, name: cl.name, ticker: cl.ticker, description: cl.description,
-    tagline: clip(`Launched at ${parent.name}. SUB-01 voted to build it.`, 90),
-    sections: [{ heading: 'The coin', body: cl.description }, { heading: 'Why SUB-01 built it', body: clip(brainNote(brain), 700) },
-      { heading: `Launched at ${clip(parent.name, 40)}`, body: clip(`Its creator launched it from ${parent.name} ($${parent.ticker}), a SUBZERONE coin whose site launches coins. The creator fees are split on-chain and locked: ${split}.`, 700) },
+    tagline: clip(pad ? `A launchpad born at ${parent.name}. SUB-01 voted to build it.` : `Launched at ${parent.name}. SUB-01 voted to build it.`, 90),
+    sections: [{ heading: pad ? 'The launchpad' : 'The coin', body: cl.description }, { heading: 'Why SUB-01 built it', body: clip(brainNote(brain), 700) },
+      { heading: `Launched at ${clip(parent.name, 40)}`, body: clip(`Its creator launched it from ${parent.name} ($${parent.ticker}), a SUBZERONE ${cl.depth > 1 ? 'launchpad of a family' : 'coin whose site launches coins'}. Its creator fees are split on-chain and locked: ${split}. They go to creators up the family tree and SUB-01; buying or holding it pays nobody anything.`, 700) },
+      ...(pad ? [{ heading: 'A launchpad of the family', body: clip(`This site launches coins and launchpads too, down to depth ${MAX_DEPTH} of the family (this one is at depth ${cl.depth}). Creator fees of every coin launched here flow up the family tree: its creator, this launchpad's creator, ${parent.name}'s creator, and SUB-01.`, 700) }] : []),
       base.sections[base.sections.length - 1]] };
-  spec.app = composeRules(v, { name: cl.name, ticker: cl.ticker, child: true }).app;
+  spec.app = pad
+    ? launchpadFamilyApp({ name: cl.name, children: parentBlock?.children === 'choice' ? 'choice' : 'launchpads', split: parentBlock?.split, devBuy: parentBlock?.devBuy ?? true, parentName: parent.name })
+    : composeRules(v, { name: cl.name, ticker: cl.ticker, child: true }).app;
   spec.tools = toolsBeside(chooseTools(v, brain, { name: cl.name }), spec.app);
   validateSpec(spec);
   const t = now();
@@ -256,6 +261,7 @@ export async function afterLaunched(db, cfg, projectId) {
   if (!p?.parent_project_id) return null;
   const parent = db.get('SELECT * FROM projects WHERE id = ?', p.parent_project_id);
   audit(db, { actor: 'system', kind: 'child_launch', projectId: parent.id, ideaId: parent.idea_id, isPublic: true, message: `${p.name} ($${p.ticker}) was launched from this site` });
+  forgetTree(rootOf(db, p).id);                                // the family tree shows it at the next read
   if (!blockOf(liveSpec(db, parent)?.app, 'pq')) return { registry: false };
   try {
     const { syncRegistry, pqAvailable } = await import('./pq.js');
@@ -283,9 +289,9 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
 
   async function handle({ project: parent, site, method, path, ip, query, body }) {
     const t = now();
-    const { block } = launchBlockOf(db, parent);
+    const { block, depth } = launchBlockOf(db, parent);
     if (method === 'GET') {
-      if (path === '/_api/launch') return { body: parentView(db, cfg, parent, block, { before: query.get('before') ? Number(query.get('before')) : undefined }) };
+      if (path === '/_api/launch') return { body: parentView(db, cfg, parent, block, { depth, before: query.get('before') ? Number(query.get('before')) : undefined }) };
       let m = /^\/_api\/launch\/logo\/([a-z0-9-]{1,40})$/.exec(path);
       if (m) {
         const k = db.get('SELECT p.id FROM projects p JOIN launches l ON l.project_id = p.id WHERE p.slug = ? AND p.parent_project_id = ?', m[1], parent.id);
@@ -312,17 +318,21 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
       const wallet = String(b.wallet || '');
       const f = coinFields(cfg, b);
       if (f.initialBuyLamports > 0 && !block.devBuy) throw new HttpError(400, 'bad_initial_buy', 'this site launches without a dev buy');
+      // a launchpad or a coin (family.js): the block's `children` option, the launcher's tick under 'choice', MAX_DEPTH
+      if (b.launchpad != null && typeof b.launchpad !== 'boolean') throw new HttpError(400, 'bad_launchpad', 'launchpad: true or false');
+      const kind = childKind(db, parent, block, b.launchpad === true);
       const { recipients, statement } = splitFor(db, cfg, parent, block, wallet);
       if (path === '/_api/launch/quote') {
         limit('siteSign', ip);
         if (!/^[0-9a-f]{64}$/.test(String(b.imageSha256 || ''))) throw new HttpError(400, 'bad_upload', 'pick an image first (PNG, JPEG, GIF or WebP, up to 1.5 MB)');
-        const payload = payloadOf(parent, f, b.imageSha256, recipients);
-        const out = issue(db, parent, site, { wallet, action: 'launch.start', payload, summary: summaryOf(parent, f, b.imageSha256, recipients, provider) }, t);
-        return { body: { ...out, recipients, statement, initialBuyLamports: f.initialBuyLamports, network: provider.network, mock: provider.isMock } };
+        const payload = payloadOf(parent, f, b.imageSha256, recipients, kind);
+        const out = issue(db, parent, site, { wallet, action: 'launch.start', payload, summary: summaryOf(db, parent, f, b.imageSha256, recipients, provider, kind) }, t);
+        return { body: { ...out, recipients, statement, initialBuyLamports: f.initialBuyLamports, network: provider.network, mock: provider.isMock,
+          launchpad: kind.launchpad, depth: kind.depth, maxDepth: MAX_DEPTH } };
       }
       // start: the image must be the one whose hash was signed
       const img = sniffImage(b.image);
-      const payload = payloadOf(parent, f, img.sha, recipients);
+      const payload = payloadOf(parent, f, img.sha, recipients, kind);
       const signature = consume(db, parent, { wallet, nonce: b.nonce, signature: b.signature, action: 'launch.start', payload }, t);
       limit('siteLaunch', `wallet:${wallet}`);
       if (db.get('SELECT banned_at FROM users WHERE wallet = ?', wallet)?.banned_at) throw new HttpError(403, 'banned');
@@ -339,16 +349,17 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
       const message = db.get('SELECT message FROM tool_nonces WHERE nonce = ?', String(b.nonce)).message;
       const ideaId = db.tx(() => {
         db.run('INSERT OR IGNORE INTO users (wallet, role, created_at) VALUES (?, \'user\', ?)', wallet, t);
-        const plotId = freePlot(db, parent);
         const iid = submitIdea(db, cfg, wallet, { title: `${f.name} ($${f.ticker})`, concept: f.description, nameSuggestion: f.name, tickerSuggestion: f.ticker,
-          receivingWallet: wallet, rightsConfirmed: true, links: [], contacts: {}, ...(plotId ? { plotId } : {}) });
+          receivingWallet: wallet, rightsConfirmed: true, links: [], contacts: {} });
         db.run(`UPDATE ideas SET visibility = 'public', published_at = ?, updated_at = ? WHERE id = ?`, t, t, iid);
         db.run(`INSERT INTO child_launches (id, parent_project_id, idea_id, wallet, key_hash, name, ticker, description, image_mime, image, image_sha256,
-                  initial_buy_lamports, recipients_json, statement, message, signature, ip_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                  initial_buy_lamports, recipients_json, statement, message, signature, ip_hash, created_at, as_launchpad, depth, split_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         cid, parent.id, iid, wallet, sha256(key), f.name, f.ticker, f.description, img.mime, img.buf, img.sha, f.initialBuyLamports,
-        JSON.stringify(recipients), statement, message, signature, hash, t);
+        JSON.stringify(recipients), statement, message, signature, hash, t, kind.launchpad ? 1 : 0, kind.depth, JSON.stringify(block.split));
         audit(db, { actor: `wallet:${wallet}`, kind: 'child_launch', ideaId: iid, projectId: parent.id, isPublic: true,
-          message: `${f.name} ($${f.ticker}) dropped for launch from ${parent.name}`, data: { childLaunch: cid, recipients: recipients.map(({ role, bps }) => ({ role, bps })), plot: plotId } });
+          message: `${f.name} ($${f.ticker}) dropped for launch from ${parent.name}${kind.launchpad ? ' as a launchpad' : ''}`,
+          data: { childLaunch: cid, recipients: recipients.map(({ role, bps }) => ({ role, bps })), launchpad: kind.launchpad, depth: kind.depth } });
         return iid;
       });
       wake(`evaluate:${ideaId}:v1`);                            // SUB-01's vote in seconds

@@ -5,6 +5,7 @@
 // core passes its helpers in K.
 import { renderCard, cardNumber, jst } from './cards.js';
 import { pqBlock } from './pq.js';
+import { treeBlock } from './tree.js';
 
 const METRIC_LABELS = { submitted_today: 'today', submitted_total: 'in total', published_total: 'published', votes_today: 'votes today', voters_today: 'voters today', days_running: 'days running' };
 const HOW = { owner: "the author's pick", votes: "the holders' votes", random: 'a verifiable random draw' };
@@ -226,6 +227,8 @@ export function hydrateApp(sec, K) {
     pq(slot, b) { pqBlock(slot, b, { ...K, launches: all(app, 'launch').length > 0 }); },
     // visitors launch real coins here (child-launch.js): its own module, the only one in the kit that asks a wallet to
     // sign a transaction, loaded only on a site whose app has this block
+    // the live family tree of a launchpad family (family.js): read-only
+    tree(slot, b) { return treeBlock(slot, b, K); },
     launch(slot, b) { return import(/* @vite-ignore */ '/_kit/site-launch.v1.js').then((m) => m.launchBlock(slot, b, K)); },
   };
 

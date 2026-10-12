@@ -53,6 +53,31 @@ export const KNOWN_PROGRAMS = Object.freeze({
 // the only programs a launch transaction may call directly for the "what this does NOT do" line to hold: pump, pump-fees,
 // compute budget, and the Associated Token Account program (the dev buy creates the author's own token account)
 // Programs a wallet may add when it signs (Phantom: Lighthouse balance assertions, compute-budget priority fee).
+// pump-fees update_fee_shares_v2 (IDL discriminator): the instruction that writes the locked split. Its data is the
+// discriminator then a Borsh vec<Shareholder {address: pubkey, share_bps: u16}>; the program takes at most 10 shareholders
+// (SDK MAX_SHAREHOLDERS = 10, pump-fees error 6011 TooManyShareholders), each > 0 bps (6017), 10,000 in total (6014).
+const UPDATE_FEE_SHARES_V2 = Buffer.from([111, 251, 49, 6, 78, 78, 106, 18]);
+export const MAX_SHAREHOLDERS = 10;
+/** The shareholders an update_fee_shares_v2 instruction's data writes, [{wallet, bps}], or null for another instruction. */
+export function decodeFeeShares(data) {
+  const b = Buffer.from(data);
+  if (b.length < 12 || !b.subarray(0, 8).equals(UPDATE_FEE_SHARES_V2)) return null;
+  const n = b.readUInt32LE(8);
+  if (n < 1 || n > MAX_SHAREHOLDERS || b.length !== 12 + n * 34) throw new Error('malformed fee-shares instruction');
+  return Array.from({ length: n }, (_, i) => ({ wallet: b58encode(b.subarray(12 + i * 34, 44 + i * 34)), bps: b.readUInt16LE(44 + i * 34) }));
+}
+/** Throws unless the signed message writes exactly the configured split (sharing_config) or no split at all (direct). */
+export function checkSignedShares(message, config) {
+  const keys = message.staticAccountKeys.map((k) => k.toBase58());
+  const found = message.compiledInstructions.filter((ix) => keys[ix.programIdIndex] === PROGRAMS.pumpFees).map((ix) => decodeFeeShares(ix.data)).filter(Boolean);
+  const sharing = config?.feeSharing?.mode === 'sharing_config';
+  if (!sharing) { if (found.length) throw new Error('the signed transaction writes a fee split the approved configuration does not have'); return null; }
+  const want = (config.feeSharing.shareholders || []).map((x) => `${x.wallet}:${x.bps}`).sort().join(',');
+  if (found.length !== 1) throw new Error(`the signed transaction writes ${found.length} fee splits, not the approved one`);
+  const got = found[0].map((x) => `${x.wallet}:${x.bps}`).sort().join(',');
+  if (got !== want) throw new Error('the fee shareholders in the signed transaction differ from the approved split');
+  return found[0];
+}
 const WALLET_GUARDS = new Set(['ComputeBudget111111111111111111111111111111', 'L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95']);
 const LAUNCH_DIRECT = new Set([PROGRAMS.pump, PROGRAMS.pumpFees, 'ComputeBudget111111111111111111111111111111', 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL']);
 // The dev buy's cost cap: quote + 5% (500 bps). The curve is fresh at creation, so the SDK quote is what the program
@@ -585,6 +610,9 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const msgBytes = tx.message.serialize();
       const hash = createHash('sha256').update(msgBytes).digest('hex');
       if (hash !== intent.tx_message_hash) await sameLaunch(web3, intent, tx);
+      // the exact shares: the split instruction in the bytes the wallet signed is the approved one (a family coin's
+      // creator / parent / grandparent / SUB-01 rows, recomputed server-side in launch.js submitSigned before this)
+      if (intent.config_json) checkSignedShares(tx.message, JSON.parse(intent.config_json));
       const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
       if (keys[0] !== intent.signer_wallet) throw new Error('payer is not the expected wallet');
       const sig = tx.signatures[0];

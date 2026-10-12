@@ -138,8 +138,9 @@ export function defaultAllocation(cfg, receivingWallet) {
     { label: SUB01_LABEL, wallet: cfg.sub01FeeWallet || null, bps: SUB01_FEE_BPS, role: 'sub01' }];
 }
 
-// A coin launched from another coin's site (child-launch.js): creator (the visitor) / the parent's author / SUB-01, the
-// parent's launch block sets the bps within these limits. SUB-01 at least 20%, the creator at least 50%, no collaborators.
+// A coin launched from another coin's site (child-launch.js, family.js): creator (the visitor) / the parent's author /
+// from depth 2 the grandparent's author / SUB-01, the parent's launch block sets the bps within these limits. SUB-01 at
+// least 20%, the creator at least 50%, no collaborators, one parent and one grandparent row at most.
 export const CHILD_SPLIT_POLICY = Object.freeze({ child: true, minSub01Bps: SUB01_FEE_BPS, minSubmitterBps: 5000 });
 
 /** policy: null (a city coin: submitter + collaborators + exactly 20% SUB-01) or CHILD_SPLIT_POLICY. */
@@ -150,7 +151,7 @@ export function validateRecipients(cfg, recipients, receivingWallet, policy = nu
   }
   const seen = new Set();
   let total = 0;
-  const roles = policy?.child ? ['submitter', 'sub01', 'parent'] : ['submitter', 'sub01', 'collaborator', undefined, null, ''];
+  const roles = policy?.child ? ['submitter', 'sub01', 'parent', 'grandparent'] : ['submitter', 'sub01', 'collaborator', undefined, null, ''];
   const out = recipients.map((r) => {
     if (!roles.includes(r.role)) throw new HttpError(400, 'bad_allocation', `unknown role ${String(r.role).slice(0, 20)}`);
     const role = r.role || 'collaborator';
@@ -172,6 +173,7 @@ export function validateRecipients(cfg, recipients, receivingWallet, policy = nu
     }
     if (subs[0].bps < policy.minSubmitterBps) throw new HttpError(400, 'bad_allocation', `the creator keeps at least ${policy.minSubmitterBps / 100}%`);
     if (out.filter((r) => r.role === 'parent').length > 1) throw new HttpError(400, 'bad_allocation', 'one parent row at most');
+    if (out.filter((r) => r.role === 'grandparent').length > 1) throw new HttpError(400, 'bad_allocation', 'one grandparent row at most');
     return out;
   }
   if (s1.length !== 1 || s1[0].wallet !== sub01Wallet || s1[0].bps !== SUB01_FEE_BPS) {
@@ -218,6 +220,11 @@ export async function buildLaunchConfig(db, cfg, project) {
   if (!alloc) throw new Permanent('no approved fee allocation');
   const recipients = parseJson(alloc.recipients_json);
   validateRecipients(cfg, recipients, v.receiving_wallet, project.parent_project_id ? CHILD_SPLIT_POLICY : null);   // re-checked against the current receiving wallet
+  if (project.parent_project_id) {
+    // a family coin (family.js): exactly the split its creator signed AND the family rule recomputed now from the database
+    const { checkFamilySplit } = await import('./family.js');
+    try { checkFamilySplit(db, cfg, project, recipients); } catch (e) { throw new Permanent(e.message); }
+  }
   const signer = idea.owner_wallet;
   const mode = feeMode(recipients, signer);
   if (alloc.approval_statement !== allocationStatement(recipients, mode)) throw new Permanent('approval statement does not match the allocation');
@@ -467,6 +474,11 @@ export async function submitSigned(db, cfg, project, wallet, signed) {
   const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
   if (!intent) throw new HttpError(409, 'no_intent', 'no transaction is waiting for a signature');
   if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  // a family coin: the shareholders about to go on-chain are recomputed from the database, never taken from a page
+  if (project.parent_project_id) {
+    const { checkFamilySplit } = await import('./family.js');
+    checkFamilySplit(db, cfg, project, parseJson(intent.config_json)?.feeSharing?.shareholders, { shareholdersOnly: true });
+  }
   let checked;
   let mintSecret = null;
   if (intent.mint_secret_enc) { try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { mintSecret = null; } }

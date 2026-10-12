@@ -49,9 +49,9 @@
    "sha256": "266d138335c1d749bf01eb2df89ff0509aec63859ddeb847d2a7ca90a7242ebc"
   },
   "site-app.v1.js": {
-   "bytes": 30908,
-   "gzip": 11966,
-   "sha256": "0c113999ba203a2d437dbb965df32fe08376635792838c95ec3e6547d2067ce5"
+   "bytes": 34668,
+   "gzip": 13356,
+   "sha256": "cbc175d295a51e211f66bd1e67c136ea38aca49be200b76f9446172666ea34ba"
   },
   "site-kit.v1.css": {
    "bytes": 22040,
@@ -64,14 +64,14 @@
    "sha256": "c8defa0072dcfb7e2dffd406d119e56f739bde5c699a1d8427a5f44c49b08c10"
   },
   "site-kit.v2.css": {
-   "bytes": 33850,
-   "gzip": 7780,
-   "sha256": "94688a499b03eb5a0c25cc5d925f7643ec68b1e4faeff7b4109de4f467ef1da9"
+   "bytes": 36607,
+   "gzip": 8236,
+   "sha256": "8f567ef1e2967e311d23fa653d30960a10fa3861f166a7b8e8d925a75b357eb1"
   },
   "site-launch.v1.js": {
-   "bytes": 16230,
-   "gzip": 6450,
-   "sha256": "6aff7e258f7b5f29256742e7b993e6929d97ee1eb990765f3d1df0edb78095cf"
+   "bytes": 18575,
+   "gzip": 7165,
+   "sha256": "bf60f80f59ef1e95579e2316c7d97187e83bec2df929322ff7b712208ee8d07d"
   },
   "vendor/anime-4.5.0.js": {
    "bytes": 39995,

@@ -6,7 +6,7 @@
 //              strictly and any problem falls back to the rules. The model only fills the DSL: nothing it says runs.
 // When an idea names no product (a name, a vibe), the rules build a small app that fits it and say so (`honest`).
 import { conceptTime } from './tools.js';
-import { validateApp, isAppError, describeApp, blockOf, APP_VERSION, BLOCK_TYPES, CARD_TEMPLATES, METRICS, LAUNCH_SPLIT } from './app-blocks.js';
+import { validateApp, isAppError, describeApp, blockOf, blocksOf, APP_VERSION, BLOCK_TYPES, CARD_TEMPLATES, METRICS, LAUNCH_SPLIT, LAUNCH_CHILDREN, FAMILY_MAX_DEPTH } from './app-blocks.js';
 import { modelOf, modelExtras, modelHeaders } from './model.js';
 
 const fold = (s) => ` ${String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9:=\s]/g, ' ').replace(/\s+/g, ' ')} `;
@@ -46,6 +46,17 @@ export const WORDS = {
 // "a launchpad", "my own launch pad", "build a launchpad", "a launchpad where/for/that …", "un launchpad", "piattaforma di lancio"
 const LAUNCHPAD_RE = [/ (?:a|an|my|our|own|new|your|un|una|mio|mia|build|building|make|create|costruire|creare|crea) (?:[a-z]+ ){0,2}launch ?pads? /,
   / launch ?pads? (?:where|for|that|which|with|to|dove|che|per|con|in cui) /, / is (?:the|a|an) (?:[a-z]+ ){0,2}launch ?pads? /];
+// A launchpad whose launches are launchpads (PadPad: "a launchpad for launchpads … every launchpad born here can launch
+// coins that can be launchpads too … the live family tree"): launch{children: 'launchpads'} + the family tree.
+// Not a plain "build a launchpad" (that is one launchpad): launchpads launched FROM it, or its family tree.
+const RECURSIVE_RE = [/ launch ?pads? (?:for|of|di|per|that launch(?:es)?) (?:other |more |new |many )?launch ?pads /,
+  / (?:launch|launches|launching|spawn|spawns|lancia|lanciare|lanci) (?:a |an |your |their |own |new |other |more |un |una |il tuo |la tua )*(?:launch ?pads?|sub ?launch ?pads?) /,
+  / (?:create|creates|creating|make|makes|build|builds|deploy|deploys|crea|creare) (?:your |their |own |new |other |more |many )*launch ?pads /,
+  / launch ?pads (?:that|which|who|che) (?:can |also |too |themselves |could )*(?:launch|lancia|lanciano|create|spawn)/,
+  / (?:launch ?pad|launch ?pads|launchpad born here|launchpads born here) (?:[a-z]+ ){0,6}(?:can be|become|are|is|sono|diventa|diventano) (?:launch ?pads|launch ?pad)(?: too| as well| anche)? /,
+  / raunchipaddo no raunchipaddo /, / launch ?pad ?ception /];
+const FAMILY_WORDS = ['family tree', 'family trees', 'descendant*', 'grandparent*', 'grandchild*', 'recursive*', 'ricorsiv*', 'albero genealogico', 'discendent*',
+  'child launchpad*', 'sub launchpad*', 'launchpad tree', 'tree of launchpads', 'kakeizu'];
 const NOUNS = [
   ['confession', 'confessions', ['confess*', 'confession*', 'confessa*', 'confessione', 'confessioni', 'kokuhaku', 'zange']],
   ['secret', 'secrets', ['secret*', 'segret*', 'himitsu']],
@@ -59,6 +70,7 @@ const GOODS = ['onigiri', 'karaage', 'ice cream', 'coffee', 'green tea', 'ramen'
 const WEEKDAYS = [['sunday', 'domenica', 'nichiyoubi'], ['monday', 'lunedi', 'getsuyoubi'], ['tuesday', 'martedi', 'kayoubi'], ['wednesday', 'mercoledi', 'suiyoubi'],
   ['thursday', 'giovedi', 'mokuyoubi'], ['friday', 'venerdi', 'kinyoubi'], ['saturday', 'sabato', 'doyoubi']];
 
+const recursive = (t) => RECURSIVE_RE.some((re) => re.test(t)) || (/ launch ?pads? /.test(t) && has(t, FAMILY_WORDS));
 /** The concept's reading, for the composer and the tests. */
 export function readIdea(concept) {
   const t = fold(concept);
@@ -68,7 +80,7 @@ export function readIdea(concept) {
     t, time, ritual,
     weekly: has(t, WORDS.weekly), weekday: WEEKDAYS.findIndex((w) => has(t, w)),
     submit: has(t, WORDS.submit), chosen: has(t, WORDS.chosen), vote: has(t, WORDS.vote), holders: has(t, WORDS.holders), board: has(t, WORDS.board),
-    quantum: has(t, WORDS.quantum), launchpad: has(t, WORDS.launchpad) || LAUNCHPAD_RE.some((re) => re.test(t)), venue: has(t, WORDS.venue), party: has(t, WORDS.party), art: has(t, WORDS.art), destroy: has(t, WORDS.destroy), home: has(t, WORDS.home),
+    quantum: has(t, WORDS.quantum), launchpad: has(t, WORDS.launchpad) || LAUNCHPAD_RE.some((re) => re.test(t)) || recursive(t), recursive: recursive(t), venue: has(t, WORDS.venue), party: has(t, WORDS.party), art: has(t, WORDS.art), destroy: has(t, WORDS.destroy), home: has(t, WORDS.home),
     noun: NOUNS.find(([, , w]) => has(t, w)) || null,
     card: /receipt|scontrin|reshiito|ricevut/.test(t) ? 'receipt' : /ticket|bigliett|kippu|train|treno|densha|station|stazione|eki /.test(t) ? 'ticket'
       : /postcard|cartolin|hagaki/.test(t) ? 'postcard' : /badge|pass |tessera|member/.test(t) ? 'badge' : /poster|manifest/.test(t) ? 'poster' : null,
@@ -151,6 +163,27 @@ function launchpadApp(idea, r, { name }) {
       ...(quantum ? [{ type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true }] : [])] }],
   };
 }
+
+/** A launchpad for launchpads (PadPad): every coin launched from the site is a launchpad with its own working launch
+ * block and family tree, down to FAMILY_MAX_DEPTH; creator fees flow up the tree (family.js). Nothing else: no form,
+ * no votes, no map. Also the app a launchpad child gets (child-launch.js childBuild), with its parent's options. */
+export function launchpadFamilyApp({ name, children = 'launchpads', split = LAUNCH_SPLIT, devBuy = true, quantum = false, parentName = null } = {}) {
+  if (!LAUNCH_CHILDREN.includes(children) || children === 'coins') children = 'launchpads';
+  const lede = parentName
+    ? `${name} is a launchpad born from ${parentName}. Launch a launchpad here: its own site launches coins too, down to ${FAMILY_MAX_DEPTH} generations. Creator fees flow up the family tree to the creators of the launchpads above it.`
+    : `Launch a launchpad, not just a coin: every one born here gets its own site that launches coins too, down to ${FAMILY_MAX_DEPTH} generations. Creator fees flow up the family tree to the launchpads' creators, locked on-chain.`;
+  return validateApp({
+    v: APP_VERSION, kind: 'launchpad-family', flow: 'board', noun: { one: 'launchpad', many: 'launchpads' },
+    title: clip(`${name}: launch a launchpad`, 60), lede: clip(lede, 240),
+    screens: [{ id: 'launch', title: 'Launch', blocks: [
+      { type: 'launch', title: children === 'choice' ? 'Launch a coin or a launchpad' : 'Launch a launchpad here',
+        prompt: clip(`Launch a launchpad from ${name}: a real pump.fun coin created by your wallet, with its own site that launches coins. SUB-01 reads it first.`, 200),
+        split: { ...split }, devBuy, list: true, children },
+      ...(quantum ? [{ type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true }] : []),
+      { type: 'tree', title: 'The family tree', rankings: true }] }],
+  });
+}
+function familyApp(idea, r, { name }) { return launchpadFamilyApp({ name, quantum: r.quantum }); }
 
 /** A guide to real places (TokyoCat: bars for people with cats): visitors add a place, everyone votes, a map, a pass. */
 function placesApp(idea, r, { name, ticker }) {
@@ -273,6 +306,7 @@ function boardApp(idea, r, { name, ticker }) {
 
 const HONEST = {
   launchpad: 'The idea is a launchpad; SUB-01 built one that really launches coins: visitors create pump.fun coins from this site, each read by SUB-01 first, with the creator fees split on-chain (creator / author / SUB-01).',
+  'launchpad-family': `The idea is a launchpad for launchpads; SUB-01 built one: every coin launched from this site is a launchpad with its own working launch block and family tree, down to ${FAMILY_MAX_DEPTH} generations, and its creator fees are split on-chain and locked at launch between its creator, the parent launchpad's creator, the grandparent's and SUB-01. The fees go to creators up the tree, never to buyers or holders.`,
   launchpadPq: 'The idea is a quantum-themed launchpad; SUB-01 built a launchpad with a post-quantum registry of every launch: visitors really launch coins from this site, and each launch is signed with ML-DSA-65 and verified in the browser. The coins themselves are Solana tokens (Ed25519 keys): no coin can be quantum-proof, and the page says so.',
   ritual: 'The idea describes a product (people send something, one is chosen at a set time and printed); SUB-01 built that.',
   pq: 'The idea asks for quantum-proof management; SUB-01 built what can honestly be offered: a post-quantum signed record of the launchpad\'s actions, verified in the browser, and says plainly that the coin itself (Solana, Ed25519) is not quantum-proof.',
@@ -293,7 +327,7 @@ export function composeRules(idea, { name, ticker, child = false } = {}) {
   name = clip(name || idea?.name_suggestion || idea?.title || 'This coin', 32);
   ticker = String(ticker || idea?.ticker_suggestion || 'COIN').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'COIN';
   const opts = { name, ticker };
-  const pick = r.launchpad && !child ? launchpadApp : r.quantum ? pqApp : r.ritual && (r.submit || r.chosen) ? ritualApp : r.venue ? placesApp : r.party ? partyApp : r.art ? artApp : r.destroy ? destroyApp : r.home ? homeApp : boardApp;
+  const pick = r.launchpad && !child ? (r.recursive ? familyApp : launchpadApp) : r.quantum ? pqApp : r.ritual && (r.submit || r.chosen) ? ritualApp : r.venue ? placesApp : r.party ? partyApp : r.art ? artApp : r.destroy ? destroyApp : r.home ? homeApp : boardApp;
   const app = validateApp(pick(idea, r, opts));
   return { app, source: 'rules', honest: app.kind === 'launchpad' && r.quantum ? HONEST.launchpadPq : HONEST[app.kind], summary: describeApp(app) };
 }
@@ -307,8 +341,10 @@ schedule{every:day|week,at:"HH:MM" JST,weekday 0-6 if week,label}; reveal{title,
 vote{title,of:candidates|published,holdersOnly,button}; collection{title,show:published|all,layout:cards|list,filters:subset of ["month","search"],empty};
 card{title,template:${CARD_TEMPLATES.join('|')},heading<=32,sub<=48,lines:[<=6 of <=28],footer<=60,input}; leaderboard{title,of:items|wallets,by:votes|submissions,limit 3-20};
 counter{title,metrics:1-4 of ${METRICS.join('|')}}; timer{title,daily:"HH:MM"}; note{title,body<=600}; pq{title,registry,verify,honesty}; map{title,center:[lat,lng],zoom,places:[],community};
-launch{title,prompt<=200,devBuy,list} (visitors launch real coins from the site; keep it when the draft has it, never add it otherwise).
-Rules: one submit/schedule/reveal/card/pq/map/launch at most; reveal needs schedule+submit; vote of candidates needs reveal; flow inbox keeps submissions private until revealed
+launch{title,prompt<=200,devBuy,list,children:coins|launchpads|choice} (visitors launch real coins from the site; children launchpads: every coin launched there is a launchpad too; keep it as the draft has it, never add it otherwise);
+tree{title,rankings} (the live family tree of the launchpads born from the site; only with launch, keep it when the draft has it, never add it otherwise).
+A launchpad for launchpads (draft kind launchpad-family) is exactly launch + tree (+ the draft's pq): add no form, vote, map, card or counter to it.
+Rules: one submit/schedule/reveal/card/pq/map/launch/tree at most; reveal needs schedule+submit; vote of candidates needs reveal; flow inbox keeps submissions private until revealed
 (needs a reveal), board shows them at once. No URLs, no < > or backticks. Never promise money, returns, rewards or utility beyond what the blocks do.
 Build only what the idea actually describes; when it names no product, keep the app small and say what it is.
 Copy (titles, ledes, prompts, buttons): concrete and confident, plain words that say what each part does; no hype, no jokes about being a meme.`;
@@ -351,7 +387,18 @@ export async function composeApp(idea, brain, { name, ticker, cfg, fetchImpl, si
     const ruleLaunch = blockOf(rules.app, 'launch'), modelLaunch = blockOf(app, 'launch');
     if (ruleLaunch && !modelLaunch) throw new Error('composer dropped the launch block');
     if (!ruleLaunch && modelLaunch) throw new Error('composer added a launch block to an idea that is not a launchpad');
-    if (modelLaunch) modelLaunch.split = { ...ruleLaunch.split };
+    if (modelLaunch) { modelLaunch.split = { ...ruleLaunch.split }; modelLaunch.children = ruleLaunch.children; }
+    // the family tree: only where the rules put it (a launchpad for launchpads), never dropped
+    const ruleTree = blockOf(rules.app, 'tree'), modelTree = blockOf(app, 'tree');
+    if (ruleTree && !modelTree) throw new Error('composer dropped the family tree');
+    if (!ruleTree && modelTree) throw new Error('composer added a family tree to an idea that is not a launchpad for launchpads');
+    // a launchpad for launchpads is the launcher and its tree: no irrelevant blocks (a form, votes, a map …)
+    if (rules.app.kind === 'launchpad-family') {
+      const ok = new Set(['launch', 'tree', 'note', ...(blockOf(rules.app, 'pq') ? ['pq'] : [])]);
+      const extra = app.screens.flatMap((x) => x.blocks).map((b) => b.type).filter((t) => !ok.has(t));
+      if (extra.length) throw new Error(`composer added blocks a launchpad for launchpads does not use: ${[...new Set(extra)].join(', ')}`);
+      app.kind = 'launchpad-family';
+    }
     return { app, source: `anthropic:${modelOf(cfg)}`, honest: rules.honest, summary: describeApp(app) };
   } catch (e) {
     if (signal?.aborted) throw e;
@@ -361,10 +408,15 @@ export async function composeApp(idea, brain, { name, ticker, cfg, fetchImpl, si
 
 /** The site's tools once the app exists: the app's form replaces the drop box, its schedule the daily event at the same
  * time, its map the map tool. Everything else stays. */
+// A launchpad for launchpads keeps only the tools about its own coin (price, chart, the holder tools): a wall, a meme
+// maker, a map, a poll, a drop box, an event, a synth or a game have nothing to do with launching launchpads.
+const FAMILY_TOOLS_OFF = new Set(['wall', 'poll', 'drop', 'event', 'memes', 'map', 'synth', 'game']);
+export const isFamilyApp = (app) => app?.kind === 'launchpad-family' || blocksOf(app, 'launch').some((b) => b.children && b.children !== 'coins');
 export function toolsBeside(tools, app) {
   const all = app.screens.flatMap((s) => s.blocks), on = (t) => all.some((b) => b.type === t);
   const sched = all.find((b) => b.type === 'schedule');
-  return (tools || []).filter((t) => !(t.id === 'drop' && on('submit')) && !(t.id === 'map' && on('map'))
+  const family = isFamilyApp(app);
+  return (tools || []).filter((t) => !(family && FAMILY_TOOLS_OFF.has(t.id)) && !(t.id === 'drop' && on('submit')) && !(t.id === 'map' && on('map'))
     && !(t.id === 'event' && sched && t.config?.daily === sched.at) && !(t.id === 'poll' && on('vote')) && !(t.id === 'wall' && app.flow === 'board' && on('submit')));
 }
 

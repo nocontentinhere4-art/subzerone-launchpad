@@ -1,0 +1,33 @@
+{
+ "at": "2026-10-12T20:59:41.833Z",
+ "network": "devnet",
+ "what": "simulation only: not signed by the wallet, not sent",
+ "signer": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+ "mint": "EU44dMsf8ZYfAtXM8kVxrCPjwMDYosjxnAqEvR2KFjGU",
+ "txBytes": 1046,
+ "phantomSafe": true,
+ "simulation": {
+  "ok": true,
+  "unitsConsumed": 245624
+ },
+ "shareholdersInTx": [
+  {
+   "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+   "bps": 6000
+  },
+  {
+   "wallet": "EHbcCD2uukwGxPKzkZVgEPpNJKx93NZs3KDGscvxSTCZ",
+   "bps": 1000
+  },
+  {
+   "wallet": "GmEeqmNx14RyFaQm2P9r9SzHv7uDwaNbLB2JSyhQbYVy",
+   "bps": 1000
+  },
+  {
+   "wallet": "GXZaiSEEnC6TySizFTZU83YSwto2EFVpVWKMUyLQXgsu",
+   "bps": 2000
+  }
+ ],
+ "networkFeeLamports": 10000,
+ "accountsLamports": 11496040
+}

@@ -17,6 +17,7 @@ import { CATALOG, EXTRAS, TRUST, LIBS, defaultConfig, validateTools, isToolError
 import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
 import { registerAppRoutes } from './app-api.js';
 import { createLaunchApi, LIMITS as CHILD_LIMITS } from './child-launch.js';
+import { treeView } from './family.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
@@ -209,6 +210,12 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   });
 
   // --- projects ---------------------------------------------------------------------------------------------------
+  // the live family tree of a launchpad family (family.js treeView): public, the same answer for everyone, cached 15 s
+  r.get('/api/projects/:slug/tree', (ctx) => {
+    const p = projectBySlug(ctx.params.slug);
+    if (!p || db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id).visibility !== 'public') throw new HttpError(404, 'not_found', 'not found, or private');
+    return ctx.raw(200, Buffer.from(JSON.stringify(treeView(db, cfg, p))), { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=15' });
+  });
   r.get('/api/projects/:slug', (ctx) => {
     const v = visibleProject(ctx, ctx.params.slug);
     if (!v) throw new HttpError(404, 'not_found', 'not found, or private');
@@ -1042,6 +1049,11 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       // is not CSRF protection: it keeps other web pages from driving visitors' browsers at a site's tools.
       if (req.method === 'POST' && req.headers.origin !== site.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
       if (url.pathname === '/_api/launch' || url.pathname.startsWith('/_api/launch/')) return await launchRoute(req, res, p, site, url);
+      // the tree block (family.js): the family this site belongs to, read-only, the same for every visitor
+      if (url.pathname === '/_api/tree' && req.method === 'GET') {
+        limit('siteRead', clientIp(req, cfg.trustProxy));
+        return sendJson(res, 200, treeView(db, cfg, p), { ...API_HEADERS, 'cache-control': 'public, max-age=15' });
+      }
       const body = req.method === 'POST' ? await readJson(req, 4_096) : null;
       const out = await siteApi({ project: p, site, method: req.method, path: url.pathname, ip: clientIp(req, cfg.trustProxy), query: url.searchParams, body });
       sendJson(res, 200, out.body, { ...API_HEADERS, 'cache-control': out.cache || 'no-store' });

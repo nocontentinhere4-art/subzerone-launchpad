@@ -8,6 +8,7 @@ import { jstDate } from './calendar.js';
 import { publicStats } from './coin-stats.js';
 import { buildView, buildSummary } from './build-steps.js';
 import { now, HttpError, parseJson, utcDay } from './util.js';
+import { neighbourhood } from './family.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
   'asakusa', 'ueno', 'ikebukuro', 'nakano', 'kanda', 'tsukiji', 'odaiba', 'yoyogi', 'meguro', 'shinagawa', 'sumida',
@@ -454,11 +455,15 @@ export function worldView(db, cfg, t = now()) {
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
       // a coin launched from another coin's site (child-launch.js): the link back; a launchpad coin: how many it launched
       ...(x.parent_slug ? { parent: { slug: x.parent_slug, name: x.parent_name } } : {}), ...(x.kids ? { childrenLaunched: x.kids } : {}),
+      // the family neighbourhood (family.js): the coins launched from it, and from them, that have no plot of their own;
+      // the city draws them as smaller buildings around this one (CITY-API.md "Launchpad families")
+      ...(x.has_children ? (() => { const f = neighbourhood(db, cfg, { id: x.pid, slug: x.slug }); return f.total ? { family: f } : {}; })() : {}),
       // launched only: real market/holder data for the building lights (coin-stats.js); tier 0 until the first fetch
       ...(launched ? { stats: publicStats(parseJson(x.cs_json), t) } : {}) };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json, pp.slug parent_slug, pp.name parent_name,
+      p.id pid, p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json, pp.slug parent_slug, pp.name parent_name,
+      EXISTS (SELECT 1 FROM projects c WHERE c.parent_project_id = p.id) has_children,
       (SELECT COUNT(*) FROM projects c JOIN launches cl ON cl.project_id = c.id WHERE c.parent_project_id = p.id) kids,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v

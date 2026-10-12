@@ -72,6 +72,14 @@ export function makeMockProvider(db) {
       if (!verifyWalletSignature(intent.signer_wallet, mockSigningText(intent.tx_message_hash), sig)) {
         throw new Error('wallet signature does not verify');
       }
+      // the exact shares, as on pump.fun (pumpfun.js checkSignedShares): the reviewed document carries the approved split
+      if (intent.config_json) {
+        let doc = null; try { doc = JSON.parse(Buffer.from(intent.tx_base64, 'base64').toString('utf8')); } catch { /* checked below */ }
+        const ks = (rows) => (rows || []).map((x) => `${x.wallet}:${x.bps}`).sort().join(',');
+        if (doc?.kind !== 'dev_buy' && ks(doc?.config?.feeSharing?.shareholders) !== ks(JSON.parse(intent.config_json)?.feeSharing?.shareholders)) {
+          throw new Error('the fee shareholders in the signed launch differ from the approved split');
+        }
+      }
       return { signature: `MOCK${b58encode(sig)}`.slice(0, 88), raw: Buffer.from(intent.tx_base64, 'base64') };
     },
 

@@ -15,7 +15,7 @@ const sol = (l) => (l == null ? '—' : `${(Number(l) / 1e9).toFixed(9).replace(
 const short = (w) => (w && w.length > 12 ? `${w.slice(0, 4)}…${w.slice(-4)}` : w || '');
 const pct = (bps) => `${(bps / 100).toFixed(bps % 100 ? 2 : 0)}%`;
 const usd = (n) => (typeof n !== 'number' ? '—' : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `$${(n / 1e3).toFixed(1)}K` : `$${n.toFixed(2)}`);
-const ROLE = { submitter: 'you (the creator)', parent: "this site's author", sub01: 'SUB-01' };
+const ROLE = { submitter: 'you (the creator)', parent: "this site's author", sub01: 'SUB-01' };   // grandparent: its label ("Author of …")
 const STEPS = [['submitted', 'Sent'], ['evaluating', "SUB-01's vote"], ['generating', 'Site built'], ['launch_prepared', 'Launch reviewed'], ['awaiting_signature', 'Signed'], ['confirming', 'On-chain'], ['launched', 'Launched']];
 const ORDER = { submitted: 0, evaluating: 1, selected: 2, generating: 2, preview_ready: 2, approved: 3, launch_prepared: 3, awaiting_signature: 4, confirming: 5, launched: 6 };
 const DONE = new Set(['launched', 'declined', 'cancelled', 'failed']);
@@ -76,18 +76,30 @@ export function launchBlock(slot, b, K) {
   // --- parts of the block --------------------------------------------------------------------------------------------
   const head = h('div', { cls: 'ln-head' }), list = h('ul', { cls: 'ln-kids' }), live = h('div', { cls: 'ln-live' }), form = h('div', { cls: 'ln-form' });
   const splitRows = (rows) => h('table', { cls: 'ln-split' }, h('tbody', {}, ...rows.map((r) => h('tr', {},
-    h('td', { text: pct(r.bps) }), h('td', { text: ROLE[r.role] || r.label }), h('td', {}, h('code', { text: r.wallet ? short(r.wallet) : 'your wallet', title: r.wallet || '' }))))));
+    h('td', { text: pct(r.bps) }), h('td', { text: ROLE[r.role] || (r.role === 'grandparent' ? `${r.label} (the launchpad above)` : r.label) }), h('td', {}, h('code', { text: r.wallet ? short(r.wallet) : 'your wallet', title: r.wallet || '' }))))));
 
+  // a launchpad family (family.js): what a coin launched here is, and the split it gets (the grandparent from generation 2)
+  const pads = () => parent.childrenMode === 'launchpads' && parent.childCanBeLaunchpad;
+  function familyLine() {
+    const f = parent.familySplit || { ...parent.split, grandparent: 0 }, gp = parent.ancestors?.[0];
+    const split = `${pct(f.creator)} to its creator, ${pct(f.parent)} to this site's author, ${f.grandparent ? `${pct(f.grandparent)} to the author of ${gp ? gp.name : 'the launchpad above this one'}, ` : ''}${pct(f.sub01)} to SUB-01`;
+    const what = parent.childrenMode === 'coins' || !parent.children ? ''
+      : !parent.childCanBeLaunchpad ? ` This site is at generation ${parent.depth} of at most ${parent.maxDepth}: what launches here is a coin, not a launchpad.`
+      : parent.childrenMode === 'launchpads' ? ` Every coin launched here is a launchpad too, with its own site that launches coins (generation ${parent.childDepth} of at most ${parent.maxDepth}).`
+      : ` You choose: a coin, or a launchpad with its own site that launches coins (generation ${parent.childDepth} of at most ${parent.maxDepth}).`;
+    return `Creator fees of every coin launched here, split on-chain and locked: ${split}.${what}${parent.childrenMode && parent.childrenMode !== 'coins' ? ' The fees go to the creators of the launchpads up the family tree, never to buyers or holders.' : ''}`;
+  }
   function drawParent() {
     const c = parent.counts, net = parent.provider ? (parent.provider.mock ? 'MOCK provider: rehearsal, no blockchain' : `pump.fun · Solana ${parent.provider.network}`) : 'launching is off';
+    const noun = pads() ? ['launchpad launched here', 'launchpads launched here'] : ['coin launched here', 'coins launched here'];
     head.replaceChildren(
-      h('div', { cls: 'app-tiles' }, ...[[c.launched, c.launched === 1 ? 'coin launched here' : 'coins launched here'], [c.inProgress, 'on their way'], [usd(c.volume24hUsd), '24h volume'], [usd(c.marketCapUsd), 'market cap']]
+      h('div', { cls: 'app-tiles' }, ...[[c.launched, c.launched === 1 ? noun[0] : noun[1]], [c.inProgress, 'on their way'], [usd(c.volume24hUsd), '24h volume'], [usd(c.marketCapUsd), 'market cap']]
         .map(([v, l]) => h('div', { cls: 'app-tile' }, h('span', { cls: 'app-n', text: String(v) }), h('span', { cls: 'fine', text: l })))),
-      h('p', { cls: 'fine', text: `${net}. Creator fees of every coin launched here, split on-chain and locked: ${pct(parent.split.creator)} to its creator, ${pct(parent.split.parent)} to this site's author, ${pct(parent.split.sub01)} to SUB-01.` }));
+      h('p', { cls: 'fine', text: `${net}. ${familyLine()}` }));
     if (b.list) {
       list.replaceChildren(...(parent.children.length ? parent.children.map((k) => h('li', {},
         k.logoUrl ? h('img', { src: k.logoUrl, alt: '', width: 40, height: 40, loading: 'lazy' }) : h('span', { cls: 'ln-dot' }),
-        h('div', {}, h('a', { href: k.siteUrl, target: '_blank', rel: 'noopener noreferrer', text: `${k.name} $${k.ticker}` }),
+        h('div', {}, h('a', { href: k.siteUrl, target: '_blank', rel: 'noopener noreferrer', text: `${k.name} $${k.ticker}` }), k.launchpad ? h('span', { cls: 'ln-badge', text: 'launchpad' }) : null,
           h('small', { text: [k.mock ? 'MOCK' : k.network, short(k.mint), k.marketCapUsd != null ? `MC ${usd(k.marketCapUsd)}` : null, k.volume24hUsd != null ? `vol ${usd(k.volume24hUsd)}` : null, new Date(k.launchedAt).toLocaleDateString()].filter(Boolean).join(' · ') }))))
         : [h('li', { cls: 'fine', text: 'No coin launched here yet. Be the first.' })]));
     }
@@ -97,7 +109,13 @@ export function launchBlock(slot, b, K) {
   // --- the form -> review -> one signed message -> SUB-01 ------------------------------------------------------------------
   function drawForm() {
     const field = (label, el, extra) => h('div', { cls: 'app-field' }, h('label', { cls: 'app-label', text: label }), el, extra || null);
-    const name = h('input', { type: 'text', maxlength: 32, placeholder: 'Coin name', 'aria-label': 'Name' });
+    const name = h('input', { type: 'text', maxlength: 32, placeholder: pads() ? 'Launchpad name' : 'Coin name', 'aria-label': 'Name' });
+    // 'choice': the launcher ticks it; 'launchpads': said plainly, nothing to tick (the server decides from the block)
+    const padBox = parent.childrenMode === 'choice' && parent.childCanBeLaunchpad ? h('input', { type: 'checkbox', 'aria-label': 'Make it a launchpad' }) : null;
+    const padField = padBox ? h('label', { cls: 'ln-pad' }, padBox, h('span', {}, h('strong', { text: 'Make it a launchpad' }),
+      h('span', { cls: 'fine', text: `Its own site gets a launch block, so others launch coins from it (generation ${parent.childDepth} of at most ${parent.maxDepth}). Creator fees of those coins flow up to you, this site's author and SUB-01.` })))
+      : pads() ? h('p', { cls: 'ln-pad', role: 'note' }, h('span', {}, h('strong', { text: 'You launch a launchpad' }),
+        h('span', { cls: 'fine', text: `A real coin whose own site launches coins too (generation ${parent.childDepth} of at most ${parent.maxDepth}). Coins launched from it pay creator fees up the tree: their creator, you, this site's author, SUB-01.` }))) : null;
     const ticker = h('input', { type: 'text', maxlength: 10, placeholder: 'TICKER', 'aria-label': 'Ticker' });
     const desc = h('textarea', { rows: 4, maxlength: 500, placeholder: `What is it? At least ${parent.minDescription} characters: SUB-01 reads it.`, 'aria-label': 'Description' });
     const cnt = h('span', { cls: 'counter', text: '0 / 500' });
@@ -123,7 +141,7 @@ export function launchBlock(slot, b, K) {
       try {
         say(m, 'Connecting your wallet…');
         const { account } = await connect();
-        const fields = { name: name.value.trim(), ticker: ticker.value.trim(), description: desc.value.trim(), devBuySol: buy ? Number(buy.value || 0) : 0 };
+        const fields = { name: name.value.trim(), ticker: ticker.value.trim(), description: desc.value.trim(), devBuySol: buy ? Number(buy.value || 0) : 0, ...(padBox ? { launchpad: padBox.checked } : {}) };
         const q = await api('/_api/launch/quote', { wallet: account.address, ...fields, imageSha256: image.sha });
         say(m, '');
         const sign = h('button', { cls: 'btn', type: 'button', text: 'Sign and send to SUB-01', onclick: () => busy(sign, async () => {
@@ -141,6 +159,7 @@ export function launchBlock(slot, b, K) {
         review.replaceChildren(h('div', { cls: 'ln-card' },
           h('span', { cls: 'eyebrow', text: 'Review before you sign' }),
           h('div', { cls: 'ln-coin' }, h('img', { src: image.url, alt: '', width: 72, height: 72 }), h('div', {}, h('strong', { text: `${fields.name} $${fields.ticker}` }), h('p', { cls: 'fine', text: fields.description }))),
+          h('p', { cls: 'fine', text: q.launchpad ? `What you launch: a LAUNCHPAD, generation ${q.depth} of at most ${q.maxDepth}. Its own site launches coins too.` : parent.childrenMode && parent.childrenMode !== 'coins' ? `What you launch: a coin (not a launchpad).` : '' }),
           h('p', { cls: 'fine', text: `Network: ${q.mock ? 'MOCK provider (rehearsal, no blockchain)' : `pump.fun on Solana ${q.network}`}. Created by your wallet ${short(account.address)}, which pays the network fee and rent (about 0.02 SOL).` }),
           h('h4', { text: 'Creator fees: split on-chain, locked at launch' }), splitRows(q.recipients),
           h('p', { cls: 'fine', text: `Dev buy: ${q.initialBuyLamports > 0 ? `${sol(q.initialBuyLamports)} of your own coin, a second signature right after the launch (pump.fun's fees included; you can skip it then)` : 'none'}.` }),
@@ -152,7 +171,7 @@ export function launchBlock(slot, b, K) {
       } catch (e) { say(m, explain(e), 'err'); }
     }) });
     form.replaceChildren(h('p', { text: b.prompt }),
-      field('Name', name), field('Ticker', ticker), field('Description', desc, cnt), field('Image (PNG, JPEG, GIF or WebP, up to 1.5 MB)', file, preview),
+      padField, field('Name', name), field('Ticker', ticker), field('Description', desc, cnt), field('Image (PNG, JPEG, GIF or WebP, up to 1.5 MB)', file, preview),
       buy ? field(`Dev buy in SOL (optional, up to ${parent.maxDevBuySol})`, buy) : null,
       ...(parent.open ? [h('div', { cls: 'row' }, go)] : [h('p', { cls: 'msg err', text: parent.pausedNote || 'Launches are closed right now.' })]), m, review);
   }
@@ -221,7 +240,8 @@ export function launchBlock(slot, b, K) {
     if (s.status === 'launched' && s.launch) {
       kids.push(h('div', { cls: 'ln-card ok' }, h('strong', { text: `Launched ✓ ${s.launch.provider === 'mock' ? '(MOCK, no blockchain)' : `on ${s.launch.network}`}` }),
         h('p', { cls: 'fine', text: `Mint ${s.launch.mint} · ${s.launch.checks} on-chain checks passed.` }),
-        h('div', { cls: 'row' }, s.project?.siteUrl ? h('a', { cls: 'btn btn-sm', href: s.project.siteUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Its site ↗' }) : null,
+        s.launchpad ? h('p', { cls: 'fine', text: `It is a launchpad (generation ${s.depth}): its own site launches the next generation.` }) : null,
+        h('div', { cls: 'row' }, s.project?.siteUrl ? h('a', { cls: 'btn btn-sm', href: s.project.siteUrl, target: '_blank', rel: 'noopener noreferrer', text: s.launchpad ? 'Its launchpad site ↗' : 'Its site ↗' }) : null,
           s.launch.explorerToken ? h('a', { cls: 'btn btn-sm btn-ghost', href: s.launch.explorerToken, target: '_blank', rel: 'noopener noreferrer', text: 'Solscan ↗' }) : null,
           s.project?.cityUrl ? h('a', { cls: 'btn btn-sm btn-ghost', href: s.project.cityUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Its building in the city ↗' }) : null),
         s.registry ? h('p', { cls: 'fine', text: `Signed into this site's post-quantum registry as entry #${s.registry.seq} (ML-DSA-65): your browser checks it in the registry on this page.` }) : null));
@@ -244,7 +264,7 @@ export function launchBlock(slot, b, K) {
     live.replaceChildren(h('div', { cls: 'ln-card' }, ...kids));
   }
 
-  slot.replaceChildren(head, live, form, ...(b.list ? [h('h4', { cls: 'ln-h', text: 'Coins launched here' }), list] : []));
+  slot.replaceChildren(head, live, form, ...(b.list ? [h('h4', { cls: 'ln-h', text: b.children === 'launchpads' ? 'Launched here' : 'Coins launched here' }), list] : []));
   return loadParent().then(() => {
     drawForm();
     const last = store.get(LAST);

@@ -37,10 +37,10 @@ function hostCall(base, host, method, path, body, headers = {}) {
 async function later(ms, fn) { const real = Date.now; Date.now = () => real() + ms; try { return await fn(); } finally { Date.now = real; } }
 
 /** A launchpad coin (MOCK-launched for real through the owner's routes) and a client for its host. */
-async function launchpad(h, { idea = QL } = {}) {
+async function launchpad(h, { idea = QL, plotId = 'ginza-1' } = {}) {
   const owner = h.client(user(h.db));
   await owner.signIn();
-  const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w, { title: idea.title, nameSuggestion: idea.title, tickerSuggestion: idea.ticker, concept: idea.concept }));
+  const sub = await owner.call('POST', '/api/ideas', IDEA(owner.w, { title: idea.title, nameSuggestion: idea.title, tickerSuggestion: idea.ticker, concept: idea.concept, ...(plotId ? { plotId } : {}) }));
   assert.equal(sub.status, 200, sub.text);
   await drain(h.db, h.cfg, h.brain.fetchImpl);
   assert.equal((await owner.call('POST', `/api/ideas/${sub.json.id}/publish`, { public: true })).status, 200);
@@ -154,8 +154,8 @@ test('child launch (MOCK): one signed message -> SUB-01 build -> the child built
     const idea = h.db.get('SELECT * FROM ideas WHERE id = ?', s.json.ideaId);
     assert.equal(idea.visibility, 'public');
     assert.equal(idea.owner_wallet, visitor.address);
-    const plot = h.db.get('SELECT plot_id FROM plots WHERE idea_id = ?', idea.id);
-    assert.ok(plot, 'the child has its own building plot');
+    // no plot of its own: in the city it is a smaller building in the parent's neighbourhood (world.js `family`)
+    assert.equal(h.db.get('SELECT plot_id FROM plots WHERE idea_id = ?', idea.id), undefined, 'a child takes no city address');
 
     // SUB-01 votes build -> child_build -> prepare_launch (no reviewer, the creator's signature is the approval)
     await drain(h.db, h.cfg, h.brain.fetchImpl);
@@ -226,9 +226,11 @@ test('child launch (MOCK): one signed message -> SUB-01 build -> the child built
     assert.equal(logo.headers['content-type'], 'image/png');
     assert.match(logo.headers['content-security-policy'], /sandbox/);
     const w = worldView(h.db, h.cfg);
-    const kid = w.plots.find((x) => x.project?.slug === child.slug);
-    assert.deepEqual(kid.project.parent, { slug: k.slug, name: 'Quantum launchpad' });
-    assert.equal(w.plots.find((x) => x.project?.slug === k.slug)?.project?.childrenLaunched ?? 1, 1);
+    assert.equal(w.plots.find((x) => x.project?.slug === child.slug), undefined, 'not on a plot of its own');
+    const home = w.plots.find((x) => x.project?.slug === k.slug).project;
+    assert.equal(home.childrenLaunched, 1);
+    assert.deepEqual(home.family.members.map((m) => [m.slug, m.parent, m.depth, m.launched, m.launchpad]), [[child.slug, k.slug, 1, true, false]]);
+    assert.equal(home.family.total, 1);
     // the token metadata image is the creator's image, served as what it is
     const cfgJson = JSON.parse(h.db.get('SELECT config_json FROM launch_intents WHERE project_id = ?', child.id).config_json);
     const meta = await fetch(`${h.base}${new URL(cfgJson.token.metadata.image).pathname}`);

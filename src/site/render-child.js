@@ -69,9 +69,9 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
 
 // The idea app (docs/APP-COMPOSER.md): one <section data-app data-config> holding the validated app spec; the static body
 // says in plain words what each block does, the kit (kit/app/*.js) turns it into the working app on the live site.
-const BLOCK_NAMES = { submit: 'Form', schedule: 'Schedule', reveal: 'Reveal', vote: 'Vote', collection: 'Archive', card: 'Card', leaderboard: 'Leaderboard', counter: 'Counter', map: 'Map', timer: 'Countdown', note: 'Note', pq: 'Post-quantum registry', launch: 'Launch a coin' };
+const BLOCK_NAMES = { submit: 'Form', schedule: 'Schedule', reveal: 'Reveal', vote: 'Vote', collection: 'Archive', card: 'Card', leaderboard: 'Leaderboard', counter: 'Counter', map: 'Map', timer: 'Countdown', note: 'Note', pq: 'Post-quantum registry', launch: 'Launch a coin', tree: 'Family tree' };
 const pctOf = (bps) => `${Number(bps) / 100}%`;
-function blockStatic(b, app) {
+function blockStatic(b, app, ctx = {}) {
   switch (b.type) {
     case 'submit': return `<p>${esc(b.prompt)}</p><ul class="app-fields">${b.fields.map((f) => `<li>${esc(f.label)}${f.required ? '' : ' (optional)'}</li>`).join('')}</ul>`;
     case 'schedule': return `<p class="when">${esc(b.label)}</p><div class="count" data-count>${DASH}</div>`;
@@ -85,14 +85,21 @@ function blockStatic(b, app) {
     case 'timer': return `<p class="when">${b.daily ? `Every day at ${esc(b.daily)} JST` : `${esc(String(b.at || '').replace('T', ' '))} JST`}</p><div class="count" data-count>${DASH}</div>`;
     case 'note': return `<p>${esc(b.body)}</p>`;
     case 'pq': return '<p>Every step the launchpad took for this coin, signed with ML-DSA-65 (FIPS 204) and checked by your browser.</p>';
-    case 'launch': return `<p>${esc(b.prompt)}</p><p class="fine">The coin is created by your own wallet, after you review the transaction. SUB-01 reads every one first. Creator fees, split on-chain and locked: ${esc(pctOf(b.split.creator))} to its creator, ${esc(pctOf(b.split.parent))} to this site's author, ${esc(pctOf(b.split.sub01))} to SUB-01.</p>`;
+    case 'launch': {
+      // a family (family.js): from the second generation the grandparent's author gets up to 10% of the creator's share
+      const fam = ctx.family || { depth: 0, maxDepth: 5 }, g = fam.depth > 0 ? Math.max(0, Math.min(1000, b.split.creator - 5000)) : 0;
+      const kids = b.children === 'launchpads' ? `<p class="fine">Every coin launched here is a launchpad too: its own site launches coins, down to depth ${esc(fam.maxDepth)} of the family (this site is at depth ${esc(fam.depth)}).</p>`
+        : b.children === 'choice' ? `<p class="fine">The launcher chooses: a coin, or a launchpad whose own site launches coins too, down to depth ${esc(fam.maxDepth)} of the family (this site is at depth ${esc(fam.depth)}).</p>` : '';
+      return `<p>${esc(b.prompt)}</p>${kids}<p class="fine">The coin is created by your own wallet, after you review the transaction. SUB-01 reads every one first. Creator fees, split on-chain and locked: ${esc(pctOf(b.split.creator - g))} to its creator, ${esc(pctOf(b.split.parent))} to this site's author, ${g ? `${esc(pctOf(g))} to the author of the launchpad above this one, ` : ''}${esc(pctOf(b.split.sub01))} to SUB-01.${b.children && b.children !== 'coins' ? ' The fees go to the creators of the launchpads up the family tree, never to buyers or holders.' : ''}</p>`;
+    }
+    case 'tree': return '<p>The live family tree of this launchpad\'s family: who launched whom, when, at which depth; the fastest-growing branch and the launchpads with the most descendants.</p><p class="fine">Creator fees of every coin born in the family flow up the tree to the creators of the launchpads above it and to SUB-01, split on-chain and locked at launch. Buying or holding a coin pays nobody anything.</p>';
     default: return '';
   }
 }
-function appHtml(app, index = '01') {
+function appHtml(app, index = '01', context = {}) {
   if (!app || !Array.isArray(app.screens)) return '';
   const screens = app.screens.map((s) => `<div class="app-screen" data-screen="${esc(s.id)}"><h3 class="app-screen-h">${esc(s.title)}</h3>
-${s.blocks.map((b, i) => `<div class="app-block app-${esc(b.type)}" data-type="${esc(b.type)}" data-i="${i}"><span class="eyebrow">${esc(BLOCK_NAMES[b.type] || b.type)}</span>${b.title ? `<h3>${esc(b.title)}</h3>` : ''}<div data-slot>${blockStatic(b, app)}</div></div>`).join('\n')}</div>`).join('\n');
+${s.blocks.map((b, i) => `<div class="app-block app-${esc(b.type)}" data-type="${esc(b.type)}" data-i="${i}"><span class="eyebrow">${esc(b.type === 'launch' && b.children === 'launchpads' ? 'Launch a launchpad' : BLOCK_NAMES[b.type] || b.type)}</span>${b.title ? `<h3>${esc(b.title)}</h3>` : ''}<div data-slot>${blockStatic(b, app, context)}</div></div>`).join('\n')}</div>`).join('\n');
   return `<section class="app card reveal" id="app" data-app data-config="${esc(JSON.stringify(app))}" aria-label="The app">
 <div class="wrap">
 <header class="sect-h app-h"><span class="sect-i">${index} / The app</span><h2>${esc(app.title)}</h2>${app.lede ? `<p class="app-lede sect-lede">${esc(app.lede)}</p>` : ''}</header>
@@ -109,7 +116,7 @@ const appLaunches = (app) => blocksOf(app).some((b) => b.type === 'launch');
 /** The hero's one action, from the app spec: what a visitor comes to do. */
 function ctaOf(app, tools) {
   const blocks = blocksOf(app);
-  if (blocks.some((b) => b.type === 'launch')) return 'Launch a coin';
+  if (blocks.some((b) => b.type === 'launch')) return blocks.some((b) => b.type === 'launch' && b.children === 'launchpads') ? 'Launch a launchpad' : 'Launch a coin';
   const sub = blocks.find((b) => b.type === 'submit');
   if (sub) return sub.title && [...sub.title].length <= 28 ? sub.title : sub.button || 'Send yours';
   if (blocks.some((b) => b.type === 'vote')) return 'Vote';
@@ -223,7 +230,7 @@ ${ca}${parent}
 </section>
 ${figures}
 <main id="main">
-${appHtml(app, idx('app'))}
+${appHtml(app, idx('app'), context)}
 ${toolsSec}
 ${chainSec}
 ${aboutSec}
