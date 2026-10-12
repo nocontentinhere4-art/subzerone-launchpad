@@ -44,6 +44,7 @@ import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { createChat } from './chat.js';
 import { buildView, createBuildWatch } from './build-steps.js';
 import { fidelityView, topMissing } from './fidelity.js';
+import { createTicket, myTickets, listTickets, getTicket, replyTicket, setTicketStatus, operatorAllowed, parseSince, notifyTelegram, SUPPORT } from './support.js';
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
@@ -842,6 +843,58 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     return ctx.raw(200, Buffer.from(JSON.stringify(hit.token.metadata)), { 'content-type': 'application/json', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
   });
 
+  // --- help / support (support.js) -------------------------------------------------------------------------------------
+  // Anyone may report a problem, signed in or not; the answer comes back on "My reports" (wallet or the read token the
+  // city keeps). The owner's Telegram gets a ping, fire and forget: it never delays or fails the report.
+  r.post('/api/support', async (ctx) => {
+    const out = createTicket(db, { body: await ctx.body(SUPPORT.bodyBytes), wallet: ctx.user?.wallet || null, ip: ctx.ip });
+    log.info('support ticket', { ticket: out.ticket.id, category: out.ticket.category, signedIn: Boolean(ctx.user), redacted: out.redacted });
+    notifyTelegram(cfg, fetchImpl, { ...out.ticket, signedIn: Boolean(ctx.user) });
+    return { ticket: out.ticket, token: out.token, redacted: out.redacted };
+  }, { bodyLimit: SUPPORT.bodyBytes });
+  // read tokens ride in a header, never in the URL (logs, history, referrers)
+  r.get('/api/support/mine', (ctx) => myTickets(db, { wallet: ctx.user?.wallet || null, tokens: String(ctx.req.headers['x-support-token'] || '').split(',').slice(0, 40) }));
+  // the owner's page (admin.js): list/filter, reply, set the status
+  r.get('/api/admin/support', (ctx) => {
+    requireAdmin(ctx, ['admin', 'reviewer']);
+    return listTickets(db, { status: ctx.query.get('status'), category: ctx.query.get('category'), q: ctx.query.get('q'), limit: ctx.query.get('limit') });
+  });
+  r.post('/api/admin/support/:id/reply', async (ctx) => {
+    const u = requireAdmin(ctx, ['admin', 'reviewer']);
+    const out = replyTicket(db, ctx.params.id, await ctx.body(16_000), `admin:${u.wallet}`);
+    audit(db, { actor: `admin:${u.wallet}`, kind: 'support', message: `replied to ${out.id} (${out.status})` });
+    return out;
+  });
+  r.post('/api/admin/support/:id/status', async (ctx) => {
+    const u = requireAdmin(ctx, ['admin', 'reviewer']);
+    const out = setTicketStatus(db, ctx.params.id, (await ctx.body()).status);
+    audit(db, { actor: `admin:${u.wallet}`, kind: 'support', message: `${out.id} → ${out.status}` });
+    return out;
+  });
+  // the AI operator: Authorization: Bearer SUPPORT_OPERATOR_TOKEN. Without the variable these routes do not exist (404).
+  // No cookie is read and no Origin is required on them (handle(): opts.bearer); a wrong token is a 401.
+  if (cfg.support.operatorTokenRejected) log.warn('SUPPORT_OPERATOR_TOKEN rejected (24–256 printable characters, no spaces): the support inbox is off');
+  if (cfg.support.operatorToken) {
+    const operator = (ctx) => { if (!operatorAllowed(cfg, ctx.req.headers.authorization)) throw new HttpError(401, 'unauthorized', 'bearer token required'); };
+    r.get('/api/support/inbox', (ctx) => {
+      operator(ctx);
+      return listTickets(db, { since: parseSince(ctx.query.get('since')), status: ctx.query.get('status'), category: ctx.query.get('category'), limit: ctx.query.get('limit') });
+    }, { bearer: true });
+    r.get('/api/support/:id', (ctx) => { operator(ctx); return getTicket(db, ctx.params.id); }, { bearer: true });
+    r.post('/api/support/:id/reply', async (ctx) => {
+      operator(ctx);
+      const out = replyTicket(db, ctx.params.id, await ctx.body(16_000), 'operator');
+      audit(db, { actor: 'operator', kind: 'support', message: `replied to ${out.id} (${out.status})` });
+      return out;
+    }, { bearer: true });
+    r.post('/api/support/:id/status', async (ctx) => {
+      operator(ctx);
+      const out = setTicketStatus(db, ctx.params.id, (await ctx.body()).status);
+      audit(db, { actor: 'operator', kind: 'support', message: `${out.id} → ${out.status}` });
+      return out;
+    }, { bearer: true });
+  }
+
   // --- admin ----------------------------------------------------------------------------------------------------------
   r.get('/api/admin/overview', (ctx) => {
     requireAdmin(ctx, ['admin', 'reviewer']);
@@ -1171,15 +1224,16 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       }
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         // state-changing requests must come from our own pages
+        // (the support operator's bearer routes excepted: no cookie is read there, so no other site can ride a session)
         const o = req.headers.origin;
-        if (o !== origin.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
+        if (o !== origin.origin && !(route.opts.bearer && /^Bearer /.test(String(req.headers.authorization || '')))) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
         if (url.pathname !== '/api/telemetry' && !url.pathname.startsWith('/api/chat')) worldCache = null;   // a write may change the city; the next read rebuilds it
       }
       const cookies = parseCookies(req.headers.cookie);
       const ip = clientIp(req, cfg.trustProxy);
       const ctx = {
         req, res, params: route.params, query: url.searchParams, cookies, ip,
-        user: sessionUser(db, cookies[COOKIE]),
+        user: route.opts.bearer ? null : sessionUser(db, cookies[COOKIE]),
         body: (lim) => readJson(req, lim || route.opts.bodyLimit || 64_000),
         setCookie: (c) => res.setHeader('set-cookie', c),
         raw: (status, body, headers) => { res.writeHead(status, headers); res.end(body); return RAW; },

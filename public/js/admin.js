@@ -1,13 +1,18 @@
 import { api, html, short, when, ago, pct } from './lib.js';
 import { state, toast, every } from './app.js';
 import { statusChip } from './pages.js';
+import { supportSection } from './support-admin.js';
 
-export async function page(el) {
+export async function page(root) {
+  // the support inbox (support-admin.js) on top, drawn on its own so a reply being typed survives the refresh below
+  root.innerHTML = '<h1>Admin</h1><section id="support"></section><div id="admin-main"></div>';
+  const support = supportSection(root.querySelector('#support'));
+  const el = root.querySelector('#admin-main');
   const draw = async () => {
     const o = await api('/api/admin/overview');
     const admin = o.role === 'admin';
     el.innerHTML = html`
-    <h1>Admin</h1>
+    <h2>Ideas</h2>
     <div class="grid3">
       ${Object.entries(o.counts).map(([k, v]) => html`<div class="card"><div class="dim tiny">${k}</div><div style="font-size:24px">${v}</div></div>`)}
       ${Object.keys(o.counts).length ? '' : html`<div class="empty">No ideas yet.</div>`}
@@ -80,7 +85,9 @@ export async function page(el) {
     const mock = el.querySelector('#mock');
     if (mock) mock.onchange = () => post('/api/admin/mock-behaviour', { behaviour: mock.value }, `Mock: ${mock.value}`);
   };
-  if (!state.me?.user || !['admin', 'reviewer'].includes(state.me.user.role)) { el.innerHTML = html`<h1>Admin</h1><div class="empty">Admins and reviewers only.</div>`.s; return; }
-  await draw();
-  every(10000, () => { const a = document.activeElement; if (!el.contains(a) || a.tagName === 'BUTTON' || a === document.body) draw().catch(() => {}); });
+  if (!state.me?.user || !['admin', 'reviewer'].includes(state.me.user.role)) { root.innerHTML = html`<h1>Admin</h1><div class="empty">Admins and reviewers only.</div>`.s; return; }
+  await Promise.all([draw(), support.draw().catch((x) => toast(x.message, true))]);
+  if (location.hash === '#support') root.querySelector('#support').scrollIntoView();
+  const idle = (box) => { const a = document.activeElement; return !box.contains(a) || a.tagName === 'BUTTON' || a === document.body; };
+  every(10000, () => { if (idle(el)) draw().catch(() => {}); if (idle(root.querySelector('#support'))) support.draw().catch(() => {}); });
 }

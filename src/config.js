@@ -132,12 +132,17 @@ export function loadConfig(env = process.env) {
     // the app composer's dev-only "reveal now" trigger (app-api.js); refused in production whatever the variable says
     appDevTrigger: e('APP_DEV_TRIGGER') === '1' && deployEnv !== 'production',
     // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it
+    // Help / support (support.js): the AI operator's inbox token (its routes do not exist while unset) and the owner's
+    // Telegram ping on every new report (skipped while either is unset). Never logged.
+    support: { operatorToken: e('SUPPORT_OPERATOR_TOKEN'), telegramBotToken: e('TELEGRAM_BOT_TOKEN'), telegramChatId: e('TELEGRAM_CHAT_ID') },
     trust: { datasets: list(e('SUB01_DATASETS'), 20, 80, 'SUB01_DATASETS'), operatorName: e('OPERATOR_NAME') ? list(e('OPERATOR_NAME'), 1, 80, 'OPERATOR_NAME', false)[0] : null },
   };
   if (cfg.sub01FeeWallet && !isSolanaAddress(cfg.sub01FeeWallet)) throw new Error('SUB01_FEE_WALLET is not a valid Solana address');
   if (cfg.cityDist && !isAbsolute(cfg.cityDist)) throw new Error('CITY_DIST must be an absolute path');
   if (cfg.onchain.rpcUrl && !/^https:\/\//.test(cfg.onchain.rpcUrl)) throw new Error('ONCHAIN_RPC_URL must be an https:// URL');
   if (cfg.coinStats.heliusUrl && !/^https:\/\/[^/?#]+\.helius-rpc\.com\//.test(cfg.coinStats.heliusUrl)) throw new Error('HELIUS_URL must be an https://…helius-rpc.com/ URL');
+  // a weak operator token keeps the inbox off (app.js logs it) rather than stopping the server
+  if (cfg.support.operatorToken && !/^[\x21-\x7e]{24,256}$/.test(cfg.support.operatorToken)) cfg.support = { ...cfg.support, operatorToken: '', operatorTokenRejected: true };
   if (cfg.production) {
     const missing = [];
     if (!cfg.encryptionKey) missing.push('APP_ENCRYPTION_KEY');

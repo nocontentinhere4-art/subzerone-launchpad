@@ -115,6 +115,21 @@ that allows `POST /2/tweets`.
 - **Budgets**: admin → global daily USD cap and per-project cap. They count only generation spend (the template
   generator costs $0). Network fees are paid by the submitter's wallet, never by the platform.
 
+- **Support** (`src/support.js`, migration 022): the city's Help button and launch errors post reports to
+  `POST /api/support` (signed in or anonymous; 5 an hour per IP and per wallet, 100 an hour in all). The owner reads and
+  answers them on `/admin#support`. Optional variables:
+  - `SUPPORT_OPERATOR_TOKEN` (24+ characters, `openssl rand -hex 32`): turns on the AI operator's API, with
+    `Authorization: Bearer <token>` (no cookie, no Origin needed). Unset, these routes answer 404.
+    - `GET /api/support/inbox?since=<unix ms | ISO>&status=open,in_progress&category=launch&limit=100` → `{tickets, counts,
+      open, now}`; pass the previous `now` as the next `since` to get only what changed. Each ticket: `id, status,
+      category, source, message, contact, wallet, projectSlug, redacted, createdAt, updatedAt, clientContext,
+      serverContext (launch intents, dev-buy attempts, failing jobs from the database), replies[]`.
+    - `GET /api/support/:id`, `POST /api/support/:id/reply {text, status?}` (default status `answered`),
+      `POST /api/support/:id/status {status}` with `open | in_progress | answered | closed`.
+    - Every staff reply reaches the author as "SUBZERONE support" on the city's "My reports".
+  - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`: a short ping per new report (category, first 200 characters, a link to
+    `/admin#support`). Fire and forget; the token is never logged.
+
 ## 6. Going to mainnet (checklist)
 
 1. A devnet launch, recorded end to end (`LAUNCH_PROVIDER=pumpfun SOLANA_NETWORK=devnet npm run demo:flow`), including
