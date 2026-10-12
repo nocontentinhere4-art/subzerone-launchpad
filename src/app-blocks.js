@@ -5,13 +5,17 @@
 import { validateToolConfig, isToolError, lastJst } from './tools.js';
 
 export const APP_VERSION = 1;
-export const BLOCK_TYPES = ['submit', 'schedule', 'reveal', 'vote', 'collection', 'card', 'leaderboard', 'counter', 'map', 'timer', 'note', 'pq'];
+export const BLOCK_TYPES = ['submit', 'schedule', 'reveal', 'vote', 'collection', 'card', 'leaderboard', 'counter', 'map', 'timer', 'note', 'pq', 'launch'];
 export const CARD_TEMPLATES = ['receipt', 'ticket', 'poster', 'postcard', 'badge'];
 export const FIELD_KINDS = ['text', 'longtext', 'choice', 'number'];
 export const PICKS = ['owner', 'votes', 'random'];
 export const METRICS = ['submitted_today', 'submitted_total', 'published_total', 'votes_today', 'voters_today', 'days_running'];
 export const METRIC_LABELS = { submitted_today: 'today', submitted_total: 'in total', published_total: 'published', votes_today: 'votes today', voters_today: 'voters today', days_running: 'days running' };
 export const LIMITS = Object.freeze({ screens: 4, blocks: 14, fields: 4, lines: 6, choices: 8 });
+// The launch block's creator-fee split for the coins launched from the site (child-launch.js), in bps. The author may
+// change it within these limits (SUB-01 at least 20%, the creator at least 50%); the server re-validates it at every launch.
+export const LAUNCH_SPLIT = Object.freeze({ creator: 7000, parent: 1000, sub01: 2000 });
+export const LAUNCH_LIMITS = Object.freeze({ creator: [5000, 8000], parent: [0, 3000], sub01: [2000, 5000] });
 
 /** What the room PC shows for each block: a name and one plain line. */
 export const BLOCKS = Object.freeze({
@@ -27,6 +31,7 @@ export const BLOCKS = Object.freeze({
   timer: { name: 'Countdown', line: 'A countdown to a date or a daily moment, with a calendar file.' },
   note: { name: 'Note', line: 'A short plain-text box.' },
   pq: { name: 'Post-quantum registry', line: 'Everything the launchpad did for this coin, hashed and signed with ML-DSA-65 (FIPS 204), verified in the visitor\'s browser.' },
+  launch: { name: 'Launch a coin', line: 'Visitors launch their own real coin from this site: SUB-01 votes on each one first, and its creator fees are split on-chain between the creator, you and SUB-01.' },
 });
 
 export class AppError extends Error {}
@@ -147,6 +152,16 @@ const SCHEMAS = {
     if (!out.registry && !out.verify) fail(w, 'turn on the registry or the verifier');
     return out;
   },
+  launch(b, w) {
+    only(w, b, ['type', 'title', 'prompt', 'split', 'devBuy', 'list']);
+    const s = b.split ?? LAUNCH_SPLIT, sw = `${w} split`;
+    only(sw, s, ['creator', 'parent', 'sub01']);
+    const split = Object.fromEntries(Object.entries(LAUNCH_LIMITS).map(([k, [min, max]]) => [k, int(sw, s[k], `${k} (bps)`, min, max)]));
+    if (split.creator + split.parent + split.sub01 !== 10000) fail(sw, 'creator + parent + sub01 must total 10000 bps (100%)');
+    return { type: 'launch', title: text(w, b.title, 'title', 1, 60, { def: 'Launch a coin here' }),
+      prompt: text(w, b.prompt, 'prompt', 3, 200, { def: 'Launch your own coin from this site. SUB-01 reads it first; if he builds it, you sign the launch with your wallet.' }),
+      split, devBuy: bool(w, b.devBuy, 'devBuy', true), list: bool(w, b.list, 'list', true) };
+  },
 };
 
 /** The app spec, normalised (defaults filled, text trimmed), or an AppError with the first problem. Cross-block rules:
@@ -178,7 +193,7 @@ export function validateApp(a) {
   }
   if (new Set(out.screens.map((s) => s.id)).size !== out.screens.length) fail('spec', 'screen ids must differ');
   const all = out.screens.flatMap((s) => s.blocks), n = (t) => all.filter((b) => b.type === t).length;
-  for (const t of ['submit', 'schedule', 'reveal', 'card', 'pq', 'map']) if (n(t) > 1) fail('spec', `one ${t} block at most`);
+  for (const t of ['submit', 'schedule', 'reveal', 'card', 'pq', 'map', 'launch']) if (n(t) > 1) fail('spec', `one ${t} block at most`);
   const submit = all.find((b) => b.type === 'submit');
   if (n('reveal') && !(n('schedule') && submit)) fail('spec', 'a reveal needs a schedule and a form');
   if (all.some((b) => b.type === 'vote' && b.of === 'candidates') && !n('reveal')) fail('spec', 'voting on candidates needs a reveal');
@@ -217,5 +232,5 @@ export function describeApp(app) {
   const sched = blockOf(app, 'schedule'), card = blockOf(app, 'card');
   return [has('submit') ? `${app.noun.many} form` : null, has('vote') ? 'signed votes' : null, sched ? `reveal ${sched.label.replace(/^Every /, 'every ').replace(/ JST$/, ' JST')}` : null,
     card ? `${card.template} card` : null, has('collection') ? 'archive' : null, has('leaderboard') ? 'leaderboard' : null, has('counter') ? 'counter' : null,
-    has('map') ? 'map' : null, has('timer') ? 'countdown' : null, has('pq') ? 'ML-DSA-65 registry' : null].filter(Boolean).join(' · ');
+    has('map') ? 'map' : null, has('timer') ? 'countdown' : null, has('launch') ? 'coin launcher' : null, has('pq') ? 'ML-DSA-65 registry' : null].filter(Boolean).join(' · ');
 }

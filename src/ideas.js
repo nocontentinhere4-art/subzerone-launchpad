@@ -221,6 +221,7 @@ export function publishIdea(db, ideaId, wallet, publish) {
   if (!publish && ['approved', 'launch_prepared', 'awaiting_signature', 'confirming', 'launched', 'failed'].includes(idea.status)) {
     throw new HttpError(409, 'locked', 'a launched or launching project stays public');
   }
+  if (!publish && db.get('SELECT 1 FROM child_launches WHERE idea_id = ?', ideaId)) throw new HttpError(409, 'locked', 'a coin launched from another coin\'s site is public from the start');
   db.run('UPDATE ideas SET visibility = ?, published_at = ?, updated_at = ? WHERE id = ?',
     publish ? 'public' : 'private', publish ? now() : null, now(), ideaId);
   audit(db, { actor: `wallet:${wallet}`, kind: 'visibility', ideaId, message: publish ? 'Made public by the submitter' : 'Made private by the submitter', isPublic: publish });

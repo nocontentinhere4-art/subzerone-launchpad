@@ -71,7 +71,8 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
 
 // The idea app (docs/APP-COMPOSER.md): one <section data-app data-config> holding the validated app spec; the static body
 // says in plain words what each block does, the kit (kit/app/*.js) turns it into the working app on the live site.
-const BLOCK_NAMES = { submit: 'Form', schedule: 'Schedule', reveal: 'Reveal', vote: 'Vote', collection: 'Archive', card: 'Card', leaderboard: 'Leaderboard', counter: 'Counter', map: 'Map', timer: 'Countdown', note: 'Note', pq: 'Post-quantum registry' };
+const BLOCK_NAMES = { submit: 'Form', schedule: 'Schedule', reveal: 'Reveal', vote: 'Vote', collection: 'Archive', card: 'Card', leaderboard: 'Leaderboard', counter: 'Counter', map: 'Map', timer: 'Countdown', note: 'Note', pq: 'Post-quantum registry', launch: 'Launch a coin' };
+const pctOf = (bps) => `${Number(bps) / 100}%`;
 function blockStatic(b, app) {
   switch (b.type) {
     case 'submit': return `<p>${esc(b.prompt)}</p><ul class="app-fields">${b.fields.map((f) => `<li>${esc(f.label)}${f.required ? '' : ' (optional)'}</li>`).join('')}</ul>`;
@@ -86,9 +87,11 @@ function blockStatic(b, app) {
     case 'timer': return `<p class="when">${b.daily ? `Every day at ${esc(b.daily)} JST` : `${esc(String(b.at || '').replace('T', ' '))} JST`}</p><div class="count" data-count>${DASH}</div>`;
     case 'note': return `<p>${esc(b.body)}</p>`;
     case 'pq': return '<p>Every step the launchpad took for this coin, signed with ML-DSA-65 (FIPS 204) and checked by your browser.</p>';
+    case 'launch': return `<p>${esc(b.prompt)}</p><p class="fine">The coin is created by your own wallet, after you review the transaction. SUB-01 reads every one first. Creator fees, split on-chain and locked: ${esc(pctOf(b.split.creator))} to its creator, ${esc(pctOf(b.split.parent))} to this site's author, ${esc(pctOf(b.split.sub01))} to SUB-01.</p>`;
     default: return '';
   }
 }
+const appLaunches = (app) => Boolean(app && Array.isArray(app.screens) && app.screens.some((s) => s.blocks.some((b) => b.type === 'launch')));
 function appHtml(app) {
   if (!app || !Array.isArray(app.screens)) return '';
   const screens = app.screens.map((s) => `<div class="app-screen" data-screen="${esc(s.id)}"><h4 class="app-screen-h">${esc(s.title)}</h4>
@@ -128,7 +131,7 @@ ${KIT_CSS}
 <main>
 <header class="head reveal-hero"><img class="logo" src="./logo.png" alt="${esc(spec.name)} logo"><div><h1 class="grad">${esc(spec.name)}</h1><span class="tk">$${esc(spec.ticker)}</span></div></header>
 <p class="tag reveal-hero">${esc(spec.tagline)}</p>
-<div class="reveal-hero">${status}</div>
+<div class="reveal-hero">${status}${context.parent ? `<p class="chip">Launched at <a href="${esc(context.parent.href)}" rel="noopener noreferrer" target="_blank">${esc(context.parent.name)} ($${esc(context.parent.ticker)})</a></p>` : ''}</div>
 ${tools.some((t) => t.id === 'token') ? `<div class="marquee" aria-hidden="true"><div class="marquee-track">${strip}${strip}</div></div>` : ''}
 ${appHtml(spec.app)}
 <div class="bento">
@@ -138,6 +141,6 @@ ${trust.length ? `<h2 class="sec">Check the chain</h2>\n<div class="tools trust"
 ${tools.length ? `<h2 class="sec">On this site</h2>\n<div class="tools">\n${tools.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
 <nav>${links}</nav>
 <footer>Idea by <code>${esc(context.submitter)}</code>. Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>
-and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${all.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
+and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${appLaunches(spec.app) ? ' The launch block asks your wallet for a transaction only to create the coin you asked for, after you have reviewed it here; every other tool on this page only reads public chain data and asks for signed messages.' : all.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
 </main>${all.length || spec.app ? KIT_JS : ''}</body></html>`;
 }

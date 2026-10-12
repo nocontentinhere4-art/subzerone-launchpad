@@ -31,7 +31,7 @@ const LIVE = [
   ['Sub-01 becomes gozilla', 'Sub-01 becomes gozilla', 'SUBGOZILLA', 'targets'],
   ['A t-rex in the city', 'A t-rex in the city that destroys blocks', 'TREX', 'targets'],
   ["Claudia's House", 'House of Claudia the AI artist', 'CLAUDHOUSE', 'commissions'],
-  ['Quantum launchpad', 'a launchpad where everything is managed quantum-proof', 'QSAFE', 'pq'],
+  ['Quantum launchpad', 'a launchpad where everything is managed quantum-proof', 'QSAFE', 'launchpad'],   // 2026-10-12 the owner: a launchpad must launch coins
 ];
 const ENC = { TRUST_PROXY: '1', APP_ENCRYPTION_KEY: Buffer.alloc(32, 7).toString('base64') };
 
@@ -104,7 +104,7 @@ test('the app DSL is strict: unknown blocks, fields, markup, links, sizes and br
   assert.equal(exposure(ok), 'candidates');
 });
 
-test('SUB-01 composes an app for every live coin, honestly; the quantum idea gets the post-quantum registry', () => {
+test('SUB-01 composes an app for every live coin, honestly; the quantum launchpad launches coins and gets the post-quantum registry', () => {
   for (const [title, concept, ticker, kind] of LIVE) {
     const r = composeRules({ title, concept }, { name: title.slice(0, 32), ticker });
     assert.equal(r.app.kind, kind, title);
@@ -122,7 +122,9 @@ test('SUB-01 composes an app for every live coin, honestly; the quantum idea get
   assert.equal(blockOf(train, 'schedule').at, '00:00');
   assert.equal(blockOf(train, 'card').template, 'ticket');
   const q = composeRules({ title: 'Quantum launchpad', concept: 'a launchpad where everything is managed quantum-proof' }, { name: 'QSafe', ticker: 'QSAFE' }).app;
-  assert.deepEqual(blockOf(q, 'pq'), { type: 'pq', title: 'Signed registry', registry: true, verify: true, honesty: true });
+  assert.deepEqual(blockOf(q, 'pq'), { type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true });
+  assert.deepEqual(blockOf(q, 'launch').split, { creator: 7000, parent: 1000, sub01: 2000 });
+  assert.equal(composeRules({ title: 'Quantum launchpad', concept: 'post-quantum lattice signatures for everything' }).app.kind, 'pq', 'quantum without a launchpad: the registry alone');
   for (const w of ['post-quantum', 'PQC', 'lattice crypto', 'dilithium', 'kyber', 'quantum resistant']) assert.equal(readIdea(w).quantum, true, w);
   assert.match(describeApp(k), /confessions form · signed votes · reveal every day at 23:00 JST · receipt card · archive · counter/);
   assert.deepEqual(toolsBeside([{ id: 'token' }, { id: 'drop' }, { id: 'event', config: { daily: '23:00' } }, { id: 'wall' }, { id: 'memes' }], k).map((t) => t.id), ['token', 'wall', 'memes']);
@@ -297,7 +299,8 @@ test('pq: the launchpad\'s record of a coin, ML-DSA-65 signed and chained; verif
   const h = await harness(ENC);
   try {
     const k = await project(h, { title: 'Quantum launchpad', concept: 'a launchpad where everything is managed quantum-proof', ticker: 'QSAFE' });
-    assert.equal(k.spec().app.kind, 'pq');
+    assert.equal(k.spec().app.kind, 'launchpad');
+    assert.ok(blockOf(k.spec().app, 'pq'));
     fakeLaunch(h, k.slug);
     const r = await k.site('GET', '/_api/app/pq');
     assert.equal(r.status, 200, r.text);

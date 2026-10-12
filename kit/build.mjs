@@ -35,7 +35,10 @@ const common = { bundle: true, minify: true, target: ['es2020', 'chrome100', 'fi
 
 // the idea app's interpreter (kit/app/*.js, docs/APP-COMPOSER.md): its own module next to the core, loaded only on
 // sites that carry an app, cached like the core (a day) so the two never drift apart for long
-await build({ ...common, entryPoints: [join(ROOT, 'kit/app/index.js')], outfile: join(OUT, 'site-app.v1.js'), format: 'esm' });
+await build({ ...common, entryPoints: [join(ROOT, 'kit/app/index.js')], outfile: join(OUT, 'site-app.v1.js'), format: 'esm', external: ['/_kit/*'] });
+// the launch block (kit/launch/index.js, child-launch.js): the only kit module that asks a wallet to sign a transaction,
+// loaded by the app module only on a site whose app launches coins
+await build({ ...common, entryPoints: [join(ROOT, 'kit/launch/index.js')], outfile: join(OUT, 'site-launch.v1.js'), format: 'esm' });
 await build({ ...common, entryPoints: [join(ROOT, 'kit/src/core.js')], outfile: join(OUT, 'site-kit.v1.js'), format: 'iife', external: ['/_kit/*'],
   define: { __VENDOR__: JSON.stringify(VENDOR) } });
 for (const k of ['anime', 'leaflet', 'tone', 'kaplay', 'uplot', 'qrcode', 'pq']) {

@@ -449,17 +449,21 @@ export function worldView(db, cfg, t = now()) {
     return { ideaId: x.idea_id, slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
       siteUrl: x.slug && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,   // the coin's own site (city: "Open the coin site")
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
+      // a coin launched from another coin's site (child-launch.js): the link back; a launchpad coin: how many it launched
+      ...(x.parent_slug ? { parent: { slug: x.parent_slug, name: x.parent_name } } : {}), ...(x.kids ? { childrenLaunched: x.kids } : {}),
       // launched only: real market/holder data for the building lights (coin-stats.js); tier 0 until the first fetch
       ...(launched ? { stats: publicStats(parseJson(x.cs_json), t) } : {}) };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json,
+      p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json, pp.slug parent_slug, pp.name parent_name,
+      (SELECT COUNT(*) FROM projects c JOIN launches cl ON cl.project_id = c.id WHERE c.parent_project_id = p.id) kids,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM plots pl LEFT JOIN residents r ON r.plot_id = pl.plot_id LEFT JOIN ideas i ON i.id = pl.idea_id
     LEFT JOIN fortunes f ON f.wallet = r.wallet AND f.date = ? AND f.until > ? AND f.buff != 'none'
     LEFT JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
     LEFT JOIN projects p ON p.idea_id = i.id LEFT JOIN launches l ON l.project_id = p.id LEFT JOIN coin_stats cs ON cs.mint = l.mint
+    LEFT JOIN projects pp ON pp.id = p.parent_project_id
     ORDER BY pl.claimed_at`, jstDate(t), t);
   const plots = rows.map((x) => ({ plotId: x.plot_id, kind: x.kind, ...(RESERVED_PLOTS.has(x.plot_id) ? { reserved: true } : {}),
     // buff: today's omikuji effect (cosmetic, kind only; rituals.js), null when none is active
@@ -546,6 +550,8 @@ export function deskView(db, cfg, { wallet, owner, plotIdeaId = null, previewLin
       siteUrl: pub && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,
       previewLink: preview,
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
+      // a coin launched from another coin's site (child-launch.js): the link back; a launchpad coin: how many it launched
+      ...(x.parent_slug ? { parent: { slug: x.parent_slug, name: x.parent_name } } : {}), ...(x.kids ? { childrenLaunched: x.kids } : {}),
       x: { handle, status: connected ? 'connected' : x.xstatus ? 'planned' : null, url: connected ? `https://x.com/${x.x_handle}` : null,
         posts: owner ? db.all('SELECT id, text, status FROM x_posts WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 3', x.id) : null },
       pagePath: `/projects/${x.slug}`, officePath: owner ? `/projects/${x.slug}/review` : null,

@@ -138,15 +138,21 @@ export function defaultAllocation(cfg, receivingWallet) {
     { label: SUB01_LABEL, wallet: cfg.sub01FeeWallet || null, bps: SUB01_FEE_BPS, role: 'sub01' }];
 }
 
-export function validateRecipients(cfg, recipients, receivingWallet) {
+// A coin launched from another coin's site (child-launch.js): creator (the visitor) / the parent's author / SUB-01, the
+// parent's launch block sets the bps within these limits. SUB-01 at least 20%, the creator at least 50%, no collaborators.
+export const CHILD_SPLIT_POLICY = Object.freeze({ child: true, minSub01Bps: SUB01_FEE_BPS, minSubmitterBps: 5000 });
+
+/** policy: null (a city coin: submitter + collaborators + exactly 20% SUB-01) or CHILD_SPLIT_POLICY. */
+export function validateRecipients(cfg, recipients, receivingWallet, policy = null) {
   const sub01Wallet = requireSub01Wallet(cfg);
   if (!Array.isArray(recipients) || recipients.length < 2 || recipients.length > MAX_RECIPIENTS) {
     throw new HttpError(400, 'bad_allocation', `2–${MAX_RECIPIENTS} recipients (the submitter and SUB-01 at least)`);
   }
   const seen = new Set();
   let total = 0;
+  const roles = policy?.child ? ['submitter', 'sub01', 'parent'] : ['submitter', 'sub01', 'collaborator', undefined, null, ''];
   const out = recipients.map((r) => {
-    if (!['submitter', 'sub01', 'collaborator', undefined, null, ''].includes(r.role)) throw new HttpError(400, 'bad_allocation', `unknown role ${String(r.role).slice(0, 20)}`);
+    if (!roles.includes(r.role)) throw new HttpError(400, 'bad_allocation', `unknown role ${String(r.role).slice(0, 20)}`);
     const role = r.role || 'collaborator';
     const wallet = validateReceivingWallet(r.wallet);
     const bps = Number(r.bps);
@@ -160,6 +166,14 @@ export function validateRecipients(cfg, recipients, receivingWallet) {
   const subs = out.filter((r) => r.role === 'submitter');
   if (subs.length !== 1 || subs[0].wallet !== receivingWallet) throw new HttpError(400, 'bad_allocation', 'exactly one submitter row, and it must be the idea\'s receiving wallet');
   const s1 = out.filter((r) => r.role === 'sub01');
+  if (policy?.child) {
+    if (s1.length !== 1 || s1[0].wallet !== sub01Wallet || s1[0].bps < policy.minSub01Bps) {
+      throw new HttpError(400, 'bad_allocation', `the SUB-01 row is mandatory: at least ${policy.minSub01Bps / 100}% to ${sub01Wallet}`);
+    }
+    if (subs[0].bps < policy.minSubmitterBps) throw new HttpError(400, 'bad_allocation', `the creator keeps at least ${policy.minSubmitterBps / 100}%`);
+    if (out.filter((r) => r.role === 'parent').length > 1) throw new HttpError(400, 'bad_allocation', 'one parent row at most');
+    return out;
+  }
   if (s1.length !== 1 || s1[0].wallet !== sub01Wallet || s1[0].bps !== SUB01_FEE_BPS) {
     throw new HttpError(400, 'bad_allocation', `the SUB-01 row is mandatory: exactly ${SUB01_FEE_BPS / 100}% to ${sub01Wallet}`);
   }
@@ -203,7 +217,7 @@ export async function buildLaunchConfig(db, cfg, project) {
   const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ? AND status = 'approved' ORDER BY version DESC LIMIT 1`, project.id);
   if (!alloc) throw new Permanent('no approved fee allocation');
   const recipients = parseJson(alloc.recipients_json);
-  validateRecipients(cfg, recipients, v.receiving_wallet);          // re-checked against the current receiving wallet
+  validateRecipients(cfg, recipients, v.receiving_wallet, project.parent_project_id ? CHILD_SPLIT_POLICY : null);   // re-checked against the current receiving wallet
   const signer = idea.owner_wallet;
   const mode = feeMode(recipients, signer);
   if (alloc.approval_statement !== allocationStatement(recipients, mode)) throw new Permanent('approval statement does not match the allocation');

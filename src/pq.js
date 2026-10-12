@@ -60,6 +60,14 @@ function events(db, project) {
     if (intent) out.push({ kind: 'launch.config', ref: intent.id, at: intent.created_at, payload: { provider: intent.provider, network: intent.network, configSha256: intent.config_hash, feeAllocation: intent.allocation_id, mint: intent.mint } });
     out.push({ kind: 'launch.mint', ref: launch.mint, at: launch.verified_at, payload: { mint: launch.mint, network: launch.network, provider: launch.provider, txSignature: launch.tx_signature, slot: launch.slot ?? null } });
   }
+  // every coin launched from this site (child-launch.js): its configuration hash, its locked split, its mint and signature
+  for (const c of db.all(`SELECT p.id, p.slug, p.name, p.ticker, l.mint, l.network, l.provider, l.tx_signature, l.slot, l.verified_at, i.config_hash, i.config_json, i.signer_wallet
+      FROM projects p JOIN launches l ON l.project_id = p.id JOIN launch_intents i ON i.id = l.intent_id WHERE p.parent_project_id = ? ORDER BY l.verified_at`, project.id)) {
+    const fs = parseJson(c.config_json, {})?.feeSharing || {};
+    out.push({ kind: 'child.launch', ref: c.id, at: c.verified_at, payload: { coin: c.slug, name: c.name, ticker: c.ticker, creator: c.signer_wallet, mint: c.mint,
+      network: c.network, provider: c.provider, txSignature: c.tx_signature, slot: c.slot ?? null, configSha256: c.config_hash, locked: !!fs.locked,
+      split: (fs.recipients || []).map((r) => ({ role: r.role, wallet: r.wallet, bps: r.bps })) } });
+  }
   for (const v of db.all(`SELECT version, sha256, created_at FROM site_versions WHERE project_id = ? AND build_status = 'ok' ORDER BY version`, project.id)) {
     out.push({ kind: 'site.version', ref: String(v.version), at: v.created_at, payload: { version: v.version, htmlSha256: v.sha256 } });
   }

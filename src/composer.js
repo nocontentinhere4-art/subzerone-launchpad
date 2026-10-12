@@ -6,7 +6,7 @@
 //              strictly and any problem falls back to the rules. The model only fills the DSL: nothing it says runs.
 // When an idea names no product (a name, a vibe), the rules build a small app that fits it and say so (`honest`).
 import { conceptTime } from './tools.js';
-import { validateApp, isAppError, describeApp, blockOf, APP_VERSION, BLOCK_TYPES, CARD_TEMPLATES, METRICS } from './app-blocks.js';
+import { validateApp, isAppError, describeApp, blockOf, APP_VERSION, BLOCK_TYPES, CARD_TEMPLATES, METRICS, LAUNCH_SPLIT } from './app-blocks.js';
 
 const fold = (s) => ` ${String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9:=\s]/g, ' ').replace(/\s+/g, ' ')} `;
 const has = (t, words) => words.some((w) => (w.endsWith('*') ? new RegExp(` ${w.slice(0, -1)}[a-z]*`).test(t) : t.includes(` ${w} `)));
@@ -31,7 +31,20 @@ export const WORDS = {
   art: ['artist*', 'art', 'arte', 'artista', 'paint*', 'draw*', 'illustrat*', 'gallery', 'galleria', 'dipint*', 'disegn*', 'geijutsu', 'e wo kaku', 'bijutsu'],
   destroy: ['destroy*', 'smash*', 'stomp*', 'crush*', 'wreck*', 'rampage', 'distrugg*', 'schiaccia*', 'kowasu', 'hakai', 'godzilla', 'gozilla', 'gozzila', 'kaiju', 'monster*', 't rex', 'trex', 'dinosaur*'],
   home: ['house', 'home', 'tower', 'hq', 'headquarters', 'casa', 'torre', 'sede', 'ie', 'uchi', 'tawaa', 'castle', 'mansion', 'office'],
+  // a product whose core action is creating coins: the site gets the launch block (child-launch.js), real launches
+  // (a bare "launchpad" is not enough: ideas say "deployed on this launchpad" about SUBZERONE itself; LAUNCHPAD_RE)
+  launchpad: ['token factory', 'coin factory', 'memecoin factory', 'token generator', 'coin generator',
+    'launch coins', 'launch a coin', 'launch your coin', 'launch your own coin', 'launch tokens', 'launch a token', 'launch your token', 'launch memecoins',
+    'create coins', 'create a coin', 'create your coin', 'create your own coin', 'create tokens', 'create a token', 'create your own token', 'create memecoins',
+    'make coins', 'make a coin', 'make your own coin', 'mint coins', 'mint your own coin', 'deploy coins', 'deploy tokens', 'coin launches', 'token launches',
+    'piattaforma di lancio', 'lancia coin', 'lanciare coin', 'lanciare token', 'lanciare monete', 'lancia token', 'lancia la tua moneta', 'crea coin', 'creare coin',
+    'crea token', 'creare token', 'crea monete', 'creare monete', 'crea la tua moneta', 'crea il tuo token', 'fabbrica di token', 'fabbrica di monete', 'conia*',
+    'raunchipaddo', 'ranchipaddo', 'raunchi paddo', 'koin wo tsukuru', 'tokun wo tsukuru', 'koin hakkou', 'tokun hakkou', 'koin wo hakkou', 'tokun wo hakkou',
+    'tooken hakkou', 'meemukoin', 'koin koujou', 'tokun koujou'],
 };
+// "a launchpad", "my own launch pad", "build a launchpad", "a launchpad where/for/that …", "un launchpad", "piattaforma di lancio"
+const LAUNCHPAD_RE = [/ (?:a|an|my|our|own|new|your|un|una|mio|mia|build|building|make|create|costruire|creare|crea) (?:[a-z]+ ){0,2}launch ?pads? /,
+  / launch ?pads? (?:where|for|that|which|to|dove|che|per|in cui) /];
 const NOUNS = [
   ['confession', 'confessions', ['confess*', 'confession*', 'confessa*', 'confessione', 'confessioni', 'kokuhaku', 'zange']],
   ['secret', 'secrets', ['secret*', 'segret*', 'himitsu']],
@@ -54,7 +67,7 @@ export function readIdea(concept) {
     t, time, ritual,
     weekly: has(t, WORDS.weekly), weekday: WEEKDAYS.findIndex((w) => has(t, w)),
     submit: has(t, WORDS.submit), chosen: has(t, WORDS.chosen), vote: has(t, WORDS.vote), holders: has(t, WORDS.holders), board: has(t, WORDS.board),
-    quantum: has(t, WORDS.quantum), venue: has(t, WORDS.venue), party: has(t, WORDS.party), art: has(t, WORDS.art), destroy: has(t, WORDS.destroy), home: has(t, WORDS.home),
+    quantum: has(t, WORDS.quantum), launchpad: has(t, WORDS.launchpad) || LAUNCHPAD_RE.some((re) => re.test(t)), venue: has(t, WORDS.venue), party: has(t, WORDS.party), art: has(t, WORDS.art), destroy: has(t, WORDS.destroy), home: has(t, WORDS.home),
     noun: NOUNS.find(([, , w]) => has(t, w)) || null,
     card: /receipt|scontrin|reshiito|ricevut/.test(t) ? 'receipt' : /ticket|bigliett|kippu|train|treno|densha|station|stazione|eki /.test(t) ? 'ticket'
       : /postcard|cartolin|hagaki/.test(t) ? 'postcard' : /badge|pass |tessera|member/.test(t) ? 'badge' : /poster|manifest/.test(t) ? 'poster' : null,
@@ -115,6 +128,22 @@ function pqApp(idea, r, { name }) {
     title: clip(`${name}: the quantum-safe record`, 60),
     lede: 'Every step the launchpad took for this coin, hashed and signed with a post-quantum signature (ML-DSA-65, FIPS 204). Your browser checks each signature itself.',
     screens: [{ id: 'registry', title: 'Registry', blocks: [{ type: 'pq', title: 'Signed registry', registry: true, verify: true, honesty: true }] }],
+  };
+}
+
+/** A launchpad: visitors launch REAL coins from the site (the launch block: SUB-01 votes on each first, the creator
+ * fees are split on-chain creator / the author / SUB-01), with the post-quantum registry beside it when the idea is
+ * quantum-themed (every launch from the site is signed into it). */
+function launchpadApp(idea, r, { name }) {
+  const quantum = r.quantum;
+  return {
+    v: APP_VERSION, kind: 'launchpad', flow: 'board', noun: { one: 'coin', many: 'coins' },
+    title: clip(`${name}: launch a coin here`, 60),
+    lede: clip(`Launch your own coin from ${name}: a real pump.fun coin, created by your wallet. SUB-01 reads every one first; the creator fees are split on-chain between you, ${name}'s author and SUB-01.${quantum ? ' Every launch is signed into a post-quantum (ML-DSA-65) registry your browser verifies.' : ''}`, 240),
+    screens: [
+      { id: 'launch', title: 'Launch', blocks: [{ type: 'launch', title: 'Launch a coin here', split: { ...LAUNCH_SPLIT }, devBuy: true, list: true }] },
+      ...(quantum ? [{ id: 'registry', title: 'Registry', blocks: [{ type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true }] }] : []),
+    ],
   };
 }
 
@@ -238,6 +267,8 @@ function boardApp(idea, r, { name, ticker }) {
 }
 
 const HONEST = {
+  launchpad: 'The idea is a launchpad; SUB-01 built one that really launches coins: visitors create pump.fun coins from this site, each read by SUB-01 first, with the creator fees split on-chain (creator / author / SUB-01).',
+  launchpadPq: 'The idea is a quantum-proof launchpad; SUB-01 built a launchpad that really launches coins from this site, and signs every launch into a post-quantum (ML-DSA-65) registry the browser verifies. The coins themselves are Solana tokens (Ed25519 keys): no coin can be quantum-proof, and the page says so.',
   ritual: 'The idea describes a product (people send something, one is chosen at a set time and printed); SUB-01 built that.',
   pq: 'The idea asks for quantum-proof management; SUB-01 built what can honestly be offered: a post-quantum signed record of the launchpad\'s actions, verified in the browser, and says plainly that the coin itself (Solana, Ed25519) is not quantum-proof.',
   places: 'The idea is about real places; SUB-01 built a community guide with votes and a map.',
@@ -248,17 +279,18 @@ const HONEST = {
   board: 'The idea names no product; SUB-01 built a small suggestion board with votes rather than invent a feature.',
 };
 
-/** The rules: concept words -> archetype -> app spec (validated). Order: quantum, a ritual that chooses one, places,
- * a party, an artist, a destroyer, a building, otherwise a small board. */
-export function composeRules(idea, { name, ticker } = {}) {
+/** The rules: concept words -> archetype -> app spec (validated). Order: a launchpad (with the registry when quantum),
+ * quantum, a ritual that chooses one, places, a party, an artist, a destroyer, a building, otherwise a small board.
+ * child: a coin launched from another coin's site never hosts launches itself (one level). */
+export function composeRules(idea, { name, ticker, child = false } = {}) {
   const concept = `${idea?.title || ''}. ${idea?.concept || ''}`;
   const r = readIdea(concept);
   name = clip(name || idea?.name_suggestion || idea?.title || 'This coin', 32);
   ticker = String(ticker || idea?.ticker_suggestion || 'COIN').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'COIN';
   const opts = { name, ticker };
-  const pick = r.quantum ? pqApp : r.ritual && (r.submit || r.chosen) ? ritualApp : r.venue ? placesApp : r.party ? partyApp : r.art ? artApp : r.destroy ? destroyApp : r.home ? homeApp : boardApp;
+  const pick = r.launchpad && !child ? launchpadApp : r.quantum ? pqApp : r.ritual && (r.submit || r.chosen) ? ritualApp : r.venue ? placesApp : r.party ? partyApp : r.art ? artApp : r.destroy ? destroyApp : r.home ? homeApp : boardApp;
   const app = validateApp(pick(idea, r, opts));
-  return { app, source: 'rules', honest: HONEST[app.kind], summary: describeApp(app) };
+  return { app, source: 'rules', honest: app.kind === 'launchpad' && r.quantum ? HONEST.launchpadPq : HONEST[app.kind], summary: describeApp(app) };
 }
 
 // --- the language model (optional) --------------------------------------------------------------------------------------
@@ -269,8 +301,9 @@ Block types (only these fields): submit{title,prompt,button,fields:[1-4 {key a-z
 schedule{every:day|week,at:"HH:MM" JST,weekday 0-6 if week,label}; reveal{title,pick:subset of ["owner","votes","random"],empty};
 vote{title,of:candidates|published,holdersOnly,button}; collection{title,show:published|all,layout:cards|list,filters:subset of ["month","search"],empty};
 card{title,template:${CARD_TEMPLATES.join('|')},heading<=32,sub<=48,lines:[<=6 of <=28],footer<=60,input}; leaderboard{title,of:items|wallets,by:votes|submissions,limit 3-20};
-counter{title,metrics:1-4 of ${METRICS.join('|')}}; timer{title,daily:"HH:MM"}; note{title,body<=600}; pq{title,registry,verify,honesty}; map{title,center:[lat,lng],zoom,places:[],community}.
-Rules: one submit/schedule/reveal/card/pq/map at most; reveal needs schedule+submit; vote of candidates needs reveal; flow inbox keeps submissions private until revealed
+counter{title,metrics:1-4 of ${METRICS.join('|')}}; timer{title,daily:"HH:MM"}; note{title,body<=600}; pq{title,registry,verify,honesty}; map{title,center:[lat,lng],zoom,places:[],community};
+launch{title,prompt<=200,devBuy,list} (visitors launch real coins from the site; keep it when the draft has it, never add it otherwise).
+Rules: one submit/schedule/reveal/card/pq/map/launch at most; reveal needs schedule+submit; vote of candidates needs reveal; flow inbox keeps submissions private until revealed
 (needs a reveal), board shows them at once. No URLs, no < > or backticks. Never promise money, returns, rewards or utility beyond what the blocks do.
 Build only what the idea actually describes; when it names no product, keep the app small and say what it is. Plain, short copy.`;
 
@@ -306,7 +339,12 @@ export async function composeApp(idea, brain, { name, ticker, cfg, fetchImpl } =
   try {
     const app = await composeWithModel(idea, { name: name || idea?.name_suggestion || idea?.title, ticker: ticker || idea?.ticker_suggestion, draft: rules.app, cfg, fetchImpl });
     // the quantum honesty box and the ritual's verifiable draw are not the model's to drop
-    if (rules.app.kind === 'pq' && !blockOf(app, 'pq')) throw new Error('composer dropped the pq block');
+    if ((rules.app.kind === 'pq' || blockOf(rules.app, 'pq')) && !blockOf(app, 'pq')) throw new Error('composer dropped the pq block');
+    // the launch block: only where the rules put it (a launchpad idea), never dropped, its split always the default
+    const ruleLaunch = blockOf(rules.app, 'launch'), modelLaunch = blockOf(app, 'launch');
+    if (ruleLaunch && !modelLaunch) throw new Error('composer dropped the launch block');
+    if (!ruleLaunch && modelLaunch) throw new Error('composer added a launch block to an idea that is not a launchpad');
+    if (modelLaunch) modelLaunch.split = { ...ruleLaunch.split };
     return { app, source: 'anthropic:claude-sonnet-5-5', honest: rules.honest, summary: describeApp(app) };
   } catch (e) {
     return { ...rules, fallback: String(e?.message || e).slice(0, 160) };

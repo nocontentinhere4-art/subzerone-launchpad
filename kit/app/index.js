@@ -1,7 +1,8 @@
 // The idea app's interpreter (docs/APP-COMPOSER.md): reads the validated app spec from <section data-app data-config>
 // and builds the working app from the fixed blocks. Same rules as the core (kit/src/core.js): text only (textContent and
 // attribute setters, no HTML sinks), same-origin /_api/app* without credentials, wallets for solana:signMessage only,
-// no transaction ever. The core passes its helpers in K.
+// no transaction ever (the launch block's own module, /_kit/site-launch.v1.js, is the one exception, kit/launch/). The
+// core passes its helpers in K.
 import { renderCard, cardNumber, jst } from './cards.js';
 import { pqBlock } from './pq.js';
 
@@ -222,7 +223,10 @@ export function hydrateApp(sec, K) {
     map(slot) { return TOOLS.map(null, slot); },
     timer(slot, b) { TOOLS.event(null, slot, b); },
     note() {},
-    pq(slot, b) { pqBlock(slot, b, K); },
+    pq(slot, b) { pqBlock(slot, b, { ...K, launches: all(app, 'launch').length > 0 }); },
+    // visitors launch real coins here (child-launch.js): its own module, the only one in the kit that asks a wallet to
+    // sign a transaction, loaded only on a site whose app has this block
+    launch(slot, b) { return import(/* @vite-ignore */ '/_kit/site-launch.v1.js').then((m) => m.launchBlock(slot, b, K)); },
   };
 
   // --- screens (tabs) and the item viewer -------------------------------------------------------------------------------

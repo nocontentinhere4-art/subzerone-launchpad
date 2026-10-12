@@ -14,7 +14,7 @@ const fromHex = (s) => { const x = String(s).replace(/\s+|^0x/g, ''); if (!/^([0
 const bytes = (s) => { const t = String(s).trim(); try { return /^[0-9a-f\s]+$/i.test(t) && t.replace(/\s+/g, '').length % 2 === 0 ? fromHex(t) : fromB64(t); } catch { throw new Error('use base64 or hex'); } };
 const message = (e, slug, payloadHash, prev) => [HEADER, `project: ${slug}`, `seq: ${e.seq}`, `kind: ${e.kind}`, `ref: ${e.ref}`, `at: ${new Date(e.at).toISOString()}`, `payload-sha256: ${payloadHash}`, `prev: ${prev}`].join('\n');
 const KIND = { 'registry.key': 'Registry key created', 'fees.split': 'Fee split approved', 'launch.config': 'Launch configuration', 'launch.mint': 'Mint verified on chain',
-  'site.version': 'Website version built', 'app.reveal': 'App reveal', 'owner.note': 'Note from the author' };
+  'site.version': 'Website version built', 'app.reveal': 'App reveal', 'owner.note': 'Note from the author', 'child.launch': 'Coin launched from this site' };
 
 /** Verify one page of entries (newest first). -> [{seq, sig, payload, link}] each true/false/null (null: cannot tell from this page). */
 export async function verifyEntries(ml, data, entries) {
@@ -52,6 +52,7 @@ export function pqBlock(slot, b, K) {
         let payload = {}; try { payload = JSON.parse(e.payload); } catch { /* shown raw */ }
         const line = e.kind === 'site.version' ? `version ${payload.version} · html sha256 ${String(payload.htmlSha256).slice(0, 16)}…` : e.kind === 'launch.mint' ? `${payload.mint} on ${payload.network}`
           : e.kind === 'fees.split' ? (payload.recipients || []).map((x) => `${x.label} ${x.bps / 100}%`).join(' · ') : e.kind === 'launch.config' ? `${payload.provider} · ${payload.network} · config sha256 ${String(payload.configSha256).slice(0, 16)}…`
+          : e.kind === 'child.launch' ? `${payload.name} ($${payload.ticker}) · ${payload.mint} on ${payload.network} · split ${(payload.split || []).map((x) => `${x.role === 'submitter' ? 'creator' : x.role} ${x.bps / 100}%`).join(' / ')}${payload.locked ? ' (locked)' : ''} · config sha256 ${String(payload.configSha256).slice(0, 16)}…`
           : e.kind === 'owner.note' ? payload.text : e.kind === 'app.reveal' ? `#${payload.number ?? '—'} chosen by ${payload.method}${payload.dev ? ' (dev trigger)' : ''}` : e.kind === 'registry.key' ? `${payload.alg} key for ${payload.project}` : e.ref;
         return h('li', { cls: `pq-e ${ok ? 'ok' : 'bad'}`, value: e.seq },
           h('span', { cls: 'pq-v', text: ok ? 'verified ✓' : 'failed ✗', title: `signature ${r.sig ? 'ok' : 'BAD'} · payload hash ${r.payload ? 'ok' : 'BAD'} · chain link ${r.link == null ? 'checked with the next page' : r.link ? 'ok' : 'BAD'}` }),
@@ -95,7 +96,9 @@ export function pqBlock(slot, b, K) {
     kids.push(h('div', { cls: 'pq-honest' }, h('h4', { text: 'What is and is not quantum-safe here' }),
       h('p', { text: 'Solana accounts, this coin and every wallet that holds it use Ed25519 signatures. A large enough quantum computer could break Ed25519. This site does not change that: the coin itself is not quantum-proof, and nobody can make it so from a web page.' }),
       h('p', { text: 'What this page gives you is a quantum-safe, tamper-evident record of everything the launchpad did for this coin: each step is hashed, chained to the one before and signed with ML-DSA-65 (FIPS 204), a post-quantum signature, and your browser checks it.' }),
-      h('p', {}, 'Further reading: quantum-resistant vaults on Solana use one-time Winternitz signatures, see the open-source ', h('a', { href: WINTERNITZ, target: '_blank', rel: 'noopener noreferrer nofollow', text: 'Solana Winternitz vault' }), '. Read-only reading: this site never asks for a transaction.')));
+      ...(K.launches ? [h('p', { text: 'The coins launched from this site are Solana tokens too: none of them is quantum-proof either. What is post-quantum is this record: every launch from here (its configuration hash, its locked fee split, its mint and its transaction) is signed into it, and your browser checks it.' })] : []),
+      h('p', {}, 'Further reading: quantum-resistant vaults on Solana use one-time Winternitz signatures, see the open-source ', h('a', { href: WINTERNITZ, target: '_blank', rel: 'noopener noreferrer nofollow', text: 'Solana Winternitz vault' }),
+        K.launches ? '. It could one day hold a creator\'s fee share, but that program is not deployed on mainnet (nor devnet) and has no audit, so this site does not send fees to it. Launches here ask your wallet for a transaction only after you have reviewed it; this registry never does.' : '. Read-only reading: this site never asks for a transaction.')));
   }
   slot.replaceChildren(...kids);
 }

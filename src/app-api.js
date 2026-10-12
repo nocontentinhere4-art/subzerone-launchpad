@@ -390,6 +390,15 @@ export function registerAppRoutes(r, deps) {
     const b = await ctx.body(24_000);
     let app = null;
     if (b.app !== null) { try { app = validateApp(b.app); } catch (e) { if (isAppError(e)) throw new HttpError(400, 'invalid', e.message); throw e; } }
+    // the launch block (child-launch.js) is SUB-01's to give: only a launchpad idea gets it (its split stays editable within
+    // the limits validateApp checks), and a coin launched from another site never launches coins itself
+    if (app && blockOf(app, 'launch') && !blockOf(appOf(liveSpec(db, p)), 'launch')) {
+      const v = currentVersion(db, idea.id);
+      const { composeRules } = await import('./composer.js');
+      if (p.parent_project_id || !blockOf(composeRules({ title: v.title, concept: v.concept }, { child: Boolean(p.parent_project_id) }).app, 'launch')) {
+        throw new HttpError(409, 'launch_locked', 'only a launchpad idea gets the launch block');
+      }
+    }
     const { buildSiteVersion, setLiveVersion } = await import('./site.js');
     const { validateSpec } = await import('./generator.js');
     const cur = liveSpec(db, p), spec = { ...cur };

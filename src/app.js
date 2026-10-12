@@ -15,6 +15,7 @@ import { buildSiteVersion, setLiveVersion, siteCspFor } from './site.js';
 import { CATALOG, EXTRAS, TRUST, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
 import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
 import { registerAppRoutes } from './app-api.js';
+import { createLaunchApi, LIMITS as CHILD_LIMITS } from './child-launch.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
@@ -357,6 +358,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   });
   r.put('/api/projects/:slug/allocation', async (ctx) => {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    if (p.parent_project_id) throw new HttpError(409, 'locked', 'the split of a coin launched from another coin\'s site is the one its creator signed');
     if (!['preview_ready'].includes(idea.status)) throw new HttpError(409, 'locked', 'the split can change only while the preview is open');
     const b = await ctx.body();
     const v = currentVersion(db, idea.id);
@@ -388,6 +390,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   });
   r.post('/api/projects/:slug/back-to-preview', async (ctx) => {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    if (p.parent_project_id) throw new HttpError(409, 'locked', 'a coin launched from another coin\'s site keeps the configuration its creator signed');
     db.tx(() => {
       transition(db, idea.id, ['approved', 'launch_prepared'], 'preview_ready', { actor: `wallet:${u.wallet}`, note: 'reopened for edits by the submitter' });
       db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, launch_config_json = NULL, launch_config_hash = NULL WHERE id = ?', p.id);
@@ -585,6 +588,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   };
   const kicker = createKicker({ db, cfg, fetchImpl, services: { onVerdict } });
   const wake = (key) => { if (kick) setImmediate(() => kicker.kick(key)); };
+  const launchApi = createLaunchApi({ db, cfg, limit, wake });     // /_api/launch* on a launchpad coin's site (child-launch.js)
 
   // --- trust: vote ledger, disclosure, calendar, telemetry (trust.js, calendar.js, telemetry.js) ------------------------
   const JSON_TYPE = 'application/json; charset=utf-8';
@@ -731,9 +735,11 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const banner = f.match(/^banner-v(\d+)\.svg$/);
     if (db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id).visibility !== 'public') throw new HttpError(404, 'not_found');
     if (logo) {
-      const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'logo' AND version = ?`, p.id, Number(logo[1]));
+      const a = db.get(`SELECT mime, body FROM assets WHERE project_id = ? AND kind = 'logo' AND version = ?`, p.id, Number(logo[1]));
       if (!a) throw new HttpError(404, 'not_found');
-      return ctx.raw(200, Buffer.from(a.body), { 'content-type': 'image/png', 'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
+      // a child launch's logo is its creator's image (PNG, JPEG, GIF or WebP, checked by its bytes): served as what it is, inert
+      return ctx.raw(200, Buffer.from(a.body), { 'content-type': a.mime, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox",
+        'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
     }
     if (banner) {                                            // our own SVG (art.js); opened directly it is still inert
       const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'banner' AND version = ?`, p.id, Number(banner[1]));
@@ -919,7 +925,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   // the kit's files (public/_kit, built by kit/build.mjs and committed): on every project host, and on the launchpad
   // origin for the preview's stylesheet and fonts. Read once, kept in memory. Versioned vendor files never change.
   const KIT_DIR = join(PUBLIC, '_kit');
-  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|site-app\.v1\.js|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
+  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|site-app\.v1\.js|site-launch\.v1\.js|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
   const KIT_TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
   const kitCache = new Map();
   function serveKit(req, res, path) {
@@ -953,6 +959,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       // writes come from the site's own page (same origin; browsers send Origin on POST). No cookies exist here, so this
       // is not CSRF protection: it keeps other web pages from driving visitors' browsers at a site's tools.
       if (req.method === 'POST' && req.headers.origin !== site.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
+      if (url.pathname === '/_api/launch' || url.pathname.startsWith('/_api/launch/')) return await launchRoute(req, res, p, site, url);
       const body = req.method === 'POST' ? await readJson(req, 4_096) : null;
       const out = await siteApi({ project: p, site, method: req.method, path: url.pathname, ip: clientIp(req, cfg.trustProxy), query: url.searchParams, body });
       sendJson(res, 200, out.body, { ...API_HEADERS, 'cache-control': out.cache || 'no-store' });
@@ -962,6 +969,20 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     } finally {
       log.info('site-api', { reqId, slug: p.slug, method: req.method, path: url.pathname, status: res.statusCode });
     }
+  }
+
+  // a launchpad coin's site: visitors launch coins there (child-launch.js). The start carries the image (base64), the
+  // signed step a transaction; the rest is small. Images go back inert (nosniff, sandboxed CSP).
+  async function launchRoute(req, res, p, site, url) {
+    const ip = clientIp(req, cfg.trustProxy);
+    limit(req.method === 'GET' ? 'siteRead' : 'siteLaunch', ip);
+    const body = req.method === 'POST' ? await readJson(req, url.pathname === '/_api/launch/start' ? CHILD_LIMITS.bodyBytes : 64_000) : null;
+    const out = await launchApi.handle({ project: p, site, method: req.method, path: url.pathname, ip, query: url.searchParams, body });
+    if (out.raw) {
+      res.writeHead(200, { ...API_HEADERS, 'content-type': out.raw.type, 'content-security-policy': "default-src 'none'; sandbox", 'cache-control': out.raw.cache || 'no-store', 'content-length': out.raw.body.length });
+      return res.end(out.raw.body);
+    }
+    sendJson(res, 200, out.body, { ...API_HEADERS, 'cache-control': 'no-store' });
   }
 
   async function projectSite(req, res, host, url) {

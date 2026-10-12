@@ -18,6 +18,7 @@ import { planAccount, publishPost } from './x.js';
 import { buildLaunchConfig, configHash, confirmIntent, confirmDevBuy, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
 import { refreshCoinStats } from './coin-stats.js';
+import { childBuild, afterLaunched } from './child-launch.js';
 import { id, now, sha256, parseJson } from './util.js';
 
 const BRAIN_WAIT = { asleep: 20 * 60_000 };
@@ -95,7 +96,11 @@ export const handlers = {
       transition(db, ideaId, 'evaluating', stored.decision, { actor: 'brain',
         note: `brain vote: ${stored.decision === 'selected' ? 'build' : 'pass'} (build ${Math.round(build.p * 100)}%, ${rec.vote.spiking?.used ? networkLabel(rec.vote.spiking) : 'rate model'})${rec.demo ? ' [brain in demo mode]' : ''}`,
         data: { request_id: requestId } });
-      if (stored.decision === 'selected') enqueue(db, { type: 'generate', key: `generate:${ideaId}:1`, ideaId, payload: {} });
+      // a coin launched from another coin's site (child-launch.js) is built from what its creator signed
+      if (stored.decision === 'selected') {
+        const child = db.get('SELECT 1 FROM child_launches WHERE idea_id = ?', ideaId);
+        enqueue(db, child ? { type: 'child_build', key: `child:${ideaId}:1`, ideaId, payload: {} } : { type: 'generate', key: `generate:${ideaId}:1`, ideaId, payload: {} });
+      }
     });
     tellVerdict(ctx, { ideaId, version: v.version, decision, requestId, feedback, latencyMs });
     // the optional language-model polish, after the verdict is out: capped, never a reason to fail the job
@@ -168,6 +173,8 @@ export const handlers = {
     return { project: project.id, site: site.version };
   },
 
+  child_build: (ctx) => childBuild(ctx),
+
   async build_site(ctx) {
     const { db, cfg } = ctx;
     const project = db.get('SELECT * FROM projects WHERE id = ?', ctx.job.project_id);
@@ -202,7 +209,9 @@ export const handlers = {
   },
 
   async confirm_launch(ctx) {
-    return confirmIntent(ctx.db, ctx.cfg, ctx.payload.intentId, ctx.progress);
+    const out = await confirmIntent(ctx.db, ctx.cfg, ctx.payload.intentId, ctx.progress);
+    if (out.state === 'launched') await afterLaunched(ctx.db, ctx.cfg, ctx.job.project_id);    // a child launch: the parent's registry
+    return out;
   },
 
   async confirm_dev_buy(ctx) {
@@ -222,7 +231,7 @@ export const handlers = {
   },
 };
 
-function uniqueSlug(db, name) {
+export function uniqueSlug(db, name) {
   const base = String(name).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'project';
   let slug = base, n = 1;
   const reserved = new Set(['www', 'api', 'admin', 'app', 'mail', 'sub01', 'sub-01', 'subzerone', 'launchpad', 'static', 'meta']);
@@ -238,7 +247,7 @@ export function onDead(db, job) {
   const why = String(job.last_error || '').slice(0, 160);
   if (job.type === 'evaluate' && idea.status === 'evaluating') {
     transition(db, job.idea_id, 'evaluating', 'failed', { note: `evaluation unavailable: SUB-01's brain did not answer (${why}). Nothing was decided.` });
-  } else if (job.type === 'generate' && ['generating', 'selected'].includes(idea.status)) {
+  } else if ((job.type === 'generate' || job.type === 'child_build') && ['generating', 'selected'].includes(idea.status)) {
     transition(db, job.idea_id, ['generating', 'selected'], 'failed', { note: `building failed: ${why}` });
   } else if (job.type === 'confirm_launch') {
     note(db, job.idea_id, 'not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });

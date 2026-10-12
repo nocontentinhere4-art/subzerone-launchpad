@@ -109,6 +109,10 @@ export function siteContext(db, cfg, project, { preview }) {
   if (launch && launch.network === 'mainnet-beta' && launch.provider === 'pumpfun') links.push({ href: `https://pump.fun/coin/${launch.mint}`, label: 'pump.fun' });
   if (launch && launch.provider === 'pumpfun') links.push({ href: `https://solscan.io/token/${launch.mint}${launch.network === 'devnet' ? '?cluster=devnet' : ''}`, label: 'Token on Solscan' });
   if (x?.x_handle) links.push({ href: `https://x.com/${x.x_handle}`, label: `@${x.x_handle} on X` });
+  // a coin launched from another coin's site (child-launch.js) links back to it
+  const pp = project.parent_project_id ? db.get('SELECT slug, name, ticker FROM projects WHERE id = ?', project.parent_project_id) : null;
+  const parent = pp ? { href: `${cfg.projectsScheme}://${pp.slug}.${cfg.projectsHost}/`, name: pp.name, ticker: pp.ticker } : null;
+  if (parent) links.push({ href: parent.href, label: `Launched at ${parent.name}` });
   links.push({ href: 'https://subzerone.live', label: 'SUB-01\'s room' });
   const generatorLabel = (gen?.generator || 'template/1').startsWith('anthropic')
     ? `a language model (${gen.generator.split(':')[1]}) from SUB-01's brain record`
@@ -122,7 +126,7 @@ export function siteContext(db, cfg, project, { preview }) {
       ...(launch.network === 'mainnet-beta' ? [{ href: `https://dexscreener.com/solana/${launch.mint}`, label: 'DexScreener' }] : []),
     ] };
   return { preview, launched: Boolean(launch), network: launch?.network, mint: launch?.mint,
-    submitter: idea.owner_wallet, generatorLabel, links, launchpad, token };
+    submitter: idea.owner_wallet, generatorLabel, links, launchpad, token, parent };
 }
 
 /** Every URL a built page may carry: the server's links, the token panel's, the event tool's (checked by tools.js). */

@@ -18,6 +18,7 @@ export const POLICIES = {
   evaluate: { maxAttempts: 60, timeoutMs: 45_000, backoff: backoff(60_000, 30 * 60_000) },
   generate: { maxAttempts: 3, timeoutMs: 120_000, backoff: backoff(30_000, 10 * 60_000) },
   build_site: { maxAttempts: 3, timeoutMs: 30_000, backoff: backoff(10_000, 60_000) },
+  child_build: { maxAttempts: 3, timeoutMs: 60_000, backoff: backoff(10_000, 5 * 60_000) },   // child-launch.js childBuild
   prepare_launch: { maxAttempts: 3, timeoutMs: 30_000, backoff: backoff(10_000, 60_000) },
   confirm_launch: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },
   confirm_dev_buy: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },   // launch.js confirmDevBuy (tx2)
