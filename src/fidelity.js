@@ -157,6 +157,9 @@ export const CAPABILITIES = [
 ];
 
 /** The rules' status of one capability for the parts present: {status, reason}. */
+// capabilities the rules check exactly from the app's settings and the platform (no guess): they override the model
+export const EXACT = new Set(['recursive-launchpads', 'fee-tree', 'family-tree-view', 'city-neighbourhood']);
+
 function judge(cap, parts, app) {
   const set = cap.built?.(parts, app);
   if (set?.length) return { status: 'built', reason: 'A part of the site does it, by its settings.', by: set };
@@ -376,7 +379,8 @@ export function fromModel(out, { idea, app, name }) {
     for (const cap of CAPABILITIES) {
       if (!cap.detect.test(words) && cap.id !== capability) continue;
       const j = judge(cap, parts, app);
-      if (RANK[j.status] > RANK[status]) { status = j.by.length ? j.status : 'missing'; reason = j.reason; builtBy.splice(0, builtBy.length, ...j.by); }
+      // the platform's own capabilities (EXACT) are facts the code knows: the rules decide them both ways
+      if (EXACT.has(cap.id) || RANK[j.status] > RANK[status]) { status = j.status !== 'missing' && !j.by.length ? 'missing' : j.status; reason = j.reason; builtBy.splice(0, builtBy.length, ...j.by); }
       break;
     }
     const terms = (Array.isArray(x?.terms) ? x.terms : []).map((w) => clean(w, LIMITS.term)).filter((w) => w.length >= 2).slice(0, LIMITS.terms);

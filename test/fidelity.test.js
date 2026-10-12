@@ -228,19 +228,18 @@ test('copy honesty: a sentence may name a missing feature only to say it is not 
   };
   const out = await anthropicGenerate({ idea: PADPAD, brain: BRAIN, cfg: cfgOf(), fetchImpl, submitter: 'nocontent' });
   assert.equal(out.generator, 'anthropic:claude-sonnet-5-5');
-  assert.equal(out.spec.tagline, TRUE.tagline);
-  assert.equal(seen.length, 2);
-  assert.match(seen[0], /What the idea asks for that SUB-01 could NOT build[\s\S]*- Launchpads that launch launchpads: /);
-  // the composer now builds PadPad as a launchpad for launchpads (family.js): the fee tree is built; this canned model
-  // answer still calls the recursion missing, and the rules only ever make the model stricter, so that stays
-  assert.doesNotMatch(seen[0], /Built only in part[\s\S]*Creator fees flow up the family tree/);
+  // the composer builds PadPad as a launchpad for launchpads (family.js); the canned model answer calls the recursion
+  // missing, but recursion, fee tree, family tree and neighbourhood are facts the rules check exactly (EXACT): they win
+  // both ways, so the family copy is true and the first draft is kept
+  assert.equal(out.spec.tagline, LIE.tagline);
+  assert.equal(seen.length, 1);
   assert.match(seen[0], /App kind: launchpad-family/);
-  assert.match(seen[1], /A previous draft was refused: ".*" presents (launchpads that launch launchpads|a live family tree|the live family tree on the site) as real/i);
-  assert.equal(out.fidelity.verdict, 'missing');
+  assert.notEqual(out.fidelity.verdict, 'missing');
   assert.deepEqual(out.spec.tools.filter((t) => !TRUST.includes(t.id)).map((t) => t.id), ['token', 'wall'], 'a launchpad for launchpads drops the meme maker (composer.js toolsBeside)');
   assert.match(COPY_SYSTEM, /could NOT build: never describe those parts as features/);
   // checkCopy directly
-  assert.throws(() => checkCopy(LIE, { fidelity: out.fidelity, built: builtText(out.spec.app, out.spec.tools, 'PadPad') }), /presents/);
+  // checkCopy directly: against the plain launchpad PadPad first shipped as, the same words are refused
+  { const sh = fitFor(PADPAD, SHIPPED); assert.throws(() => checkCopy(LIE, { fidelity: sh.fidelity, built: builtText(sh.app, sh.tools, 'PadPad') }), /presents/); }
 });
 
 test('the app\'s own words: a title or lede that presents a missing feature is replaced by the rules\' words', () => {
@@ -367,4 +366,16 @@ test('a launch block set to launch launchpads (the PadPad feature work) counts a
   assert.deepEqual(core.find((x) => x.capability === 'fee-tree').builtBy, ['launch']);
   assert.equal(core.find((x) => x.capability === 'family-tree-view').status, 'missing', 'the tree needs its own block');
   assert.equal(rulesCore(PADPAD.concept, app, []).find((x) => x.capability === 'recursive-launchpads').status, 'missing', 'a plain launch block does not');
+});
+
+test('exact platform capabilities override the model both ways (PadPad: neighbourhood and grandparent share are facts)', async () => {
+  const { fromModel } = await import('../src/fidelity.js');
+  const idea = { title: 'PadPad', concept: 'A launchpad for launchpads. Every launchpad born here can launch coins that can be launchpads too. Creator fees flow up the family tree: the creator, the parent launchpad, the grandparent, and SUB-01. The site shows the live family tree. In the city, every launchpad becomes a building and its children grow around it as a neighbourhood.' };
+  const { app } = composeRules(idea, { name: 'PadPad', ticker: 'PADPAD' });
+  const out = { tools: [], core: [
+    { feature: 'In the city, each launchpad is a building and its children form a neighbourhood', capability: 'city-neighbourhood', status: 'missing', builtBy: [], reason: 'no block', terms: [] },
+    { feature: 'Creator fees flow up the tree to creator, parent, grandparent and SUB-01', capability: 'fee-tree', status: 'partial', builtBy: ['launch'], reason: 'one level', terms: [] },
+  ] };
+  const r = fromModel(out, { idea, app, name: 'PadPad' });
+  assert.deepEqual(r.core.map((c) => c.status), ['built', 'built']);
 });

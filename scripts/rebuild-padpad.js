@@ -16,7 +16,7 @@ else {
   const lock = artLock(db, p, idea);
   if (lock) console.log(`rebuild-padpad: skipped (${lock})`);
   else {
-    const j = enqueue(db, { type: 'rewrite_copy', key: `rebuild:padpad:families:1`, ideaId: idea.id, projectId: p.id, payload: { by: idea.owner_wallet } });
+    const j = enqueue(db, { type: 'rewrite_copy', key: `rebuild:padpad:families:2`, ideaId: idea.id, projectId: p.id, payload: { by: idea.owner_wallet } });
     console.log(`rebuild-padpad: job ${j.id} ${j.status}`);
   }
 }
