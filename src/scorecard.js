@@ -7,7 +7,20 @@ export const SCORECARD_VERSION = 'scorecard/1';
 export const RETURNS = /\b(guarantee[ds]?|guaranteed returns?|passive income|profit[- ]?shar\w*|dividends?|revenue share|yield|apy|apr|roi|\d+\s?x\s+(gains?|returns?)|to the moon|moon ?shot|get rich|risk[- ]free|staking rewards?|holders? (get|earn|receive)|airdrop to holders)\b/i;
 const HATE = /\b(nigg\w*|faggot\w*|kike\w*|chink\w*|gook\w*|tranny|retard\w*)\b/i;
 const HARM = /\b(kys|kill yourself|suicide challenge|child (porn|sexual)|cp\b|loli)\b/i;
-const IMPERSONATE = /\b(official (token|coin) of|endorsed by|partnered with|backed by)\b/i;
+// An endorsement claim names someone: "backed by Binance", "partnered with @solana", "official token of X".
+// Technology is not an endorsement: "backed by post-quantum signatures", "backed by real code" pass (2026-10-12: the
+// owner's own launchpad idea was refused for "backed by" + cryptography).
+const ENDORSE = /\b(official (?:token|coin|memecoin) of|endorsed by|partnered with|in partnership with|backed by|sponsored by|supported by)\s+(?:the\s+)?(@?[A-Za-z0-9][\w.$-]*)/gi;
+const TECH = /^(post-?quantum|quantum|crypto(graphy|graphic)?|math(s|ematics)?|code|open-?source|real|on-?chain|solana's?|ml-dsa|ml-kem|lattices?|hash(es|-based)?|signatures?|the|a|an|our|its|community|holders?|nothing|no|zero|sub-?01|ed25519|proofs?|data|audits?|tests?|nist-standard(s|ised|ized)?|fips(-?\d+)?)$/i;
+function endorsementClaim(text) {
+  for (const m of String(text).matchAll(ENDORSE)) {
+    const who = m[2].replace(/[.,;:!?]+$/, '');
+    if (/^official/i.test(m[1])) return m[0];
+    if (TECH.test(who)) continue;
+    if (who.startsWith('@') || /^[A-Z0-9$]/.test(who)) return m[0];   // a name, a handle or a brand
+  }
+  return null;
+}
 const HEAVY = /\b(exchange|dex|bridge|staking|lending|borrow|marketplace|mmo|multiplayer|mobile app|blockchain|layer ?2|l2|wallet app|launchpad|casino|betting|lottery)\b/i;
 
 const words = (s) => (String(s).toLowerCase().match(/[a-z0-9à-ÿ]+/g) || []);
@@ -26,12 +39,14 @@ function jaccard(a, b) {
 }
 
 /** Hard gates. -> null | {rule, why} */
+export { endorsementClaim };
 export function policyCheck({ title, concept, nameSuggestion = '', tickerSuggestion = '' }) {
   const text = [title, concept, nameSuggestion, tickerSuggestion].join(' \n ');
   if (HATE.test(text)) return { rule: 'hate', why: 'contains a slur' };
   if (HARM.test(text)) return { rule: 'harm', why: 'self-harm or sexual content involving minors' };
   if (RETURNS.test(text)) return { rule: 'promised_returns', why: 'promises returns, yield or holder rewards; the launchpad does not build those' };
-  if (IMPERSONATE.test(text)) return { rule: 'impersonation', why: 'claims an endorsement or official status' };
+  const claim = endorsementClaim(text);
+  if (claim) return { rule: 'impersonation', why: `claims an endorsement or official status ("${claim.slice(0, 60)}")` };
   return null;
 }
 
