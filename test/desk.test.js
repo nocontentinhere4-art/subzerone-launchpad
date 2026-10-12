@@ -142,7 +142,7 @@ test('framing: the app CSP frames project sites, the city can frame app pages, p
     const site = await getWithHost(h.base, `${slug}.${h.cfg.projectsHost}`, '/');
     assert.equal(site.status, 200);
     assert.match(site.headers['content-security-policy'], /frame-ancestors 'self' http:\/\/localhost:8787;/);
-    assert.match(site.headers['content-security-policy'], /; sandbox allow-popups allow-popups-to-escape-sandbox$/);
+    assert.match(site.headers['content-security-policy'], /; sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads$/);
     assert.match(site.headers['content-security-policy'], /default-src 'none'/);
     assert.equal(site.headers['x-frame-options'], undefined);
 

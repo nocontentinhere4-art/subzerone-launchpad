@@ -10,7 +10,9 @@ import { createKicker } from './kick.js';
 import { transition, LABELS, STAGES } from './states.js';
 import { audit, getSetting, setSetting, PAUSES, isPaused, backup } from './db.js';
 import { enqueue, retryDead, cancelJobs } from './jobs.js';
-import { buildSiteVersion, setLiveVersion, siteCsp } from './site.js';
+import { buildSiteVersion, setLiveVersion, siteCspFor } from './site.js';
+import { CATALOG, EXTRAS, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
+import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
@@ -58,7 +60,6 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   // every project site, for the city's desk computer: <slug>.<PROJECTS_HOST> with the same scheme as siteUrl
   const projectsFrameSource = `${cfg.projectsScheme}://*.${projectsHost}`;
   const appCsp = APP_CSP(roomOrigin, projectsFrameSource);
-  const SITE_CSP = siteCsp(origin.origin);
   const secureCookie = origin.protocol === 'https:';
 
   const requireUser = (ctx) => { if (!ctx.user) throw new HttpError(401, 'sign_in', 'connect and sign in with your wallet'); return ctx.user; };
@@ -270,6 +271,61 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     }
     return { ok: true };
   });
+  // --- the site kit's tools, the author's side (tools.js, tool-api.js; docs/SITE-KIT.md) -------------------------------
+  // Editable while the preview is open and after launch (between approval and launch the site is frozen: review #5).
+  const TOOL_STATES = ['preview_ready', 'launched'];
+  const toolsProject = (ctx, slug, { staffToo = false } = {}) => {
+    const u = requireUser(ctx);
+    const p = projectBySlug(slug);
+    if (!p) throw new HttpError(404, 'not_found');
+    const idea = db.get('SELECT * FROM ideas WHERE id = ?', p.idea_id);
+    const owner = idea.owner_wallet === u.wallet;
+    if (!owner && !(staffToo && u.role === 'admin')) throw new HttpError(404, 'not_found');
+    return { p, idea, u, owner };
+  };
+  r.get('/api/projects/:slug/tools', (ctx) => {
+    const { p, idea, owner } = toolsProject(ctx, ctx.params.slug, { staffToo: true });
+    const spec = liveSpec(db, p);
+    return { editable: owner && TOOL_STATES.includes(idea.status), status: idea.status,
+      lockedNote: TOOL_STATES.includes(idea.status) ? null : 'The site is frozen between your approval and the launch; tools can change again after the launch (or reopen the preview).',
+      tools: spec?.tools || [], catalog: CATALOG, extras: EXTRAS, libs: LIBS, holderChecks: Boolean(cfg.coinStats.heliusUrl),
+      liveSiteVersion: p.live_site_version, inbox: ownerInbox(db, cfg, p) };
+  });
+  r.put('/api/projects/:slug/tools', async (ctx) => {
+    const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    if (!TOOL_STATES.includes(idea.status)) throw new HttpError(409, 'locked', 'tools can change while the preview is open, or after the launch');
+    const b = await ctx.body(16_000);
+    if (!Array.isArray(b.tools)) throw new HttpError(400, 'invalid', 'tools: an array of {id, config}');
+    const cur = liveSpec(db, p);
+    const concept = currentVersion(db, idea.id).concept;
+    // a tool switched on without its fields gets SUB-01's defaults; the author's fields win over them
+    const list = b.tools.map((t) => {
+      if (!t || typeof t !== 'object' || !CATALOG[t.id]) throw new HttpError(400, 'invalid', `unknown tool ${String(t?.id).slice(0, 20)}`);
+      const base = defaultConfig(t.id, { name: cur.name, concept });
+      const given = t.config && typeof t.config === 'object' && !Array.isArray(t.config) ? t.config : {};
+      const merged = { ...base, ...given };
+      if (t.id === 'event' && given.at) delete merged.daily;
+      if (t.id === 'event' && given.daily) delete merged.at;
+      return { id: t.id, config: merged };
+    });
+    let tools;
+    try { tools = validateTools(list); } catch (e) { if (isToolError(e)) throw new HttpError(400, 'invalid', e.message); throw e; }
+    const spec = { ...cur, tools };
+    try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
+    const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
+    setLiveVersion(db, p, site.version, `wallet:${u.wallet}`);
+    if (idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
+    audit(db, { actor: `wallet:${u.wallet}`, kind: 'tools', projectId: p.id, ideaId: idea.id, isPublic: true,
+      message: `Site tools set by the author: ${tools.map((t) => t.id).join(', ') || 'none'} (site v${site.version})` });
+    return { version: site.version, tools };
+  });
+  r.post('/api/projects/:slug/tools/entries/:id', async (ctx) => {
+    const { p, u, owner } = toolsProject(ctx, ctx.params.slug, { staffToo: true });
+    limit('write', u.wallet);
+    return moderateEntry(db, p, ctx.params.id, await ctx.body(1_000), `${owner ? 'wallet' : 'admin'}:${u.wallet}`);
+  });
+
   // previews: same origin, served with CSP "sandbox" (opaque origin, no scripts). The sandboxed page cannot send the
   // session cookie, so its address carries a short-lived signed capability instead (issued to viewers who may see it).
   const previewKey = randomBytes(32);
@@ -802,15 +858,14 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   }
 
   // --- generated project sites ----------------------------------------------------------------------------------------
+  // The public site runs the kit (CSP script-src 'self', a sandbox that keeps its own origin); the owner's preview on the
+  // launchpad origin stays script-free. Both: the CSP of site.js siteCspFor. docs/SITE-KIT.md has the reasoning.
   function serveSiteFile(ctx, p, version, file, preview) {
-    // both sandboxed (no scripts are allowed anyway); the public site may open its links in a new tab
-    const headers = { 'content-security-policy': `${SITE_CSP}; ${preview ? 'sandbox' : 'sandbox allow-popups allow-popups-to-escape-sandbox'}`, 'x-content-type-options': 'nosniff',
+    const s = db.get(`SELECT html, spec_json FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, p.id, version);
+    if (!s) throw new HttpError(404, 'not_found');
+    const headers = { 'content-security-policy': siteCspFor(origin.origin, parseJson(s.spec_json), preview), 'x-content-type-options': 'nosniff',
       'referrer-policy': 'no-referrer', 'cache-control': preview ? 'private, no-store' : 'public, max-age=60' };
-    if (file === 'index.html' || file === '') {
-      const s = db.get(`SELECT html FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, p.id, version);
-      if (!s) throw new HttpError(404, 'not_found');
-      return ctx.raw(200, Buffer.from(s.html), { ...headers, 'content-type': 'text/html; charset=utf-8' });
-    }
+    if (file === 'index.html' || file === '') return ctx.raw(200, Buffer.from(s.html), { ...headers, 'content-type': 'text/html; charset=utf-8' });
     const kind = file === 'logo.png' || file === 'favicon.ico' ? 'logo' : file === 'banner.svg' ? 'banner' : null;   // favicon = the coin logo
     if (!kind) throw new HttpError(404, 'not_found');
     const a = db.get('SELECT mime, body FROM assets WHERE project_id = ? AND kind = ? ORDER BY version DESC LIMIT 1', p.id, kind);
@@ -818,12 +873,58 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     return ctx.raw(200, Buffer.from(a.body), { ...headers, 'content-type': a.mime });
   }
 
-  function projectSite(req, res, host, path) {
+  // the kit's files (public/_kit, built by kit/build.mjs and committed): on every project host, and on the launchpad
+  // origin for the preview's stylesheet and fonts. Read once, kept in memory. Versioned vendor files never change.
+  const KIT_DIR = join(PUBLIC, '_kit');
+  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
+  const KIT_TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
+  const kitCache = new Map();
+  function serveKit(req, res, path) {
+    const m = KIT_FILE.exec(path);
+    if (!m || (req.method !== 'GET' && req.method !== 'HEAD')) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+    let body = kitCache.get(m[1]);
+    if (!body) {
+      const file = join(KIT_DIR, m[1]);
+      if (!existsSync(file)) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+      body = readFileSync(file); kitCache.set(m[1], body);
+    }
+    const immutable = /^(vendor|fonts)\//.test(m[1]);
+    res.writeHead(200, { 'content-type': KIT_TYPES[extname(m[1])], 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin',
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=86400', 'content-length': body.length });
+    return res.end(req.method === 'HEAD' ? undefined : body);
+  }
+
+  const siteApi = createSiteApi({ db, cfg, fetchImpl, limit });
+  const API_HEADERS = { 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin', 'referrer-policy': 'no-referrer',
+    'content-security-policy': "default-src 'none'; frame-ancestors 'none'" };
+  async function siteApiRoute(req, res, p, site, url) {
+    const reqId = token(6);
+    try {
+      if (req.method !== 'GET' && req.method !== 'POST') throw new HttpError(405, 'method_not_allowed');   // no CORS: OPTIONS is refused too
+      // writes come from the site's own page (same origin; browsers send Origin on POST). No cookies exist here, so this
+      // is not CSRF protection: it keeps other web pages from driving visitors' browsers at a site's tools.
+      if (req.method === 'POST' && req.headers.origin !== site.origin) throw new HttpError(403, 'bad_origin', 'cross-site request refused');
+      const body = req.method === 'POST' ? await readJson(req, 4_096) : null;
+      const out = await siteApi({ project: p, site, method: req.method, path: url.pathname, ip: clientIp(req, cfg.trustProxy), query: url.searchParams, body });
+      sendJson(res, 200, out.body, { ...API_HEADERS, 'cache-control': out.cache || 'no-store' });
+    } catch (err) {
+      for (const [k, v] of Object.entries(API_HEADERS)) res.setHeader(k, v);
+      sendError(res, err, reqId);
+    } finally {
+      log.info('site-api', { reqId, slug: p.slug, method: req.method, path: url.pathname, status: res.statusCode });
+    }
+  }
+
+  async function projectSite(req, res, host, url) {
+    const path = url.pathname;
     const slug = host.slice(0, host.length - projectsHost.length - 1);
     const p = /^[a-z0-9-]{1,40}$/.test(slug) && projectBySlug(slug);
     const idea = p && db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id);
     const ctx = { raw: (status, body, headers) => { res.writeHead(status, headers); res.end(body); } };
     if (!p || idea.visibility !== 'public' || !p.live_site_version) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+    if (path.startsWith('/_kit/')) return serveKit(req, res, path);
+    if (path.startsWith('/_api/')) return siteApiRoute(req, res, p, { host, origin: `${cfg.projectsScheme}://${host}` }, url);
+    if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET, HEAD' }); return res.end('method not allowed'); }
     try { serveSiteFile(ctx, p, p.live_site_version, path === '/' ? 'index.html' : path.slice(1), false); } catch { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); }
   }
 
@@ -885,7 +986,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const url = new URL(req.url, 'http://x');
     const host = String(req.headers.host || '').toLowerCase();
     try {
-      if (host.endsWith(`.${projectsHost}`)) return projectSite(req, res, host, url.pathname);
+      if (host.endsWith(`.${projectsHost}`)) return await projectSite(req, res, host, url);
+      if (url.pathname.startsWith('/_kit/')) return serveKit(req, res, url.pathname);
       securityHeaders(res, appCsp);
       const route = r.match(req.method, url.pathname);
       if (!route) {

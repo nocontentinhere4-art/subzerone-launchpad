@@ -6,6 +6,7 @@
 // colours the art and is quoted in the "what SUB-01 did" note.
 import { rankedNetworks, palette } from './art.js';
 import { Permanent } from './jobs.js';
+import { pickTools, validateTools, isToolError } from './tools.js';
 
 export const NETWORK_WORDS = {
   reward: 'reward', attention: 'attention', visual: 'visual', memory: 'memory', language: 'language',
@@ -57,10 +58,20 @@ export function validateSpec(s) {
   need(s.x && typeof s.x.bio === 'string' && s.x.bio.length <= 160, 'x bio ≤160');
   need(Array.isArray(s.x.handles) && s.x.handles.every((h) => /^[A-Za-z0-9_]{4,15}$/.test(h)), 'x handles');
   need(Array.isArray(s.x.posts) && s.x.posts.length >= 1 && s.x.posts.every((p) => typeof p === 'string' && p.length <= 280), 'x posts ≤280');
+  // the site kit's tools (tools.js): optional (sites built before 2026-10-12 have none), strict when present
+  if (s.tools !== undefined) {
+    try { s.tools = validateTools(s.tools); } catch (e) { if (isToolError(e)) need(false, e.message); throw e; }
+  }
   const all = JSON.stringify(s);
   need(!/[<>`]/.test(all), 'markup characters');
   need(!/(guarantee|passive income|dividend|profit share|risk[- ]free|\d+\s?x\s+(gains?|returns?))/i.test(all), 'financial promises');
   return s;
+}
+
+/** SUB-01's tool pick for a site (no language model): 3–4 generic tools plus at most one idea-specific one, from the
+ * concept's keywords (en / it / ja romaji) and the brain's dominant network. Rules in tools.js pickTools. */
+export function chooseTools(idea, brain, { name } = {}) {
+  return pickTools({ name: name || strip(idea?.name_suggestion || idea?.title, 32) || 'this coin', concept: `${idea?.title || ''}. ${idea?.concept || ''}`, networks: brain?.networks });
 }
 
 const DISCLAIMER = 'A meme token. No promises, no roadmap to riches, no rights to anything. Created through the SUBZERONE launchpad.';
@@ -91,6 +102,7 @@ export function templateGenerate({ idea, brain }) {
     },
     disclaimer: DISCLAIMER,
     palette: palette(brain?.networks),
+    tools: chooseTools(idea, brain, { name }),
   };
   if (spec.x.handles.length === 0) spec.x.handles = [`${ticker}_coin`.slice(0, 15)];
   return { spec: validateSpec(spec), generator: 'template/1', costUsd: 0 };
@@ -123,6 +135,7 @@ export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = 
   const usage = j.usage || {};
   const costUsd = ((usage.input_tokens || 0) * g.priceIn + (usage.output_tokens || 0) * g.priceOut) / 1e6;
   const spec = { ...out, ticker: String(out.ticker || '').toUpperCase(), disclaimer: DISCLAIMER, palette: palette(brain?.networks) };
+  spec.tools = chooseTools(idea, brain, { name: typeof out.name === 'string' ? out.name : undefined });   // never the model's choice
   spec.sections = [...(spec.sections || []).slice(0, 4), { heading: 'What this is', body: DISCLAIMER }];
   return { spec: validateSpec(spec), generator: `anthropic:${g.anthropicModel}`, costUsd };
 }

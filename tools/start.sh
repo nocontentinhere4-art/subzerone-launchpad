@@ -17,6 +17,7 @@ done
 
 # one-off maintenance that needs the migrated database (idempotent, never fatal)
 $NODE scripts/refresh-site-credits.js || echo "start: refresh-site-credits failed (continuing)" >&2
+$NODE scripts/backfill-site-tools.js || echo "start: backfill-site-tools failed (continuing)" >&2
 
 $NODE src/worker.js &
 WORKER=$!

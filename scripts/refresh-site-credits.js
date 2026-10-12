@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 import { loadConfig } from '../src/config.js';
 import { openDb } from '../src/db.js';
-import { siteContext, sandboxBuild, validateHtml, bannerCredit } from '../src/site.js';
+import { siteContext, sandboxBuild, validateHtml, bannerCredit, allowedUrls } from '../src/site.js';
 import { DEFAULT_CREDIT } from '../src/art.js';
 import { id, now, sha256, parseJson } from '../src/util.js';
 import { networkLabel } from '../src/generator.js';
@@ -36,8 +36,9 @@ for (const p of db.all('SELECT * FROM projects WHERE live_site_version IS NOT NU
   if (row && !(row.html.includes('Made on the SUBZERONE launchpad') && row.html.includes('rel="icon"'))) {   // old footer or no favicon
     try {
       const context = siteContext(db, cfg, p, { preview: !db.get('SELECT 1 FROM launches WHERE project_id = ?', p.id) });
-      const html = await sandboxBuild({ spec: parseJson(row.spec_json), context });
-      const check = validateHtml(html, context.links.map((l) => l.href));
+      const spec = parseJson(row.spec_json);
+      const html = await sandboxBuild({ spec, context });
+      const check = validateHtml(html, allowedUrls(context, spec));
       if (check.ok) { db.run('UPDATE site_versions SET html = ?, sha256 = ? WHERE id = ?', html, sha256(html), row.id); sites++; }
       else console.error(`refresh-site-credits: ${p.slug} v${row.version} not refreshed: ${check.problems.join('; ')}`);
     } catch (e) { console.error(`refresh-site-credits: ${p.slug}: ${e.message}`); }

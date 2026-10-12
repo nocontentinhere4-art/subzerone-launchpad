@@ -101,13 +101,13 @@ test('complete flow (MOCK provider): idea -> preview -> approved config -> signe
     const ledger = await anon.call('GET', '/api/ledger');
     assert.equal(ledger.json.projects[0].ledger.confirmedPayoutsLamports, 0);
     assert.equal(ledger.json.projects[0].ledger.mock, true);
-    // the project site on its own host: strict CSP, no scripts
+    // the project site on its own host: strict CSP; its only script is the audited kit (docs/SITE-KIT.md)
     const site = await getWithHost(h.base, `${slug}.${h.cfg.projectsHost}`, '/');
     assert.equal(site.status, 200);
-    assert.match(site.headers['content-security-policy'], /default-src 'none'/);
+    assert.match(site.headers['content-security-policy'], /default-src 'none'; script-src 'self'; connect-src 'self'/);
     const html = site.body;
     assert.equal((await getWithHost(h.base, `nope.${h.cfg.projectsHost}`, '/')).status, 404);
-    assert.ok(!/<script/i.test(html));
+    assert.deepEqual(html.match(/<script[^>]*>/gi), ['<script src="/_kit/site-kit.v1.js" defer>']);
     assert.match(html, /MOCK launch: rehearsal only/);
   } finally { h.close(); }
 });

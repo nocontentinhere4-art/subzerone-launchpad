@@ -69,12 +69,15 @@ const fold = (s) => String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCa
 // a fake name tag: "SUB-01: …", "[SUB01] …", "<sub 01> …", "**SUB-01** — …"
 const FAKE_TAG = /^[\s\p{P}\p{S}]*sub[\s._-]*0?1(?![\p{L}\p{N}])[\s\p{P}\p{S}]*?[:：>»|\]\)}\-–—=]/iu;
 
-/** -> the cleaned text, or a 400. */
-export function moderate(raw) {
-  if (typeof raw !== 'string') throw new HttpError(400, 'bad_text', `text: 1–${CHAT.max} characters`);
+/** -> the cleaned text, or a 400. The city chat's rules; the coin-site tools (tools.js) use the same filter with their own length. */
+export function moderate(raw) { return moderateText(raw, { max: CHAT.max, where: 'in the city chat' }); }
+
+/** The shared filter: control characters and markup out, length 1–max (code points), no links, no slurs, no fake SUB-01 tag. */
+export function moderateText(raw, { max, where = 'here' }) {
+  if (typeof raw !== 'string') throw new HttpError(400, 'bad_text', `text: 1–${max} characters`);
   const t = cleanText(raw);
-  if (!t || [...t].length > CHAT.max) throw new HttpError(400, 'bad_text', `text: 1–${CHAT.max} characters`);
-  if (URL_RE.test(t) || URL_RE.test(t.replace(/\s+/g, ''))) throw new HttpError(400, 'no_links', 'links are not allowed in the city chat');
+  if (!t || [...t].length > max) throw new HttpError(400, 'bad_text', `text: 1–${max} characters`);
+  if (URL_RE.test(t) || URL_RE.test(t.replace(/\s+/g, ''))) throw new HttpError(400, 'no_links', `links are not allowed ${where}`);
   if (SLUR_RE.test(fold(t))) throw new HttpError(400, 'blocked', 'that word is not allowed here');
   if (FAKE_TAG.test(raw.normalize('NFKC')) || FAKE_TAG.test(t)) throw new HttpError(400, 'impersonation', 'only SUB-01 speaks as SUB-01');
   return scrub(t);                                          // an address-like string is shortened, as in the news

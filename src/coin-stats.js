@@ -154,8 +154,18 @@ function paceDex(db, cfg, t) {
   });
 }
 
+export const SAMPLES_KEEP_MS = 8 * 86_400_000;
+/** One price / market-cap sample per good refresh (the token panel's sparkline, the chart tool); older than 8 days pruned. */
+function sample(db, mint, stats, t) {
+  const price = num(stats?.priceUsd), mcap = num(stats?.marketCapUsd);
+  if (price == null && mcap == null) return;
+  db.run('INSERT OR REPLACE INTO coin_samples (mint, at, price_usd, market_cap_usd) VALUES (?, ?, ?, ?)', mint, t, price, mcap);
+  db.run('DELETE FROM coin_samples WHERE mint = ? AND at < ?', mint, t - SAMPLES_KEEP_MS);
+}
+
 function save(db, mint, stats, prevRow, t, error = null) {
   const ok = error == null ? 1 : 0;
+  if (ok) sample(db, mint, stats, t);
   const json = ok ? JSON.stringify(stats) : prevRow?.json;
   if (!json) {                                              // first fetch failed: a row with no good value yet
     db.run(`INSERT INTO coin_stats (mint, json, fetched_at, checked_at, ok, error) VALUES (?, 'null', 0, ?, 0, ?)

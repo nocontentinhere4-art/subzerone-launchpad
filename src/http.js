@@ -58,7 +58,9 @@ export function clientIp(req, trustProxy) {
 /** Token buckets keyed by (bucket, key). Single-process; see docs/OPERATIONS.md for multi-instance. */
 export function rateLimiter() {
   const buckets = new Map();
-  const RULES = { auth: [10, 60_000], submit: [6, 3_600_000], write: [60, 60_000], read: [400, 60_000], brain: [20, 60_000], presence: [150, 60_000] };
+  const RULES = { auth: [10, 60_000], submit: [6, 3_600_000], write: [60, 60_000], read: [400, 60_000], brain: [20, 60_000], presence: [150, 60_000],
+    // coin sites' tools (tool-api.js), per IP; signed writes also per wallet
+    siteRead: [300, 60_000], siteWrite: [12, 60_000], siteSign: [12, 60_000], siteWallet: [10, 60_000] };
   setInterval(() => { const t = Date.now(); for (const [k, b] of buckets) if (t - b.t > 3_600_000) buckets.delete(k); }, 600_000).unref();
   return (rule, key) => {
     const [cap, per] = RULES[rule];

@@ -1,0 +1,95 @@
+{
+ "kit": "v1",
+ "vendor": {
+  "anime": "anime-4.5.0.js",
+  "leaflet": "leaflet-1.9.4.js",
+  "leafletCss": "leaflet-1.9.4.css",
+  "tone": "tone-15.1.22.js",
+  "kaplay": "kaplay-3001.0.19.js",
+  "uplot": "uplot-1.6.32.js",
+  "uplotCss": "uplot-1.6.32.css",
+  "qrcode": "qrcode-2.0.4.js"
+ },
+ "files": {
+  "LICENSES.txt": {
+   "bytes": 20477,
+   "gzip": 3944,
+   "sha256": "87f898c7daf161f1147e51755585cfd10e3498e37fe2fddbc422043e3584efb7"
+  },
+  "fonts/archivo-400.woff2": {
+   "bytes": 14700,
+   "gzip": 14723,
+   "sha256": "07f9160163da2ec0f6376ef9d27a2bb8163f98019ba798da4baafb154e30056e"
+  },
+  "fonts/archivo-700.woff2": {
+   "bytes": 14508,
+   "gzip": 14531,
+   "sha256": "abada6cd4c92a9a706f6d7ed3189f322ff43dd78b9402c7d1137465b861d2a04"
+  },
+  "fonts/archivo-800.woff2": {
+   "bytes": 14416,
+   "gzip": 14439,
+   "sha256": "c26cda2400b374eb1adb6e0973c86f455e2df17ca57c6755eb37d7bde47663fb"
+  },
+  "fonts/jetbrains-mono-400.woff2": {
+   "bytes": 21168,
+   "gzip": 21196,
+   "sha256": "14425ba9c695763c1547f48a206b7aa60350a33ae23de09f0407877f3fcd89eb"
+  },
+  "fonts/jetbrains-mono-700.woff2": {
+   "bytes": 21908,
+   "gzip": 21936,
+   "sha256": "d0d4e818808f2a0ba39b2b09d1989366f63494e295f003c7ef436697378507e8"
+  },
+  "site-kit.v1.css": {
+   "bytes": 10662,
+   "gzip": 3163,
+   "sha256": "5182a18b06f268a7c6c11000bf2c688adda46951a75f1f6e6c63e50c28a3b478"
+  },
+  "site-kit.v1.js": {
+   "bytes": 33209,
+   "gzip": 13731,
+   "sha256": "bfe7d12aef1f2ba701996f0e32738ef61b8f854134327db83d7cd8b6570039e1"
+  },
+  "vendor/anime-4.5.0.js": {
+   "bytes": 39995,
+   "gzip": 15938,
+   "sha256": "3cd5f2adebc65aa554ec2ffa9177984c4c263166997c690025509b894e3f00c0"
+  },
+  "vendor/kaplay-3001.0.19.js": {
+   "bytes": 190127,
+   "gzip": 69780,
+   "sha256": "12bf143d8e7798899310a50050a67f3f0a191b56c2004c16402e4d770d3a76b8"
+  },
+  "vendor/leaflet-1.9.4.css": {
+   "bytes": 14806,
+   "gzip": 3522,
+   "sha256": "a7837102824184820dfa198d1ebcd109ff6d0ff9a2672a074b9a1b4d147d04c6"
+  },
+  "vendor/leaflet-1.9.4.js": {
+   "bytes": 150351,
+   "gzip": 43433,
+   "sha256": "84a944a660a37e6c547f959bb3e30cd57c99c0c0f0e63836b9698c6bab66b6f5"
+  },
+  "vendor/qrcode-2.0.4.js": {
+   "bytes": 20808,
+   "gzip": 7564,
+   "sha256": "8642dcc1f891cf94d7056d132bdede80983e68dba4e5713bd6896f97001adfb2"
+  },
+  "vendor/tone-15.1.22.js": {
+   "bytes": 348689,
+   "gzip": 82572,
+   "sha256": "60084ce6bab667ea099e815ec6571d008d52294b64d01d519b39a0057a87192f"
+  },
+  "vendor/uplot-1.6.32.css": {
+   "bytes": 1857,
+   "gzip": 758,
+   "sha256": "df630c6a8d6f8eeaff264b50f73ce5b114f646ffd9a0bb74f049b0a00135fa04"
+  },
+  "vendor/uplot-1.6.32.js": {
+   "bytes": 52033,
+   "gzip": 23035,
+   "sha256": "d5f01617afb0326b2d8d00dc79ad4750d80a675f1c1804e00abd6d462d8a9600"
+  }
+ }
+}
