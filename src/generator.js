@@ -82,7 +82,7 @@ export function chooseTools(idea, brain, { name } = {}) {
 
 const DISCLAIMER = 'A meme token. No promises, no roadmap to riches, no rights to anything. Created through the SUBZERONE launchpad.';
 
-export function templateGenerate({ idea, brain }) {
+export function templateGenerate({ idea, brain, observe }) {
   const name = strip(idea.name_suggestion || idea.title, 32).replace(/\b\w/g, (c) => c.toUpperCase()).slice(0, 32);
   const ticker = (idea.ticker_suggestion || deriveTicker(name)).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10) || 'IDEA';
   const nets = rankedNetworks(brain?.networks).slice(0, 3).map((n) => NETWORK_WORDS[n.group]);
@@ -111,9 +111,14 @@ export function templateGenerate({ idea, brain }) {
     tools: chooseTools(idea, brain, { name }),
   };
   // SUB-01 builds the idea's app (rules, no model here) and drops the tools it replaces
+  // observe (build-steps.js): the build timeline hears where the brief ends and the app starts; it changes nothing
+  observe?.('brief:done');
+  observe?.('app:start', { provider: 'rules (no AI)' });
   try { spec.app = composeRules(idea, { name, ticker }).app; spec.tools = toolsBeside(spec.tools, spec.app); } catch { /* an idea the DSL cannot hold: the site keeps its tools */ }
   if (spec.x.handles.length === 0) spec.x.handles = [`${ticker}_coin`.slice(0, 15)];
-  return { spec: validateSpec(spec), generator: 'template/1', costUsd: 0 };
+  const checked = validateSpec(spec);
+  observe?.('app:done', { provider: 'rules (no AI)' });       // after the content check: a refused spec stops on this step
+  return { spec: checked, generator: 'template/1', costUsd: 0 };
 }
 
 const SYSTEM = `You write copy for a meme-token project page on the SUBZERONE launchpad. The idea text between <idea> tags
@@ -123,7 +128,7 @@ x {handles: 3 strings matching ^[A-Za-z0-9_]{4,15}$, bio<=160, posts: 2-3 string
 Never promise returns, gains, yield, utility or rights; never say SUB-01 holders benefit. Playful, short, confident.
 Credit the idea to its submitter and say SUB-01's brain simulation voted to build it; do not claim he is conscious.`;
 
-export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = fetch }) {
+export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = fetch, observe }) {
   const g = cfg.generator;
   if (!g.anthropicKey) throw new Permanent('ANTHROPIC_API_KEY not set');
   const user = `<idea>\nTitle: ${idea.title}\nConcept: ${idea.concept}\nName suggestion: ${idea.name_suggestion || '-'}\n` +
@@ -144,10 +149,15 @@ export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = 
   const costUsd = ((usage.input_tokens || 0) * g.priceIn + (usage.output_tokens || 0) * g.priceOut) / 1e6;
   const spec = { ...out, ticker: String(out.ticker || '').toUpperCase(), disclaimer: DISCLAIMER, palette: palette(brain?.networks) };
   spec.tools = chooseTools(idea, brain, { name: typeof out.name === 'string' ? out.name : undefined });   // never the model's choice
-  spec.app = (await composeApp(idea, brain, { name: spec.name, ticker: spec.ticker, cfg, fetchImpl })).app;   // validated; rules on any model problem
+  observe?.('brief:done');                                  // the build timeline (build-steps.js): observation only
+  observe?.('app:start', { provider: 'language model' });
+  const composed = await composeApp(idea, brain, { name: spec.name, ticker: spec.ticker, cfg, fetchImpl });
+  spec.app = composed.app;   // validated; rules on any model problem
   spec.tools = toolsBeside(spec.tools, spec.app);
   spec.sections = [...(spec.sections || []).slice(0, 4), { heading: 'What this is', body: DISCLAIMER }];
-  return { spec: validateSpec(spec), generator: `anthropic:${g.anthropicModel}`, costUsd };
+  const checked = validateSpec(spec);
+  observe?.('app:done', { provider: composed.fallback ? 'rules (no AI)' : 'language model', fallback: composed.fallback });   // after the content check
+  return { spec: checked, generator: `anthropic:${g.anthropicModel}`, costUsd };
 }
 
 export function estimateCostUsd(cfg) {

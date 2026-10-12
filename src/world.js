@@ -6,6 +6,7 @@ import { audit } from './db.js';
 import { LABELS } from './states.js';
 import { jstDate } from './calendar.js';
 import { publicStats } from './coin-stats.js';
+import { buildView, buildSummary } from './build-steps.js';
 import { now, HttpError, parseJson, utcDay } from './util.js';
 
 export const DISTRICTS = ['shiba', 'shinjuku', 'akihabara', 'shibuya', 'harajuku', 'nakameguro', 'ebisu', 'roppongi', 'ginza',
@@ -292,7 +293,7 @@ export function deleteGuestbook(db, wallet, plotId, id) {
 export const PROGRESS = { submitted: 0.05, evaluating: 0.12, selected: 0.2, generating: 0.45, preview_ready: 0.65, approved: 0.75,
   launch_prepared: 0.82, awaiting_signature: 0.88, confirming: 0.94, launched: 1, failed: 0, declined: 0, cancelled: 0 };
 // generate-job progress texts (pipeline.js) -> a finer position inside 'generating'
-const GEN_STEPS = { 'writing the project identity': 0.5, 'drawing the logo and banner': 0.54, 'building the website in the sandbox': 0.58 };
+const GEN_STEPS = { 'writing the project identity': 0.5, 'composing the app': 0.52, 'drawing the logo and banner': 0.54, 'building the website in the sandbox': 0.58 };
 
 /** A known plot id. With `claim`, a reserved plot (the tower park) is refused too: it can be read but never claimed. */
 export function validatePlotId(plotId, { claim = false } = {}) {
@@ -440,6 +441,8 @@ export function worldView(db, cfg, t = now()) {
     let progress = PROGRESS[stage] ?? 0;
     if (stage === 'generating' && GEN_STEPS[genProgress.get(x.idea_id)]) progress = GEN_STEPS[genProgress.get(x.idea_id)];
     const base = { stage, stageLabel: LABELS[stage] || stage, progress };
+    // while SUB-01 builds it: "Building · 62% · ~1 min left" (build-steps.js); the timeline itself is GET /api/ideas/:id
+    if (stage === 'selected' || stage === 'generating') { const b = buildSummary(buildView(db, cfg, x.idea_id, { t })); if (b) base.build = b; }
     // ideaId: the key the city uses for /api/predictions/:ideaId and /api/ema/:ideaId/cheer. Public ideas only; a private
     // project's id is never sent (the placeholder carries null).
     if (x.visibility !== 'public') return { ideaId: null, slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null, logoUrl: null, bannerUrl: null };

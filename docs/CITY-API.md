@@ -273,6 +273,51 @@ data: {"ideaId":"idea_…","version":1,"verdict":"build|pass","status":"selected
 - Only verdicts decided in the web process are announced (the kick path, which is the normal one). A verdict the worker
   process decides later (a long brain outage) reaches the city on the next `/api/world` or `/api/ideas/:id` read.
 
+## The build, step by step (GET /api/ideas/:id `build`, SSE `build`, `/api/world` `project.build`)
+
+After "He builds it" the generate job records each step it goes through (`build-steps.js`, migration
+`018_build_steps.sql`). `GET /api/ideas/:id` carries the timeline (`null` before he builds it, and for builds before
+2026-10-12):
+
+```json
+"build": {
+  "state": "queued|running|retrying|ready|failed",
+  "steps": [
+    { "id": "queued|brief|app|art|site|qa|ready", "label": "Two logo + banner options",
+      "state": "todo|running|done|failed|skipped", "startedAt": 0, "endedAt": null,
+      "provider": "language model|template (no AI)|rules (no AI)|Higgsfield|Recraft|Higgsfield + local fallback|local fallback|local drawing|sandbox|Chromium|static checks|null",
+      "plannedProvider": "Higgsfield (todo steps: who will do it)", "note": "1 of 2 options drawn locally|null",
+      "expectedSeconds": 40, "p90Seconds": 64, "estimateFrom": "default|median of 12", "elapsedSeconds": 12.4 }
+  ],
+  "startedAt": 0, "etaSeconds": 68, "etaAt": 0, "elapsedSeconds": 31.2, "percent": 37,
+  "queue": { "position": 2, "ahead": 1, "startsInSeconds": 55 },
+  "attempt": 1, "now": 0
+}
+```
+
+- Steps: `queued` (in line) → `brief` (name, ticker and story) → `app` (the idea app) → `art` (two logo + banner
+  options) → `site` (sandbox build + safety check) → `qa` (SUB-01's QA gate, docs/SITE-QA.md: `Chromium` or
+  `static checks`) → `ready`.
+- ETA: per step the median duration of the last 20 finished builds (per planned provider once it has 3 runs), the
+  defaults until then (brief 25 s, app 20 s, art 40 s, site 5 s, QA 30 s; about 1 s for the no-AI providers).
+  `etaSeconds` = the wait in line + the medians of the steps not started + what is left of the running one; a step past
+  its median is extended to its p90, past that by another p90 at a time; never negative. `percent` counts work only
+  (not the wait). The client can re-estimate every second from `expectedSeconds` / `p90Seconds` / `startedAt` and `now`.
+- `queue` (only while it waits): builds run one after another on the worker; `position` 1 = next. A failed run that
+  will be retried is `retrying`, with `queue.startsInSeconds` until the retry.
+- `note` on a `failed` step is the job's error for the author and admins, `"stopped here"` for everyone else.
+
+The web process watches the rows (every second, only while a stream is open) and writes a frame when a step changes:
+
+```
+event: build
+data: {"ideaId":"idea_…","status":"generating","plotId":"ginza-3|null","private":false,"build":{…as above, notes as for visitors}}
+```
+
+Same audience as `verdict`: a public idea on every stream, a private one on its author's streams only. `/api/world`
+projects that are `selected` or `generating` carry a summary for the building's card:
+`"build": {"state","percent","etaSeconds","etaAt","elapsedSeconds","step":{"id","label"}|null,"queuePosition","now"}`.
+
 ## GET /api/world
 
 Public, `cache-control: public, max-age=3`. The server rebuilds the snapshot at most every 3 s (and after any write it

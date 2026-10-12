@@ -40,6 +40,7 @@ import { postcardSvg, postcardPng } from './postcard.js';
 import { artView, artFile, chooseArt } from './art-choice.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { createChat } from './chat.js';
+import { buildView, createBuildWatch } from './build-steps.js';
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
@@ -56,7 +57,7 @@ const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_re
 /** `chat`: {connect, fetchMind, relayOpts, limits} for tests (the SUB-01 transport and quotas; see chat.js).
  *  `kick`: run an idea's evaluate job in this process right after the submit answers (kick.js); tests that drain the
  *  queue by hand pass false. */
-export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true }) {
+export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true, buildWatchMs = 1000 }) {
   const r = router();
   const limit = rateLimiter();
   const origin = new URL(cfg.publicOrigin);
@@ -176,7 +177,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   r.get('/api/ideas/:id', (ctx) => {
     const v = viewIdea(db, ctx.params.id, ctx.user);
     if (!v) throw new HttpError(404, 'not_found', 'not found, or private');
-    return v;
+    // SUB-01's build, step by step, with its ETA (build-steps.js; null before he builds it or for builds before 2026-10-12)
+    return { ...v, build: buildView(db, cfg, v.id, { owner: v.owner || v.canAdmin }) };
   });
   // the revise loop: a passed idea, rewritten and read again (ideas.js reviseIdea: 409 not_declined | max_versions, 429 too_fast)
   r.patch('/api/ideas/:id', async (ctx) => {
@@ -630,7 +632,20 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       chat.sendTo(idea.owner_wallet, 'verdict', { ...base, private: true });
     }
   };
-  const kicker = createKicker({ db, cfg, fetchImpl, services: { onVerdict } });
+  // --- the build, live (build-steps.js; SSE `build` in docs/CITY-API.md) -------------------------------------------------
+  // The generate job runs in the worker process: this process reads the build_steps rows every second (only while a
+  // stream is open) and sends a `build` frame when a step changes. Same audience rule as the verdict.
+  const buildWatch = createBuildWatch({ db, cfg, everyMs: buildWatchMs, hasListeners: () => chat.conns.size > 0, send: (ideaId, build) => {
+    const idea = db.get('SELECT visibility, owner_wallet, status FROM ideas WHERE id = ?', ideaId);
+    if (!idea) return;
+    worldCache = null;
+    const plot = db.get(`SELECT plot_id FROM plots WHERE idea_id = ? AND kind = 'project'`, ideaId);
+    const base = { ideaId, status: idea.status, plotId: plot?.plot_id ?? null, build };
+    if (idea.visibility === 'public') chat.broadcast('build', { ...base, private: false });
+    else chat.sendTo(idea.owner_wallet, 'build', { ...base, private: true });
+  } });
+  const onVerdictThenBuild = (v) => { onVerdict(v); if (v.verdict === 'build') setImmediate(() => { try { buildWatch.tick(); } catch (e) { log.error('build watch', e); } }); };
+  const kicker = createKicker({ db, cfg, fetchImpl, services: { onVerdict: onVerdictThenBuild } });
   const wake = (key) => { if (kick) setImmediate(() => kicker.kick(key)); };
   const launchApi = createLaunchApi({ db, cfg, limit, wake });     // /_api/launch* on a launchpad coin's site (child-launch.js)
 
@@ -1101,6 +1116,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
 
   handle.chat = chat;                                         // tests and server shutdown
   handle.kicker = kicker;                                     // tests: await kicker.idle() for the verdict
+  handle.buildWatch = buildWatch;                             // tests: tick() by hand; shutdown: stop()
   return handle;
   async function handle(req, res) {
     const reqId = token(6);

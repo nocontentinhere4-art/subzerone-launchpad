@@ -22,6 +22,7 @@ import { canSpend, recordSpend } from './budget.js';
 import { refreshCoinStats } from './coin-stats.js';
 import { childBuild, afterLaunched } from './child-launch.js';
 import { id, now, sha256, parseJson } from './util.js';
+import { buildRecorder, artOutcome, qaOutcome, PROVIDERS } from './build-steps.js';
 
 const BRAIN_WAIT = { asleep: 20 * 60_000 };
 // brain offline: short retries first (the author is watching), then the job policy's minutes
@@ -132,12 +133,16 @@ export const handlers = {
     const v = currentVersion(db, ideaId);
     const evaluation = db.get(`SELECT * FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, ideaId);
     const brain = parseJson(evaluation.brain_json);
+    // the build timeline the author watches (build-steps.js): observed and recorded, never a reason to fail
+    const steps = buildRecorder(db, ctx.job, { cfg, progress: ctx.progress });
+    steps.begin();
     ctx.progress('writing the project identity');
-    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl });
+    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, observe: steps.observe });
     const spec = out.spec;
     // the coin art (coinart.js): two black-and-white candidates, drawn before the transaction (providers are slow);
     // a provider problem ends in the local drawing, only a missing renderer falls back to the old procedural art
     ctx.progress('drawing the logo and banner');
+    steps.start('art', PROVIDERS.art(cfg));
     let art = null;
     const artSpend = [];
     try {
@@ -147,6 +152,7 @@ export const handlers = {
       if (ctx.signal?.aborted) throw e;
       log.error('coin art failed; using the procedural art', e);
     }
+    steps.done('art', artOutcome(art, cfg));
     const t = now();
     const project = db.tx(() => {
       let p = existing;
@@ -198,9 +204,14 @@ export const handlers = {
       return p;
     });
     ctx.progress('building the website in the sandbox');
+    steps.start('site', PROVIDERS.site(cfg));
     const site = await buildSiteVersion(db, cfg, project, spec, 'system');
+    steps.done('site', { note: `version ${site.version} built and passed the safety check` });
+    steps.start('qa', PROVIDERS.qa(cfg));
     const pub = await publishSite(db, cfg, project, site.version, 'system');   // the first version goes live; the QA report rides along
+    steps.done('qa', qaOutcome(pub.qa));
     transition(db, ideaId, 'generating', 'preview_ready', { actor: 'system', note: 'preview ready: review the site, the X drafts and the fee split' });
+    steps.done('ready');
     return { project: project.id, site: site.version, qa: pub.qa?.line };
   },
 
