@@ -46,42 +46,63 @@ So:
 - **Not yet verified on-chain**: creation and fee sharing together in one transaction. It isn't documented. The SDK
   builds it and simulation is the next check. **Test it on devnet before relying on it** (see STATUS).
 
-### With the dev buy
+### With the dev buy: two Phantom-safe transactions
 
-The author's optional first buy (`initialBuyLamports` in the launch configuration, 0.001–5 SOL) adds two instructions
-after the fee split: the author's Token-2022 associated token account (idempotent) and `buy_v2` with the
-sharing-config PDA as the curve creator, so the buy's own creator fee goes to the project's shared vault like every
-other trade's. The amount of tokens is the SDK's quote at a fresh curve (`getBuyTokenAmountFromSolAmount`); what is
-shown, reserved and signed is the **real cost of those tokens** (`getBuySolAmountFromTokenAmount`, fees included; the
-quote rounds by a lamport or so), with a cap of cost + 5% (500 bps) in the transaction. A buy the SDK would clamp to
-the curve's whole real reserve is refused (`409 buy_completes_curve`) instead of silently buying less: on devnet the
-curve is seeded with 1 SOL, so about 2.9 SOL completes it; on mainnet (30 SOL seed) the 5 SOL cap cannot.
+Phantom cannot simulate a pump.fun create whose program event authorities come from an address lookup table and
+shows "This dApp could be malicious". Every transaction handed to the wallet is therefore in the **Phantom-safe
+layout**: the pump and pump-fees event authorities are written into the message as static keys (`phantomSafeTables`,
++62 bytes). Phantom also appends its own instructions when it signs (Lighthouse balance assertions, a compute-budget
+priority fee), which need room in the packet.
 
-Sizes measured with the real SDK and the 22-account lookup table (2026-10-10), longest name (32), ticker (10) and
-metadata URI (`https://city.subzerone.live/meta/<30-char slug>/<16 hex>.json`):
+In that layout `create_v2 + fee split + ATA + buy_v2` measures 1231-1259 bytes, so the author's optional dev buy
+(`initialBuyLamports`, 0.001-5 SOL) is its **own second transaction**:
 
-| | with the 16-account table | with the table extended to 22 accounts |
-|---|---|---|
-| 2 recipients, no buy | 938 bytes (real launch) | 938 bytes |
-| 2 recipients + dev buy | over the limit | **1231 bytes** (1202 in the devnet launch, shorter name) |
-| 3 recipients + dev buy | over | **1265 bytes: does not fit** |
+| | contents | signers | layout | measured (devnet 2026-10-12) |
+|---|---|---|---|---|
+| tx1 (step 1) | `create_v2`, `create_fee_sharing_config`, `update_fee_shares_v2` | the author, then the mint key (server) | lookup table, both event authorities static | 973-979 bytes |
+| tx2 (step 2) | the author's Token-2022 ATA (idempotent), `buy_v2` | the author alone | **no lookup table**: every account static | 1033 bytes |
 
-So the dev buy needs the fee split kept at **2 recipients** (the author and SUB-01), or a shorter name/ticker; the
-server refuses it before it is stored (`PUT …/launch/options` → `409 tx_too_large`, `compiledTxBytes()` offline, no
-RPC) and again when the configuration is prepared or the transaction built. There is **no compute-budget priority fee
-instruction**: it would add about 12 bytes plus a static key, which the 2-recipient worst case (1 byte of headroom)
-cannot take.
+The decision is made when the configuration is prepared (`launchConfig.devBuyMode`, `launch.js devBuyModeFor`): the
+buy stays inside tx1 (`same_tx`) only if the Phantom-safe transaction would leave `WALLET_HEADROOM_BYTES` (150) for
+the wallet's guards, which no real name fits today; otherwise `second_tx`. A buy is never compiled into the compact
+layout any more (without a buy the compact layout remains the fallback for a split too large for the safe one).
 
-The six extra accounts are the buy's static ones: the primary fee recipient on `Global` and its WSOL ATA, one
-buyback fee recipient (the SDK otherwise picks one of eight at random per build; the provider pins the lowest-sorted
-one) and its WSOL ATA, the global volume accumulator and the pump-fees `FeeConfig` PDA. A table created before the
-dev buy existed is extended in place with `npm run lookup-table -- --extend <table>` (the signer must be the table's
-authority; the new entries are usable from the next slot). The cap is `MAX_INITIAL_BUY_SOL` (default 5, never more).
+Step by step (`src/launch.js`, `src/launch/pumpfun.js`):
 
-Before the transaction exists the server also checks the wallet can cover the buy plus a 0.02 SOL reserve for rent
-and fees (`400 insufficient_funds` at PUT time, `409` at preparation); a preparation whose simulation fails stores
-**no** intent and answers `409 simulation_failed` with the reason in plain words. The intent stores the reviewed
-token amount (`buy_tokens_base`) and the on-chain verification checks the author's token account holds exactly it.
+1. **tx1** is reviewed, signed and verified exactly as a launch without a buy. Its estimate carries the buy that
+   follows, quoted at a fresh curve (`estimate.devBuy`), and the balance check counts it. Once tx1 is finalized and
+   verified the project is **launched** with `launches.dev_buy_status = 'pending'`: "launched" never waits for the buy.
+2. `POST /api/projects/:slug/launch/devbuy/transaction` builds **tx2** fresh: `getBuyTokenAmountFromSolAmount` on the
+   **live** curve (a sniper may have bought between the two), `amount` = those tokens, `max_sol_cost` = their real cost
+   (`getBuySolAmountFromTokenAmount`, fees included) + 5%, `creator` = the curve's creator (the sharing-config PDA).
+   The 0.001 SOL minimum, the balance check and a clean simulation are required; every simulation is logged
+   (`dev buy simulation`). A dev buy that would complete the curve, a curve not visible yet or already complete are
+   coded `409`s.
+3. `…/devbuy/refresh` right before the wallet opens: the **same** tokens and cap with a fresh blockhash (the review stays
+   true). If the price moved past the cap meanwhile the simulation fails, the attempt is cancelled and the author reads
+   why.
+4. `…/devbuy/signed`: the signed bytes must be the reviewed tx2, or the same with Phantom's Lighthouse / compute-budget
+   instructions added (`sameLaunch`), paid and signed by the author **alone** (`numRequiredSignatures === 1`). Then
+   broadcast; `confirm_dev_buy` follows it.
+5. Verification (`verifyDevBuy`): finalized and successful, the author is the payer, the author's Token-2022 account
+   for the mint **gained exactly the reviewed tokens** (meta pre/post token balances; `buy_v2` with `partial_fill` off
+   is exact-out), and the SOL the buy took (balance change − network fee − what funded accounts the transaction
+   created) is within the signed cap. On devnet the first trade also funds the project's creator vault (679,870
+   lamports), which is why created accounts are excluded; the program itself enforces `max_sol_cost`.
+6. If tx2 fails (on-chain, preflight, or "the price moved more than 5% first", pump error 6002 `TooMuchSolRequired`)
+   nothing is bought but the network fee: `dev_buy_status = 'failed'` and the author may try again at the new price or
+   skip. `…/devbuy/abandon` cancels a waiting one; `…/devbuy/skip` is final. Before a new tx2 is built, earlier
+   cancelled/expired ones must be provably dead (`devBuyLandCheck`: blockhash window passed, and no successful
+   transaction of the author put exactly that many tokens in their account); a landed one is verified instead.
+   A tx2 that landed but failed verification blocks retries until an admin re-verifies it
+   (`POST /api/admin/projects/:slug/reverify`).
+
+Devnet run (2026-10-12, `scripts/demo-flow.js` with `DEMO_INITIAL_BUY_SOL=0.01`): mint
+`Dr1iFW8SaPS9yXWsoFDM2Z98aaepf7FTK1Zdzd94Ure2`, tx1 979 bytes, tx2 1033 bytes (no lookup table), 10,493,886.257633
+tokens received exactly as reviewed, the buy took 0.00997037 SOL (cap 0.0105).
+
+Tables created before the dev buy existed still work: tx2 uses no table, and tx1 without the buy only needs the
+creation and fee-sharing accounts. `MAX_INITIAL_BUY_SOL` caps the buy (default 5, never more).
 
 ## Terms of service: needs a decision before mainnet
 
@@ -117,9 +138,10 @@ request; example values):
 - `direct: true`: a program the transaction calls. `direct: false`: a known program passed to one of them as an
   account (it runs inside it). Program ids are always static keys in a v0 message; accounts loaded from the lookup
   table are counted in `accountsWritable`, not named.
-- `launchProgramsOnly`: every directly called program is pump, pump-fees or Compute Budget. Only then does the review
-  box say what the transaction does NOT do (no approvals, no token transfers from the wallet, no initial buy; SOL only
-  for the network fee and rent); otherwise it warns and the Sign button stays disabled, as it does when `feePayer` is
+- `launchProgramsOnly`: every directly called program is pump, pump-fees, Compute Budget or the Associated Token
+  Account program (the dev buy's token account). Only then does the review
+  box say what the transaction does NOT do (no approvals, no token transfers from the wallet, no buy in step 1; SOL
+  only for the network fee and rent); otherwise it warns and the Sign button stays disabled, as it does when `feePayer` is
   not the signed-in wallet. Mock provider: `programs: [{ "id": "MockLaunch", "name": "MockLaunch", "direct": true }]`,
   `accountsWritable: 0`, `signers: 1`.
 - The box (`public/js/review.js`) lists network, fee payer, new mint, programs, writable accounts, estimated cost and

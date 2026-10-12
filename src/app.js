@@ -17,7 +17,7 @@ import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.j
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
-  INITIAL_BUY_STATES, refreshIntent } from './launch.js';
+  INITIAL_BUY_STATES, refreshIntent, createDevBuy, refreshDevBuy, submitDevBuy, abandonDevBuy, skipDevBuy, devBuyView } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
   unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
@@ -213,7 +213,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const xa = db.get('SELECT planned_handle, planned_bio, status, x_handle, connected_at FROM x_accounts WHERE project_id = ?', p.id);
     const posts = (owner || staff) ? db.all('SELECT id, kind, text, status, x_post_id, error, approved_at, published_at FROM x_posts WHERE project_id = ? ORDER BY created_at', p.id) : undefined;
     const launch = db.get('SELECT * FROM launches WHERE project_id = ?', p.id);
-    const intent = (owner || staff) ? db.get(`SELECT id, status, mint, tx_signature, error, provider, network, created_at, updated_at, last_valid_block_height
+    const intent = (owner || staff) ? db.get(`SELECT id, status, mint, tx_signature, error, provider, network, created_at, updated_at, last_valid_block_height, dev_buy_mode
       FROM launch_intents WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`, p.id) : undefined;
     const provider = getProvider(cfg, db);
     const gen = db.get('SELECT generator, cost_usd, created_at FROM generations WHERE project_id = ? ORDER BY version DESC LIMIT 1', p.id);
@@ -241,6 +241,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
         return { initialBuyLamports: Number(p.initial_buy_lamports ?? 0), maxInitialBuyLamports: maxInitialBuyLamports(cfg), locked,
           editable: owner && !locked && !launch && INITIAL_BUY_STATES.includes(idea.status) };
       })() : undefined,
+      // step 2 of a launch with a dev buy (launch.js devBuyView): status, amount, the latest attempt
+      devBuy: (owner || staff) && launch ? devBuyView(db, provider, p) : undefined,
       ledger: launch ? feeLedger(db, p.id) : null,
       pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: vote?.seq ?? null,
     };
@@ -418,6 +420,32 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const b = await ctx.body();
     abandonIntent(db, p, u.wallet, b.reason === 'rejected' ? 'the wallet rejected the signature request' : 'signature request cancelled');
     return { ok: true };
+  });
+  // step 2, the dev buy as its own transaction (launch.js createDevBuy …): the same four calls as the launch, plus skip
+  r.post('/api/projects/:slug/launch/devbuy/transaction', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    return createDevBuy(db, cfg, p, u.wallet);
+  });
+  r.post('/api/projects/:slug/launch/devbuy/refresh', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    return refreshDevBuy(db, cfg, p, u.wallet);
+  });
+  r.post('/api/projects/:slug/launch/devbuy/signed', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    const b = await ctx.body(64_000);
+    return submitDevBuy(db, cfg, p, u.wallet, String(b.signed || ''));
+  });
+  r.post('/api/projects/:slug/launch/devbuy/abandon', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    const b = await ctx.body();
+    abandonDevBuy(db, p, u.wallet, b.reason === 'rejected' ? 'the wallet rejected the signature request' : 'signature request cancelled');
+    return { ok: true };
+  });
+  r.post('/api/projects/:slug/launch/devbuy/skip', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    return { ok: true, ...skipDevBuy(db, p, u.wallet) };
   });
 
   // --- X ------------------------------------------------------------------------------------------------------------
@@ -795,6 +823,17 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const p = projectBySlug(ctx.params.slug);
     if (!p) throw new HttpError(404, 'not_found');
     const intent = db.get(`SELECT * FROM launch_intents WHERE project_id = ? AND error LIKE 'landed:%' ORDER BY updated_at DESC LIMIT 1`, p.id);
+    // a dev buy (step 2) that landed but failed verification is checked again the same way
+    const buy = !intent && db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND error LIKE 'landed:%' ORDER BY updated_at DESC LIMIT 1`, p.id);
+    if (buy) {
+      db.tx(() => {
+        db.run(`UPDATE dev_buy_attempts SET status = 'submitted', error = NULL, updated_at = ? WHERE id = ?`, now(), buy.id);
+        db.run(`UPDATE launches SET dev_buy_status = 'submitted' WHERE project_id = ?`, p.id);
+        audit(db, { actor: `admin:${u.wallet}`, kind: 'admin', ideaId: p.idea_id, projectId: p.id, message: 're-verifying the landed dev buy on-chain' });
+        enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${buy.id}:reverify:${now()}`, ideaId: p.idea_id, projectId: p.id, payload: { attemptId: buy.id } });
+      });
+      return { ok: true, devBuy: buy.id };
+    }
     if (!intent) throw new HttpError(409, 'nothing_to_verify');
     db.tx(() => {
       db.run(`UPDATE launch_intents SET status = 'submitted', error = NULL, updated_at = ? WHERE id = ?`, now(), intent.id);

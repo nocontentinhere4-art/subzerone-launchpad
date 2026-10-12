@@ -35,8 +35,9 @@ repository and is served by this service from the same origin.
    PKCE, and every post is published only after an explicit approval.
 6. **Launch.** The author publishes the idea, approves the exact disclosed terms, and (when enabled) an admin reviewer
    clears it. The launchpad prepares **one** pump.fun transaction: `create_v2` + an on-chain fee-sharing config with a
-   **locked creator-fee split of 80% author / 20% SUB-01** + an optional dev buy (up to 5 SOL) in the same
-   transaction. The author reviews what the wallet will sign (programs, writable accounts, signers, fee payer,
+   **locked creator-fee split of 80% author / 20% SUB-01**. An optional dev buy (up to 5 SOL) is a **second**
+   transaction right after it, signed by the author alone, quoted on the live curve and capped at the quote + 5%
+   (both transactions in the layout wallets can simulate; see docs/PUMPFUN.md). The author reviews what the wallet will sign (programs, writable accounts, signers, fee payer,
    network, cost, split) and signs with their own wallet. The project is "launched" only after finalized on-chain
    verification passes; fees in the ledger are read from chain, never estimated.
 

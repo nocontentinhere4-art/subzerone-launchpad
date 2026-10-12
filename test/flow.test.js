@@ -446,7 +446,8 @@ test('dev buy (launch options): owner only, cap, re-prepared config with a new h
     const after = await owner.call('GET', `/api/projects/${slug}`);
     assert.equal(after.json.launchConfig.initialBuyLamports, 250_000_000);
     assert.equal(after.json.launchConfig.initialBuySlippageBps, 500);
-    assert.match(after.json.launchConfig.irreversible.at(-1), /You buy 0\.25 SOL of your own coin in the creation transaction/);
+    assert.equal(after.json.launchConfig.devBuyMode, 'second_tx', 'the buy is its own transaction (the mock does what pump.fun must)');
+    assert.match(after.json.launchConfig.irreversible.at(-1), /Your dev buy of 0\.25 SOL is a second signature right after the launch.*moves more than 5% first, it does not go through and you keep your SOL/);
     assert.notEqual(h.db.get('SELECT launch_config_hash h FROM projects WHERE slug = ?', slug).h, before);
     assert.equal(after.json.launchOptions.initialBuyLamports, 250_000_000);
     // the same value again changes nothing and does not re-prepare
@@ -456,7 +457,8 @@ test('dev buy (launch options): owner only, cap, re-prepared config with a new h
     // a transaction exists: the option is locked until it is cancelled
     const tx = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
     assert.equal(tx.status, 200, tx.text);
-    assert.equal(tx.json.estimate.initialBuyLamports, 250_000_000);
+    assert.equal(tx.json.estimate.initialBuyLamports, 0, 'tx1 buys nothing');
+    assert.deepEqual([tx.json.estimate.devBuyMode, tx.json.estimate.devBuy.requestedLamports], ['second_tx', 250_000_000], 'the buy that follows, quoted');
     assert.equal(tx.json.launchProgramsOnly, true);
     const locked = await put(owner, { initialBuySol: 0 });
     assert.equal(locked.status, 409);
@@ -465,16 +467,17 @@ test('dev buy (launch options): owner only, cap, re-prepared config with a new h
     assert.equal((await owner.call('POST', `/api/projects/${slug}/launch/abandon`, { reason: 'cancelled' })).status, 200);
     assert.equal((await put(owner, { initialBuySol: 0.5 })).status, 200);
     await drain(h.db, h.cfg, h.brain.fetchImpl);
-    // sign the mock launch with the buy: the mock ledger records it and the verification says so
+    // sign the mock launch: launched without waiting for the buy, which is step 2
     const { res } = await signAndSubmit(h, owner, slug);
     assert.equal(res.status, 200, res.text);
     await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
     assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
     const done = await owner.call('GET', `/api/projects/${slug}`);
-    const check = done.json.launch.verification.find((c) => /dev buy/.test(c.name));
-    assert.ok(check && check.ok, JSON.stringify(done.json.launch.verification));
-    assert.equal(JSON.parse(h.db.get('SELECT payload FROM mock_chain').payload).initialBuyLamports, 500_000_000);
-    assert.match(done.json.statusNote, /dev buy: 0.5 SOL, in your wallet/);
+    assert.equal(done.json.launch.verification.find((c) => /dev buy/.test(c.name)), undefined, 'tx1 is verified without the buy');
+    assert.equal(done.json.intent.dev_buy_mode, 'second_tx');
+    assert.match(done.json.statusNote, /next: your dev buy of 0.5 SOL, a second signature \(step 2\)/);
+    assert.deepEqual([done.json.devBuy.status, done.json.devBuy.lamports, done.json.devBuy.attempt], ['pending', 500_000_000, null]);
+    assert.equal(done.json.launch.dev_buy_status, 'pending');
     assert.equal((await put(owner, { initialBuySol: 0 })).status, 409, 'launched: no more changes');
   } finally { h.close(); }
 });
@@ -502,16 +505,17 @@ test('dev buy: set at preview_ready it lands in the first configuration; the har
     await drain(h.db, h.cfg, h.brain.fetchImpl);
     const cfg = (await owner.call('GET', `/api/projects/${slug}`)).json.launchConfig;
     assert.equal(cfg.initialBuyLamports, 10_000_000);
-    assert.equal(cfg.irreversible.filter((l) => /You buy/.test(l)).length, 1);
+    assert.equal(cfg.irreversible.filter((l) => /dev buy of 0.01 SOL is a second signature/.test(l)).length, 1);
     // the public view never shows the option
     const anon = h.client(user(h.db));
     assert.equal((await anon.call('GET', `/api/projects/${slug}`)).json.launchOptions, undefined);
   } finally { h.close(); }
 });
 
-test('dev buy guards: minimum, wallet balance and transaction size at PUT time; a failed simulation, a coded build error or short funds never store an intent', async () => {
+test('dev buy guards (single-transaction path): minimum and wallet balance at PUT time; a failed simulation, a coded build error or short funds never store an intent', async () => {
   const h = await harness();
   try {
+    setSetting(h.db, 'mock.devbuy_one_tx', true, 'test');               // the buy fits inside tx1 (a provider that says so)
     const { owner, ideaId, slug } = await toLaunchPrepared(h);
     const put = (body) => owner.call('PUT', `/api/projects/${slug}/launch/options`, body);
     const mock = getProvider(h.cfg, h.db);
@@ -527,15 +531,11 @@ test('dev buy guards: minimum, wallet balance and transaction size at PUT time; 
     assert.equal(poor.json.error, 'insufficient_funds');
     assert.match(poor.json.message, /your wallet holds 0.03 SOL; the dev buy of 0.5 SOL plus about 0.02 SOL of rent and fees needs 0.52 SOL/);
     assert.equal(h.db.get('SELECT initial_buy_lamports b FROM projects WHERE slug = ?', slug).b, 0, 'nothing stored');
-    // size: the provider says a bigger buy does not fit (the real check is offline in pumpfun.js)
-    fake.txBytes = async (c) => (c.initialBuyLamports > 10_000_000 ? { bytes: null, fits: false } : { bytes: 1202, fits: true });
-    const big = await put({ initialBuySol: 0.011 });
-    assert.equal(big.status, 409);
-    assert.equal(big.json.error, 'tx_too_large');
-    assert.match(big.json.message, /shorten the name or the ticker, keep the fee split to 2 recipients/);
+    // no size limit any more: a buy that does not fit tx1 is step 2
     assert.equal((await put({ initialBuySol: 0.01 })).status, 200);
     await drain(h.db, h.cfg, h.brain.fetchImpl);
     assert.equal(ideaStatus(h.db, ideaId).status, 'launch_prepared');
+    assert.equal((await owner.call('GET', `/api/projects/${slug}`)).json.launchConfig.devBuyMode, 'same_tx');
     assert.match((await owner.call('GET', `/api/projects/${slug}`)).json.launchConfig.irreversible.at(-1), /You buy 0.01 SOL of your own coin in the creation transaction, pump.fun's fees included/);
     const tx = () => owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
     const intents = () => h.db.get('SELECT COUNT(*) n FROM launch_intents').n;
@@ -572,6 +572,8 @@ test('dev buy guards: minimum, wallet balance and transaction size at PUT time; 
     await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
     assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
     assert.match(ideaStatus(h.db, ideaId).status_note, /dev buy: 0.01 SOL for 10,493,886 tokens, in your wallet/);
+    assert.equal(h.db.get('SELECT dev_buy_status s FROM launches').s, null, 'bought inside tx1: no step 2');
+    assert.equal(h.db.get('SELECT dev_buy_mode m FROM launch_intents').m, 'same_tx');
     // the plain-words helper on its own
     assert.match(simulationMessage({ simulation: { ok: false, err: 'x', logs: [] } }, 0), /unknown reason|rejected the transaction \(x\)/);
     assert.match(simulationMessage({ simulation: { ok: false, logs: ['Program log: Transfer: insufficient lamports'] } }, 2_000_000), /cannot cover the dev buy of 0.002 SOL/);
@@ -589,5 +591,146 @@ test('dev buy: a configuration that cannot be prepared leaves a plain note on th
     assert.equal(ideaStatus(h.db, ideaId).status, 'approved');
     assert.match(ideaStatus(h.db, ideaId).status_note, /could not be prepared: the dev buy of 6 SOL is above the cap of 5 SOL/);
     assert.equal(h.db.get(`SELECT status FROM jobs WHERE type = 'prepare_launch' ORDER BY created_at DESC LIMIT 1`).status, 'dead');
+  } finally { h.close(); }
+});
+
+// --- step 2: the dev buy as its own transaction (launch.js createDevBuy … confirmDevBuy) ----------------------------
+async function launchedWithBuy(h, sol = 0.01) {
+  const { owner, ideaId, slug } = await toLaunchPrepared(h);
+  assert.equal((await owner.call('PUT', `/api/projects/${slug}/launch/options`, { initialBuySol: sol })).status, 200);
+  await drain(h.db, h.cfg, h.brain.fetchImpl);
+  const { res } = await signAndSubmit(h, owner, slug);
+  assert.equal(res.status, 200, res.text);
+  await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+  assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+  return { owner, ideaId, slug };
+}
+const devbuy = (c, slug, what, body = {}) => c.call('POST', `/api/projects/${slug}/launch/devbuy/${what}`, body);
+
+test('dev buy step 2 (MOCK): launched first, then the author\'s own second signature: build, resume, cancel, sign, verify, done', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await launchedWithBuy(h, 0.01);
+    // nobody else can build it; nothing to sign before it is built
+    const other = h.client(user(h.db)); await other.signIn();
+    assert.equal((await devbuy(other, slug, 'transaction')).status, 404);
+    assert.equal((await devbuy(owner, slug, 'signed', { signed: 'x' })).json.error, 'no_intent');
+    // build: one signer (the author), its own review, the buy's amounts
+    const tx = await devbuy(owner, slug, 'transaction');
+    assert.equal(tx.status, 200, tx.text);
+    assert.deepEqual([tx.json.step, tx.json.mock, tx.json.signers, tx.json.feePayer, tx.json.launchProgramsOnly], [2, true, 1, owner.w.address, true]);
+    assert.equal(tx.json.mockSigningText, mockSigningText(tx.json.messageHash), 'the mock text for step 2 comes with it');
+    assert.deepEqual([tx.json.requestedLamports, tx.json.maxLamports, tx.json.estimate.initialBuyLamports, tx.json.estimate.initialBuyMaxLamports], [10_000_000, 10_500_000, 10_000_000, 10_500_000]);
+    let view = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    assert.deepEqual([view.status, view.devBuy.status, view.devBuy.attempt.status], ['launched', 'awaiting_signature', 'awaiting_signature'], 'still launched');
+    // a second request resumes the same one; refresh keeps it (mock: no blockhash)
+    const again = await devbuy(owner, slug, 'transaction');
+    assert.deepEqual([again.json.resumed, again.json.attemptId], [true, tx.json.attemptId]);
+    assert.equal((await devbuy(owner, slug, 'refresh')).json.attemptId, tx.json.attemptId);
+    // a signature for something else is refused, nothing changes
+    const bad = await devbuy(owner, slug, 'signed', { signed: owner.w.signText(mockSigningText('0'.repeat(64))) });
+    assert.deepEqual([bad.status, bad.json.error], [400, 'bad_signed_tx']);
+    // the wallet declines: back to pending; a new one is built (the mock has no window to wait for)
+    assert.equal((await devbuy(owner, slug, 'abandon', { reason: 'rejected' })).status, 200);
+    assert.equal(h.db.get('SELECT dev_buy_status s FROM launches').s, 'pending');
+    const tx2 = await devbuy(owner, slug, 'transaction');
+    assert.equal(tx2.status, 200, tx2.text);
+    assert.notEqual(tx2.json.attemptId, tx.json.attemptId);
+    // signed by the author alone -> submitted -> confirmed -> verified -> done
+    const sig = owner.w.signText(mockSigningText(tx2.json.messageHash));
+    const sent = await devbuy(owner, slug, 'signed', { signed: sig });
+    assert.equal(sent.status, 200, sent.text);
+    assert.equal((await devbuy(owner, slug, 'signed', { signed: sig })).status, 409, 'not twice');
+    assert.equal(h.db.get('SELECT dev_buy_status s FROM launches').s, 'submitted');
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    view = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    assert.deepEqual([view.status, view.devBuy.status, view.devBuy.attempt.status], ['launched', 'done', 'done']);
+    assert.ok(view.devBuy.attempt.verification.every((c) => c.ok), JSON.stringify(view.devBuy.attempt.verification));
+    assert.match(view.statusNote, /MOCK dev buy: 0.01 SOL, in your wallet/);
+    assert.equal((await devbuy(owner, slug, 'transaction')).json.error, 'bad_state', 'done: nothing more to buy');
+    assert.equal((await devbuy(owner, slug, 'skip')).status, 409);
+    assert.equal(h.db.get(`SELECT COUNT(*) n FROM dev_buy_attempts WHERE status = 'done'`).n, 1);
+    // the public view never shows the attempt
+    const anon = h.client(user(h.db));
+    assert.equal((await anon.call('GET', `/api/projects/${slug}`)).json.devBuy, undefined);
+    assert.ok(ideaId);
+  } finally { h.close(); }
+});
+
+test('dev buy step 2: fails on-chain (price moved) -> try again or skip; a preflight rejection; skip is final; a launch without a buy has no step 2', async () => {
+  const h = await harness();
+  try {
+    const { owner, ideaId, slug } = await launchedWithBuy(h, 0.02);
+    // the network rejects it on-chain: failed, the launch stays launched, the author may try again
+    setSetting(h.db, 'mock.behaviour', 'reject_on_chain', 'test');
+    let tx = await devbuy(owner, slug, 'transaction');
+    assert.equal((await devbuy(owner, slug, 'signed', { signed: owner.w.signText(mockSigningText(tx.json.messageHash)) })).status, 200);
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    let view = (await owner.call('GET', `/api/projects/${slug}`)).json;
+    assert.deepEqual([view.status, view.devBuy.status, view.devBuy.attempt.status], ['launched', 'failed', 'failed']);
+    assert.match(view.statusNote, /dev buy failed on-chain.*nothing was bought but the network fee. Try again, or skip it/);
+    // try again: a preflight rejection this time (never forwarded)
+    setSetting(h.db, 'mock.behaviour', 'preflight_reject', 'test');
+    tx = await devbuy(owner, slug, 'transaction');
+    assert.equal(tx.status, 200, tx.text);
+    const rej = await devbuy(owner, slug, 'signed', { signed: owner.w.signText(mockSigningText(tx.json.messageHash)) });
+    assert.deepEqual([rej.status, rej.json.error], [400, 'rejected']);
+    assert.match(rej.json.message, /rejected the dev buy before it ran/);
+    assert.equal(h.db.get('SELECT dev_buy_status s FROM launches').s, 'failed');
+    // skip: final, a waiting transaction is cancelled with it
+    setSetting(h.db, 'mock.behaviour', 'ok', 'test');
+    tx = await devbuy(owner, slug, 'transaction');
+    const skip = await devbuy(owner, slug, 'skip');
+    assert.deepEqual([skip.status, skip.json.status], [200, 'skipped']);
+    assert.equal(h.db.get(`SELECT status FROM dev_buy_attempts WHERE id = ?`, tx.json.attemptId).status, 'cancelled');
+    assert.equal((await devbuy(owner, slug, 'transaction')).json.error, 'bad_state');
+    assert.match(ideaStatus(h.db, ideaId).status_note, /dev buy skipped by the author; nothing was bought/);
+    assert.equal(ideaStatus(h.db, ideaId).status, 'launched');
+    // a launch with no buy has no step 2
+    const h2 = await harness();
+    try {
+      const { owner: o2, slug: s2 } = await toLaunchPrepared(h2);
+      const { res } = await signAndSubmit(h2, o2, s2);
+      assert.equal(res.status, 200);
+      await later(5000, () => drain(h2.db, h2.cfg, h2.brain.fetchImpl));
+      assert.equal((await devbuy(o2, s2, 'transaction')).json.error, 'no_dev_buy');
+      assert.equal((await o2.call('GET', `/api/projects/${s2}`)).json.devBuy, null);
+    } finally { h2.close(); }
+  } finally { h.close(); }
+});
+
+test('dev buy step 2: tx1\'s funds check counts the buy that follows; an open earlier tx2 must expire first; a landed one is verified instead; the sweep re-queues', async () => {
+  const h = await harness();
+  try {
+    const { owner, slug } = await toLaunchPrepared(h);
+    assert.equal((await owner.call('PUT', `/api/projects/${slug}/launch/options`, { initialBuySol: 0.01 })).status, 200);
+    await drain(h.db, h.cfg, h.brain.fetchImpl);
+    const mock = getProvider(h.cfg, h.db), fake = { ...mock };
+    setProviderForTests(h.db, fake, h.cfg);
+    // tx1 costs 0.015 SOL, the buy after it 0.01: a 0.02 SOL wallet cannot do both
+    fake.prepare = async (c, o) => { const b = await mock.prepare(c, o); return { ...b, estimate: { ...b.estimate, networkFeeLamports: 10_000, accountsLamports: 15_000_000, signerBalanceLamports: 20_000_000 } }; };
+    const poor = await owner.call('POST', `/api/projects/${slug}/launch/transaction`, {});
+    assert.deepEqual([poor.status, poor.json.error], [409, 'insufficient_funds']);
+    assert.match(poor.json.message, /the dev buy of 0.01 SOL plus 0.01501 SOL of rent and fees needs 0.02501 SOL/);
+    fake.prepare = mock.prepare;
+    const { res } = await signAndSubmit(h, owner, slug);
+    assert.equal(res.status, 200);
+    await later(5000, () => drain(h.db, h.cfg, h.brain.fetchImpl));
+    // an abandoned tx2 whose window is still open blocks a new one; one that landed after all is verified instead
+    const first = await devbuy(owner, slug, 'transaction');
+    assert.equal((await devbuy(owner, slug, 'abandon')).status, 200);
+    fake.devBuyLandCheck = async () => ({ state: 'open', blocksLeft: 100 });
+    const wait = await devbuy(owner, slug, 'transaction');
+    assert.deepEqual([wait.status, wait.json.error], [409, 'previous_open']);
+    assert.match(wait.json.message, /could still land for about 40 more seconds/);
+    fake.devBuyLandCheck = async () => ({ state: 'landed', signature: 'MOCKlanded' });
+    const landed = await devbuy(owner, slug, 'transaction');
+    assert.deepEqual([landed.status, landed.json.error], [409, 'previous_landed']);
+    assert.deepEqual({ ...h.db.get('SELECT status, tx_signature FROM dev_buy_attempts WHERE id = ?', first.json.attemptId) }, { status: 'submitted', tx_signature: 'MOCKlanded' });
+    assert.equal(h.db.get('SELECT dev_buy_status s FROM launches').s, 'submitted');
+    // its confirm job gave up: the sweep queues a new one
+    h.db.run(`UPDATE jobs SET status = 'dead' WHERE type = 'confirm_dev_buy'`);
+    assert.equal(sweepSubmitted(h.db), 1);
+    assert.equal(h.db.get(`SELECT COUNT(*) n FROM jobs WHERE type = 'confirm_dev_buy' AND status = 'queued'`).n, 1);
   } finally { h.close(); }
 });

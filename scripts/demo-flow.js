@@ -12,6 +12,7 @@ import { loadConfig, ROOT } from '../src/config.js';
 import { openDb } from '../src/db.js';
 import { b58encode } from '../src/util.js';
 import { mockSigningText } from '../src/launch/mock.js';
+import { eventAuthorities } from '../src/launch/pumpfun.js';
 import { devnetKeypair } from './devnet-wallet.js';
 
 const require = createRequire(import.meta.url);
@@ -46,6 +47,14 @@ function signDetached(msg, kp) {
   return sign(null, msg, createPrivateKey({ key: pkcs8, format: 'der', type: 'pkcs8' }));
 }
 
+/** Phantom-safe: the event authorities are written into the message (static keys), never loaded from a lookup table
+ *  (tx2 has no table at all; it does not touch the pump-fees program's event authority). */
+function layoutOf(txBase64) {
+  const m = web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message, statics = m.staticAccountKeys.map(String);
+  const [pump, pumpFees] = eventAuthorities().map(String);
+  return { bytes: Buffer.from(txBase64, 'base64').length, lookupTables: m.addressTableLookups.length, signers: m.header.numRequiredSignatures,
+    instructions: m.compiledInstructions.length, pumpEventAuthorityStatic: statics.includes(pump), pumpFeesEventAuthorityStatic: statics.includes(pumpFees) };
+}
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, what, timeoutMs = 120_000) {
   const t0 = Date.now();
@@ -111,7 +120,7 @@ step('launch configuration ready for review', { provider: c.providerLabel, netwo
   supply: c.token.totalSupplyBase, decimals: c.token.decimals, initialBuyLamports: c.initialBuyLamports, recipients: c.feeSharing.recipients, irreversible: c.irreversible, tradingFees: c.tradingFees });
 
 const tx = await submitter.call('POST', `/api/projects/${slug}/launch/transaction`, {});
-step('transaction built (launch intent persisted before signing)', { mint: tx.mint, mock: tx.mock, estimate: tx.estimate, bytes: tx.txBytes });
+step('transaction built (launch intent persisted before signing)', { mint: tx.mint, mock: tx.mock, estimate: tx.estimate, bytes: tx.txBytes, ...(tx.mock ? {} : { layout: layoutOf(tx.txBase64) }) });
 let signed;
 if (tx.mock) {
   signed = submitter.signText(mockSigningText(tx.messageHash));
@@ -130,6 +139,28 @@ step('signed by the test wallet and submitted', sub);
 p = await until(async () => { const x = await submitter.call('GET', `/api/projects/${slug}`); return ['launched', 'launch_prepared', 'failed'].includes(x.status) ? x : null; }, 'confirmation', 240_000);
 step(`result: ${p.status}`, { note: p.statusNote, launch: p.launch && { mint: p.launch.mint, tx: p.launch.tx_signature, network: p.launch.network, provider: p.launch.provider,
   checks: p.launch.verification, explorer: p.launch.explorerTx } });
+// step 2: the dev buy as its own transaction, signed by the author alone (DEMO_SKIP_DEV_BUY=1 skips it instead)
+if (p.status === 'launched' && p.devBuy?.status === 'pending') {
+  if (process.env.DEMO_SKIP_DEV_BUY === '1') {
+    step('dev buy skipped', await submitter.call('POST', `/api/projects/${slug}/launch/devbuy/skip`, {}));
+  } else {
+    const b = await submitter.call('POST', `/api/projects/${slug}/launch/devbuy/transaction`, {});
+    step('step 2: dev buy transaction built (quoted on the live curve)', { attempt: b.attemptId, mock: b.mock, estimate: b.estimate, bytes: b.txBytes,
+      programs: b.programs?.map((x) => `${x.name}${x.direct ? '' : ' (inside)'}`), signers: b.signers, ...(b.mock ? {} : { layout: layoutOf(b.txBase64) }) });
+    let signedBuy;
+    if (b.mock) signedBuy = submitter.signText(mockSigningText(b.messageHash));
+    else {
+      const fresh = await submitter.call('POST', `/api/projects/${slug}/launch/devbuy/refresh`, {});
+      step('step 2: refreshed right before signing (same tokens, same cap)', { refreshed: fresh.refreshed === true, sameTokens: fresh.tokensBase === b.tokensBase, bytes: fresh.txBytes });
+      const vt = web3.VersionedTransaction.deserialize(Buffer.from(fresh.txBase64, 'base64'));
+      vt.sign([devnetKeypair(process.env.DEMO_WALLET || 'demo-submitter')]);
+      signedBuy = Buffer.from(vt.serialize()).toString('base64');
+    }
+    step('step 2: signed by the test wallet alone and submitted', await submitter.call('POST', `/api/projects/${slug}/launch/devbuy/signed`, { signed: signedBuy }));
+    p = await until(async () => { const x = await submitter.call('GET', `/api/projects/${slug}`); return ['done', 'failed', 'pending'].includes(x.devBuy?.status) ? x : null; }, 'the dev buy', 240_000);
+    step(`step 2 result: ${p.devBuy.status}`, { note: p.statusNote, attempt: p.devBuy.attempt });
+  }
+}
 const ledger = await submitter.call('GET', '/api/ledger');
 step('public fee ledger entry', ledger.projects.find((x) => x.slug === slug)?.ledger);
 writeTranscript();

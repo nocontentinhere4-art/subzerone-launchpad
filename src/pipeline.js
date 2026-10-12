@@ -15,7 +15,7 @@ import { logoPng, bannerSvg } from './art.js';
 import { bannerCredit } from './site.js';
 import { buildSiteVersion, setLiveVersion } from './site.js';
 import { planAccount, publishPost } from './x.js';
-import { buildLaunchConfig, configHash, confirmIntent, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
+import { buildLaunchConfig, configHash, confirmIntent, confirmDevBuy, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
 import { refreshCoinStats } from './coin-stats.js';
 import { id, now, sha256, parseJson } from './util.js';
@@ -205,6 +205,10 @@ export const handlers = {
     return confirmIntent(ctx.db, ctx.cfg, ctx.payload.intentId, ctx.progress);
   },
 
+  async confirm_dev_buy(ctx) {
+    return confirmDevBuy(ctx.db, ctx.cfg, ctx.payload.attemptId, ctx.progress);
+  },
+
   async reconcile_fees(ctx) {
     return reconcileFees(ctx.db, ctx.cfg, ctx.job.project_id);
   },
@@ -238,6 +242,8 @@ export function onDead(db, job) {
     transition(db, job.idea_id, ['generating', 'selected'], 'failed', { note: `building failed: ${why}` });
   } else if (job.type === 'confirm_launch') {
     note(db, job.idea_id, 'not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
+  } else if (job.type === 'confirm_dev_buy') {
+    note(db, job.idea_id, 'the dev buy is not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
   } else if (job.type === 'prepare_launch' && idea.status === 'approved') {
     // the author reads this on the Launch tab (a dev buy that does not fit, a cap lowered since, …) and changes the option
     note(db, job.idea_id, `the launch configuration could not be prepared: ${why}`, { actor: 'system' });

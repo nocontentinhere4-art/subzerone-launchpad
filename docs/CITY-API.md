@@ -551,39 +551,67 @@ Fields:
 
 #### Launch options: the dev buy (`GET /api/projects/:slug` → `launchOptions`, `PUT …/launch/options`)
 
-The author may buy some of their own coin **in the same transaction** that creates it (pump.fun `buy_v2` after
-`create_v2` and the locked fee split). The room PC's Launch tab shows the field at step 4, above "Prepare the
-transaction". Code: `setInitialBuy()` in `src/launch.js`, `launchInstructions()` in `src/launch/pumpfun.js`.
+The author may buy some of their own coin **right after it is created**, with a second signature (pump.fun ATA +
+`buy_v2` on the live curve). Every transaction handed to the wallet is in the Phantom-safe layout, where creation +
+split + buy does not fit 1232 bytes, so the launch is two transactions (see docs/PUMPFUN.md). The room PC's Launch tab
+shows the amount field from the approve step on, and the stepper gains a "Dev buy" step after "Launch". Code:
+`setInitialBuy()`, `createDevBuy()` … `confirmDevBuy()` in `src/launch.js`; `devBuyInstructions()` and
+`prepareDevBuy()` in `src/launch/pumpfun.js`.
 
 - `launchOptions` (owner and staff only, absent for everyone else):
   `{ "initialBuyLamports": 0, "maxInitialBuyLamports": 5000000000, "locked": false, "editable": true }`.
-  `locked` is true while a transaction exists (prepared / awaiting signature / submitted / confirmed); `editable`
-  is true for the owner while the idea is `preview_ready`, `approved` or `launch_prepared` and nothing is locked.
+  `locked` is true while a launch transaction exists (prepared / awaiting signature / submitted / confirmed);
+  `editable` is true for the owner while the idea is `preview_ready`, `approved` or `launch_prepared` and nothing is
+  locked.
 - `PUT /api/projects/:slug/launch/options` body `{ "initialBuySol": 0.25 }` (0 = no buy; a number or a numeric
   string). Answers `{ ok, initialBuyLamports, status, reprepared, maxInitialBuyLamports }`. Errors:
   `400 bad_initial_buy` (negative, not a number, above the cap, or between 0 and the 0.001 SOL minimum),
   `400 insufficient_funds` (the wallet cannot cover the buy plus a 0.02 SOL reserve for rent and fees; the message
   says what it holds and needs), `404` (not the owner), `409 intent_exists` (a transaction exists: cancel it with
-  `…/launch/abandon` first), `409 tx_too_large` (with the buy the creation transaction would exceed 1232 bytes:
-  shorten the name/ticker or keep the split to 2 recipients), `409 already_launched`, `409 bad_state` (any other
-  stage).
+  `…/launch/abandon` first), `409 already_launched`, `409 bad_state` (any other stage). There is no size limit any
+  more: a buy that does not fit the creation transaction is step 2.
 - The cap is `MAX_INITIAL_BUY_SOL` (default 5) and never above **5 SOL**; a non-zero buy is at least **0.001 SOL**.
-- `POST …/launch/transaction` can answer, without storing anything: `409 simulation_failed` (the network simulation
-  rejected it; the message is a plain sentence, funds first), `409 insufficient_funds` (balance below fee + rent +
-  buy), `409 tx_too_large`, `409 buy_completes_curve` (the buy would take the whole curve), `409 buy_too_small`.
-  The author stays at `launch_prepared` and changes the option.
 - Changing it while `launch_prepared` throws the reviewed configuration away and prepares it again
-  (`launch_prepared → approved → launch_prepared`, a few seconds): the `launchConfig` the author reviews, its hash and
-  the transaction always agree. The configuration then carries `initialBuyLamports`, `initialBuySlippageBps` (500) and
-  an extra line in `irreversible` ("You buy X SOL of your own coin in the creation transaction …").
-- On `POST …/launch/transaction` the `estimate` carries `initialBuyLamports` (the real cost of the tokens, pump.fun's
-  fees included; may differ from the request by a lamport), `initialBuyRequestedLamports`, `initialBuyMaxLamports`
-  (the cap signed in the transaction: cost + 5%) and `initialBuyTokensBase`; `accountsLamports` is the rent alone
-  (the simulation's balance change minus the buy and minus the network fee), so fee + rent + buy is the total. The review's `programs`
-  gain `Associated Token Account` (direct: the author's own token account is created) and the token programs passed
-  inside; `launchProgramsOnly` stays true. The mock provider records the amount in its mock ledger and buys nothing.
-- After a verified launch the verification checks include `dev buy landed: exactly the reviewed amount of tokens in
-  the author wallet` (the intent's `buy_tokens_base`), and the `launched` status note says what was bought.
+  (`launch_prepared → approved → launch_prepared`, a few seconds). The configuration carries `initialBuyLamports`,
+  `initialBuySlippageBps` (500), `devBuyMode` (`"second_tx"`, or `"same_tx"` only if the buy fits inside the
+  creation transaction with room for the wallet's guards) and an `irreversible` line ("Your dev buy of X SOL is a
+  second signature right after the launch … If the price moves more than 5% first, it does not go through and you
+  keep your SOL. You can also skip it.").
+
+**Step 1 (`POST …/launch/transaction`, `devBuyMode: "second_tx"`).** The launch transaction buys nothing: `estimate`
+has `devBuyMode: "second_tx"`, `initialBuyLamports: 0` and `devBuy: { mode, requestedLamports, lamports, maxLamports,
+tokensBase, quotedAt: "fresh curve" }` (what step 2 costs if nobody buys first); the balance check counts it. It can
+also answer, storing nothing: `409 simulation_failed`, `409 insufficient_funds`, `409 buy_completes_curve`,
+`409 buy_too_small`. The intent row shows `dev_buy_mode`. After it is finalized and verified the project is
+`launched` (the buy is never awaited) and the owner view carries:
+
+```json
+"devBuy": { "status": "pending", "lamports": 10000000, "slippageBps": 500,
+            "attempt": null | { "id", "status", "signature", "error", "costLamports", "maxLamports", "tokensBase",
+                                "verification": [ … ], "explorerTx", "updatedAt" } }
+```
+
+`status`: `pending` (waiting for the author) · `awaiting_signature` · `submitted` · `done` · `failed` (try again or
+skip; `attempt.error` says why, pump error 6002 = the price moved past the cap) · `skipped`. `launch.dev_buy_status`
+is the same value on the public view. `devBuy` is `null` for a launch without a separate buy.
+
+**Step 2** (owner only, same shapes as the launch calls):
+
+- `POST …/launch/devbuy/transaction` → `{ attemptId, step: 2, mint, txBase64, messageHash, estimate, lastValidBlockHeight,
+  mock, txBytes, requestedLamports, costLamports, maxLamports, tokensBase, network, feePayer, programs,
+  accountsWritable, signers: 1, launchProgramsOnly, mockSigningText? }`, built fresh on the live curve; a second call
+  resumes it (`resumed: true`). Errors: `409 not_launched`, `409 no_dev_buy`, `409 bad_state` (done/skipped/in flight),
+  `409 previous_open` (an earlier tx2 could still land: wait the seconds it says), `409 previous_landed`,
+  `409 landed_unverified`, `409 simulation_failed` (in plain words; "the price moved more than 5% …"),
+  `409 insufficient_funds`, `409 no_curve`, `409 curve_complete`, `409 buy_completes_curve`, `503 paused`.
+- `POST …/launch/devbuy/refresh` right before the wallet opens: the same tokens and cap, a fresh blockhash. A `409`
+  here cancels the attempt (the price moved past the cap): build it again.
+- `POST …/launch/devbuy/signed` `{ signed }` (base64 transaction; mock: base58 signature of `mockSigningText`):
+  `{ signature, uncertain }`; `400 bad_signed_tx`, `400 rejected` (preflight; nothing bought), `409 no_intent`.
+- `POST …/launch/devbuy/abandon` `{ reason: "rejected" | "cancelled" }` and `POST …/launch/devbuy/skip` (final).
+- The result arrives through `GET /api/projects/:slug` (`devBuy`, and the status note "dev buy: 0.01 SOL for 10,493,886
+  tokens, in your wallet"). Verification: the author's account gained **exactly** `tokensBase` (exact-out) and the SOL
+  the buy took is within `maxLamports`.
 
 #### Framing: what the city may put in an iframe
 

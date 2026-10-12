@@ -8,16 +8,20 @@ import { enqueue, Permanent, Defer } from './jobs.js';
 import { transition, note } from './states.js';
 import { currentVersion, validateReceivingWallet } from './ideas.js';
 import { makeMockProvider } from './launch/mock.js';
-import { makePumpfunProvider, TOO_LARGE_NOTE } from './launch/pumpfun.js';
+import { makePumpfunProvider } from './launch/pumpfun.js';
+import { mockSigningText } from './launch/mock.js';
 import { id, now, HttpError, parseJson, isSolanaAddress, encrypt, decrypt } from './util.js';
 
 export const MAX_RECIPIENTS = 8;
 let cached = null;
 
 // --- the author's dev buy ---------------------------------------------------------------------------------------------
-// An optional buy of the author's own coin inside the creation transaction (pump.fun buy_v2 after create_v2 and the
-// fee split). Paid by the author's wallet, tokens land in the author's wallet. Hard cap 5 SOL; MAX_INITIAL_BUY_SOL
-// can only lower it. The quote comes from the SDK at a fresh curve; the transaction caps the cost at quote + 5%.
+// An optional buy of the author's own coin right at the launch (pump.fun ATA + buy_v2). Paid by the author's wallet,
+// tokens land in the author's wallet. Hard cap 5 SOL; MAX_INITIAL_BUY_SOL can only lower it; the transaction caps the
+// cost at quote + 5%. Every transaction handed to the wallet is in the Phantom-safe layout, where create + split + buy
+// does not fit 1232 bytes: the buy is then a SECOND transaction (devBuyMode 'second_tx', step 2 below: tx1 creates the
+// coin, is confirmed and verified -> "launched"; tx2 = ATA + buy_v2, quoted on the live curve, signed by the author
+// alone). It stays inside tx1 ('same_tx') only when that fits Phantom-safe.
 export const LAMPORTS_PER_SOL = 1_000_000_000;
 export const HARD_MAX_INITIAL_BUY_SOL = 5;
 export const INITIAL_BUY_SLIPPAGE_BPS = 500;
@@ -62,19 +66,18 @@ async function checkFunds(provider, wallet, lamports) {
 }
 
 /**
- * Before a dev buy is stored: would the creation transaction still fit in 1232 bytes? Offline (provider.txBytes),
- * with the project's name and ticker, a metadata URI of the real length and the current fee split.
+ * Where the dev buy goes: inside the creation transaction only when create + split + buy fits ONE Phantom-safe
+ * transaction (provider.devBuyFitsOneTx, offline), else its own second transaction. null without a buy.
  */
-async function checkTxSize(db, cfg, provider, project, lamports, uri = null) {
-  if (!(lamports > 0) || typeof provider?.txBytes !== 'function') return null;
-  const alloc = db.get(`SELECT recipients_json FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved') ORDER BY version DESC LIMIT 1`, project.id);
-  const recipients = alloc ? parseJson(alloc.recipients_json) : [];
-  const shareholders = recipients.length >= 2 ? recipients.map(({ wallet, bps }) => ({ wallet, bps })) : null;
-  const size = await provider.txBytes({ name: project.name, symbol: project.ticker, uri: uri || `${cfg.publicOrigin}/meta/${project.slug}/${'0'.repeat(16)}.json`,
-    initialBuyLamports: lamports, feeSharing: { mode: 'sharing_config', shareholders: shareholders || [{ wallet: project.id, bps: 8000 }, { wallet: cfg.sub01FeeWallet || project.id, bps: 2000 }] } });
-  if (!size.fits) throw new HttpError(409, 'tx_too_large', `${TOO_LARGE_NOTE}${size.bytes ? ` (${size.bytes} bytes)` : ''}`);
-  return size.bytes;
+export async function devBuyModeFor(provider, shape) {
+  if (!((Number(shape.initialBuyLamports) || 0) > 0)) return null;
+  if (typeof provider?.devBuyFitsOneTx !== 'function') return 'second_tx';
+  return (await provider.devBuyFitsOneTx(shape)) ? 'same_tx' : 'second_tx';
 }
+const shapeOf = (config, initialBuyLamports = Number(config.initialBuyLamports) || 0) => ({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
+  initialBuyLamports, feeSharing: { mode: config.feeSharing.mode, shareholders: config.feeSharing.shareholders } });
+// the plain words before step 1 (configuration, review card): what a second signature means for the author
+export const devBuyStepNote = (lamports) => `Your dev buy of ${solString(lamports)} SOL is a second signature right after the launch, at the price then (pump.fun's fees included; the tokens go to your wallet). If the price moves more than ${INITIAL_BUY_SLIPPAGE_BPS / 100}% first, it does not go through and you keep your SOL. You can also skip it.`;
 
 /**
  * Owner sets the dev buy. Allowed while the idea is preview_ready / approved / launch_prepared and no transaction
@@ -90,8 +93,7 @@ export async function setInitialBuy(db, cfg, project, idea, wallet, lamports) {
   }
   if (!INITIAL_BUY_STATES.includes(idea.status)) throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
   const provider = getProvider(cfg, db);
-  await checkTxSize(db, cfg, provider, project, lamports);              // 409 tx_too_large
-  await checkFunds(provider, wallet, lamports);                          // 400 insufficient_funds
+  await checkFunds(provider, wallet, lamports);                          // 400 insufficient_funds (no size limit: a buy that does not fit is step 2)
   const t = now();
   const changed = lamports !== Number(project.initial_buy_lamports ?? 0);
   let status = idea.status;
@@ -229,10 +231,14 @@ export async function buildLaunchConfig(db, cfg, project) {
     'The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.',
   ];
   if (mode === 'sharing_config') irreversible.push('The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
+  let devBuyMode = null;
   if (initialBuyLamports > 0) {
     if (initialBuyLamports < MIN_INITIAL_BUY_LAMPORTS) throw new Permanent(`the dev buy is at least ${solString(MIN_INITIAL_BUY_LAMPORTS)} SOL, or 0 for none`);
-    try { await checkTxSize(db, cfg, provider, project, initialBuyLamports, uri); } catch (e) { throw e instanceof HttpError ? new Permanent(e.message) : e; }
-    irreversible.push(`You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`);
+    devBuyMode = await devBuyModeFor(provider, { name: project.name, symbol: project.ticker, uri, initialBuyLamports,
+      feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })) } });
+    irreversible.push(devBuyMode === 'same_tx'
+      ? `You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`
+      : devBuyStepNote(initialBuyLamports));
   }
   const config = {
     version: 'launch-config/1',
@@ -241,7 +247,7 @@ export async function buildLaunchConfig(db, cfg, project) {
       totalSupplyBase: params.totalSupplyBase, tokenProgram: params.tokenProgram,
       authorities: { mint: 'none after creation', freeze: 'none' } },
     signer, payer: signer, creator: mode === 'sharing_config' ? 'per-mint sharing config (holds the split)' : signer,
-    initialBuyLamports, initialBuySlippageBps: initialBuyLamports > 0 ? INITIAL_BUY_SLIPPAGE_BPS : 0,
+    initialBuyLamports, initialBuySlippageBps: initialBuyLamports > 0 ? INITIAL_BUY_SLIPPAGE_BPS : 0, devBuyMode,
     feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })), recipients, locked: mode === 'sharing_config',
       allocationId: alloc.id, allocationVersion: alloc.version },
     tradingFees: params.fees,
@@ -284,7 +290,9 @@ export async function createIntent(db, cfg, project, wallet) {
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
   const buyLamports = Number(config.initialBuyLamports) || 0;
-  const built = await buildChecked(provider, config, buyLamports);
+  // a configuration from before the two-step launch has no devBuyMode: decided now, the same way
+  const devBuyMode = buyLamports > 0 ? (config.devBuyMode || await devBuyModeFor(provider, shapeOf(config))) : null;
+  const built = await buildChecked(provider, config, buyLamports, { devBuyMode });
   const est = built.estimate || {};
   const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
@@ -293,11 +301,11 @@ export async function createIntent(db, cfg, project, wallet) {
     // the mint key signs after the wallet (verifySigned): kept encrypted until the broadcast, then wiped
     const mintSecretEnc = built.mintSecret ? encrypt(cfg.encryptionKey, built.mintSecret) : null;
     db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint, mint_secret_enc,
-              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, estimate_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?)`,
+              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, estimate_json, dev_buy_mode, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?, ?)`,
     intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
     config.feeSharing.allocationId, built.mint, mintSecretEnc, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
-    buyLamports > 0 && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, JSON.stringify(built.estimate ?? null), t, t);
+    devBuyMode === 'same_tx' && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, JSON.stringify(built.estimate ?? null), devBuyMode, t, t);
     transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
   });
@@ -318,13 +326,15 @@ async function buildChecked(provider, config, buyLamports, opts = {}) {
   const est = built.estimate || {};
   // every simulation is logged (Phantom support, 2026-10-12: show that only transactions that simulate cleanly reach the wallet)
   log.info('launch simulation', { mint: built.mint, ok: est.simulation?.ok ?? null, err: est.simulation?.err ?? null,
-    units: est.simulation?.unitsConsumed ?? null, bytes: built.txBytes ?? null, refresh: Boolean(opts.mintSecret) });
+    units: est.simulation?.unitsConsumed ?? null, bytes: built.txBytes ?? null, refresh: Boolean(opts.mintSecret),
+    phantomSafe: est.phantomSafe ?? null, devBuyMode: est.devBuyMode ?? null });
   if (!est.simulation || est.simulation.ok !== true) {
     if (est.simulation?.logs) log.warn('launch simulation logs', { mint: built.mint, logs: est.simulation.logs });
     throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));   // nothing goes to the wallet
   }
   if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
-    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
+    // a second-transaction buy is counted too: the author asked for both, and step 2 right after needs that SOL
+    const extra = est.networkFeeLamports + est.accountsLamports, buy = (Number(est.initialBuyLamports) || 0) + (Number(est.devBuy?.lamports) || 0);
     if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
   }
   return built;
@@ -345,7 +355,8 @@ export async function refreshIntent(db, cfg, project, wallet) {
   if (provider.isMock || !intent.mint_secret_enc) return current();          // the mock has no blockhash; no key → sign what was reviewed
   let mintSecret;
   try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { return current(); }
-  const built = await buildChecked(provider, config, Number(config.initialBuyLamports) || 0, { mintSecret });
+  const buy = Number(config.initialBuyLamports) || 0;
+  const built = await buildChecked(provider, config, buy, { mintSecret, devBuyMode: buy > 0 ? (intent.dev_buy_mode || 'same_tx') : null });
   mintSecret = null;
   if (built.mint !== intent.mint) throw new HttpError(500, 'mint_mismatch', 'the refreshed transaction is not for the same mint');
   const before = review(provider, intent.tx_base64, intent.network, intent.signer_wallet), after = review(provider, built.txBase64, built.network ?? intent.network, intent.signer_wallet);
@@ -360,18 +371,39 @@ export async function refreshIntent(db, cfg, project, wallet) {
 
 /** A failed preparation simulation in one plain sentence: funds first, else the last useful program log line. */
 export function simulationMessage(est, buyLamports = 0) {
-  const logs = Array.isArray(est.simulation?.logs) ? est.simulation.logs.map(String) : [];
-  const text = [est.simulation?.err, ...logs].filter(Boolean).join('\n');
-  if (/insufficient (lamports|funds)|InsufficientFunds|Transfer: insufficient/i.test(text)) {
+  const { text, line } = simulationText(est);
+  if (FUNDS_RE.test(text)) {
     const bal = est.signerBalanceLamports;
     return bal != null ? `the network simulation says your wallet cannot cover it: ${fundsMessage(bal, buyLamports, LAUNCH_COST_RESERVE_LAMPORTS, false)}`
       : `the network simulation says your wallet cannot cover the dev buy of ${solString(buyLamports)} SOL plus rent and fees`;
   }
+  return `the network simulation rejected the transaction (${line}); nothing was created. Check the dev buy and your balance, then try again`;
+}
+const FUNDS_RE = /insufficient (lamports|funds)|InsufficientFunds|Transfer: insufficient/i;
+// pump's TooMuchSolRequired (6002 = 0x1772): buy_v2 would cost more than its max_sol_cost
+const PRICE_MOVED_RE = /TooMuchSolRequired|custom program error: 0x1772|"Custom":6002/i;
+/** The simulation's error and logs as one text, and the most useful line of it. */
+function simulationText(est) {
+  const logs = Array.isArray(est.simulation?.logs) ? est.simulation.logs.map(String) : [];
+  const text = [est.simulation?.err, ...logs].filter(Boolean).join('\n');
   const keyword = /error|failed|custom program|insufficient|exceeded/i, rev = [...logs].reverse();
   // the program's own words first ("Program log: …"), the runtime's "Program X failed: …" line otherwise
   const useful = rev.find((l) => /^Program log: /.test(l) && keyword.test(l)) || rev.find((l) => keyword.test(l) && !/^Program .* (consumed|success)/.test(l));
-  const line = String(useful || logs.at(-1) || est.simulation?.err || 'unknown reason').replace(/^Program log: /, '').slice(0, 200);
-  return `the network simulation rejected the transaction (${line}); nothing was created. Check the dev buy and your balance, then try again`;
+  return { text, line: String(useful || logs.at(-1) || est.simulation?.err || 'unknown reason').replace(/^Program log: /, '').slice(0, 200) };
+}
+// what step 2 needs on top of the buy: the network fee and the author's new Token-2022 account (~0.0021 SOL), with margin
+export const DEV_BUY_RESERVE_LAMPORTS = 3_000_000;
+export const PRICE_MOVED_NOTE = `the price moved more than ${INITIAL_BUY_SLIPPAGE_BPS / 100}% since the quote, so the dev buy would cost more than its cap: it did not go through and you keep your SOL. Try again at the new price, or skip it`;
+/** A failed dev-buy (tx2) simulation in one plain sentence. */
+export function devBuySimulationMessage(est, buyLamports) {
+  const { text, line } = simulationText(est);
+  if (PRICE_MOVED_RE.test(text)) return PRICE_MOVED_NOTE;
+  if (FUNDS_RE.test(text)) {
+    const bal = est.signerBalanceLamports;
+    return bal != null ? `the network simulation says your wallet cannot cover the dev buy: ${fundsMessage(bal, buyLamports, DEV_BUY_RESERVE_LAMPORTS, false)}`
+      : `the network simulation says your wallet cannot cover the dev buy of ${solString(buyLamports)} SOL plus the network fee and the token account`;
+  }
+  return `the network simulation rejected the dev buy (${line}); nothing was bought. Try again, or skip it`;
 }
 
 /** Review-before-sign: what the wallet will show, read from the built transaction (provider.reviewOf). */
@@ -491,16 +523,18 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
     });
     return { state: 'verification_failed', checks: v.checks };
   }
+  const buy = Number(config.initialBuyLamports) || 0;
+  const step2 = buy > 0 && intent.dev_buy_mode === 'second_tx';           // the dev buy waits for its own signature
   db.tx(() => {
     db.run(`UPDATE launch_intents SET status = 'confirmed', updated_at = ? WHERE id = ?`, now(), intent.id);
-    db.run(`INSERT INTO launches (project_id, intent_id, provider, network, mint, tx_signature, slot, block_time, verification, verified_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
-    intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now());
+    db.run(`INSERT INTO launches (project_id, intent_id, provider, network, mint, tx_signature, slot, block_time, verification, verified_at, dev_buy_status, dev_buy_lamports)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
+    intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now(), step2 ? 'pending' : null, step2 ? buy : 0);
     db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
     // the launched note records what the author bought, in whole tokens (the config's decimals) and SOL
-    const buy = Number(config.initialBuyLamports) || 0;
-    const tokens = intent.buy_tokens_base ? (Number(BigInt(intent.buy_tokens_base) / 10n ** BigInt(config.token?.decimals ?? 6))).toLocaleString('en-US') : null;
-    const bought = buy > 0 ? ` · dev buy: ${solString(buy)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet` : '';
+    const tokens = intent.buy_tokens_base ? tokensText(intent.buy_tokens_base, config) : null;
+    const bought = step2 ? ` · next: your dev buy of ${solString(buy)} SOL, a second signature (step 2)`
+      : buy > 0 ? ` · dev buy: ${solString(buy)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet` : '';
     transition(db, project.idea_id, 'confirming', 'launched', { note: (provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`) + bought,
       data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length, ...(buy > 0 ? { devBuyLamports: buy, devBuyTokensBase: intent.buy_tokens_base ?? null } : {}) } });
   });
@@ -509,7 +543,10 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
   return { state: 'launched' };
 }
 
-/** Worker sweep: submitted intents whose confirm job gave up get a new one (indexing delay, late confirmation). */
+const tokensText = (base, config) => (Number(BigInt(base) / 10n ** BigInt(config?.token?.decimals ?? 6))).toLocaleString('en-US');
+
+/** Worker sweep: submitted intents (and dev-buy attempts) whose confirm job gave up get a new one (indexing delay,
+ *  late confirmation). */
 export function sweepSubmitted(db, t = now()) {
   const rows = db.all(`SELECT i.* FROM launch_intents i WHERE i.status = 'submitted' AND NOT EXISTS
     (SELECT 1 FROM jobs j WHERE j.type = 'confirm_launch' AND j.status IN ('queued','running') AND j.payload_json LIKE '%' || i.id || '%')`);
@@ -517,7 +554,257 @@ export function sweepSubmitted(db, t = now()) {
     const p = db.get('SELECT idea_id FROM projects WHERE id = ?', i.project_id);
     enqueue(db, { type: 'confirm_launch', key: `confirm:${i.id}:${Math.floor(t / 300_000)}`, ideaId: p.idea_id, projectId: i.project_id, payload: { intentId: i.id } });
   }
-  return rows.length;
+  const buys = db.all(`SELECT a.* FROM dev_buy_attempts a WHERE a.status = 'submitted' AND NOT EXISTS
+    (SELECT 1 FROM jobs j WHERE j.type = 'confirm_dev_buy' AND j.status IN ('queued','running') AND j.payload_json LIKE '%' || a.id || '%')`);
+  for (const a of buys) {
+    const p = db.get('SELECT idea_id FROM projects WHERE id = ?', a.project_id);
+    enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${a.id}:${Math.floor(t / 300_000)}`, ideaId: p.idea_id, projectId: a.project_id, payload: { attemptId: a.id } });
+  }
+  return rows.length + buys.length;
+}
+
+// --- step 2: the dev buy as its own transaction (devBuyMode 'second_tx') ------------------------------------------------
+// After tx1 is confirmed and verified the project is "launched" with launches.dev_buy_status = 'pending'. The author
+// then asks for tx2 (built fresh: a new quote on the live curve, cap = cost + 5%, simulated, balance checked), signs it
+// alone, the server verifies it is the reviewed one (wallet guards tolerated), broadcasts, confirms and checks the
+// author's account gained exactly the reviewed tokens (buy_v2 is exact-out). A sniper between tx1 and tx2 only makes
+// tx2 fail on its cap (nothing lost but the fee); the author may try again at the new price, or skip the buy.
+const DEV_BUY_BUILDABLE = ['pending', 'failed'];
+
+function launchWithBuy(db, project, wallet) {
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', project.id);
+  if (!launch) throw new HttpError(409, 'not_launched', 'the coin is not launched yet: the dev buy comes right after the launch');
+  if (!launch.dev_buy_status) throw new HttpError(409, 'no_dev_buy', 'this launch has no separate dev buy');
+  const intent = db.get('SELECT signer_wallet, config_json FROM launch_intents WHERE id = ?', launch.intent_id);
+  if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  return { launch, config: parseJson(intent.config_json) };
+}
+
+/** What the author sees of an attempt (the same shape as createIntent's answer, plus the attempt). */
+function attemptAnswer(provider, a, extra = {}) {
+  return { attemptId: a.id, step: 2, mint: a.mint, txBase64: a.tx_base64, messageHash: a.tx_message_hash, estimate: a.estimate_json ? parseJson(a.estimate_json) : null,
+    lastValidBlockHeight: a.last_valid_block_height, mock: provider.isMock, txBytes: a.tx_base64 ? Buffer.from(a.tx_base64, 'base64').length : null,
+    requestedLamports: a.requested_lamports, costLamports: a.cost_lamports, maxLamports: a.max_lamports, tokensBase: a.tokens_base,
+    ...(provider.isMock ? { mockSigningText: mockSigningText(a.tx_message_hash) } : {}),
+    ...review(provider, a.tx_base64, a.network, a.signer_wallet), ...extra };
+}
+
+/** provider.prepareDevBuy with the checks the author must see as a sentence; every simulation is logged. */
+async function buildDevBuyChecked(provider, args, opts = {}) {
+  let built;
+  try { built = await provider.prepareDevBuy(args, opts); } catch (e) {
+    if (e?.code) throw new HttpError(409, e.code, e.message);    // no_curve, curve_complete, buy_completes_curve, buy_too_small
+    throw e;
+  }
+  const est = built.estimate || {};
+  log.info('dev buy simulation', { mint: args.mint, ok: est.simulation?.ok ?? null, err: est.simulation?.err ?? null, units: est.simulation?.unitsConsumed ?? null,
+    bytes: built.txBytes ?? null, refresh: Boolean(opts.reuse), tokens: est.initialBuyTokensBase ?? null, maxLamports: est.initialBuyMaxLamports ?? null, phantomSafe: est.phantomSafe ?? null });
+  if (!est.simulation || est.simulation.ok !== true) {
+    if (est.simulation?.logs) log.warn('dev buy simulation logs', { mint: args.mint, logs: est.simulation.logs });
+    const err = new HttpError(409, 'simulation_failed', devBuySimulationMessage(est, args.lamports));
+    err.priceMoved = PRICE_MOVED_RE.test(simulationText(est).text);
+    throw err;
+  }
+  if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
+    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
+    if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
+  }
+  return built;
+}
+
+/** Before a new tx2 exists, every earlier one must be provably dead (a signed copy can land until its blockhash
+ *  expires; two landing would buy twice). Open -> wait; landed -> verify it instead of buying again. */
+async function settleEarlierDevBuys(db, provider, project) {
+  const old = db.all(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status IN ('cancelled','expired') AND (error IS NULL OR error NOT LIKE '%[final]%')`, project.id);
+  for (const a of old) {
+    const c = await provider.devBuyLandCheck(a);
+    if (c.state === 'open') throw new HttpError(409, 'previous_open', `the previous dev buy transaction could still land for about ${Math.ceil((c.blocksLeft ?? 150) * 0.4)} more seconds; try again after that`);
+    if (c.state === 'landed') {
+      db.tx(() => {
+        db.run(`UPDATE dev_buy_attempts SET status = 'submitted', tx_signature = ?, error = NULL, updated_at = ? WHERE id = ?`, c.signature, now(), a.id);
+        db.run(`UPDATE launches SET dev_buy_status = 'submitted' WHERE project_id = ?`, project.id);
+        enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${a.id}:landed`, ideaId: project.idea_id, projectId: project.id, payload: { attemptId: a.id } });
+      });
+      throw new HttpError(409, 'previous_landed', 'an earlier dev buy transaction landed after all; it is being verified instead of buying again');
+    }
+    db.run(`UPDATE dev_buy_attempts SET error = COALESCE(error, '') || ' [final]' WHERE id = ?`, a.id);
+  }
+}
+
+/** Owner asks for tx2. Resumes the waiting one (reload, double click), else builds a fresh one. */
+export async function createDevBuy(db, cfg, project, wallet) {
+  if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
+  const { launch } = launchWithBuy(db, project, wallet);
+  const provider = getProvider(cfg, db);
+  if (launch.dev_buy_status === 'awaiting_signature') {
+    const pending = db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+    if (pending) return attemptAnswer(provider, pending, { resumed: true });
+  }
+  if (!DEV_BUY_BUILDABLE.includes(launch.dev_buy_status)) throw new HttpError(409, 'bad_state', `the dev buy is ${launch.dev_buy_status.replace(/_/g, ' ')}`);
+  if (db.get(`SELECT 1 FROM dev_buy_attempts WHERE project_id = ? AND error LIKE 'landed:%'`, project.id)) {
+    throw new HttpError(409, 'landed_unverified', 'an earlier dev buy landed but failed verification; an admin must look at it first');
+  }
+  await settleEarlierDevBuys(db, provider, project);
+  const lamports = Number(launch.dev_buy_lamports);
+  const built = await buildDevBuyChecked(provider, { mint: launch.mint, signer: wallet, lamports });
+  const est = built.estimate || {};
+  const attemptId = id('devbuy'), t = now();
+  db.tx(() => {
+    db.run(`INSERT INTO dev_buy_attempts (id, project_id, intent_id, mint, signer_wallet, network, status, requested_lamports, cost_lamports, max_lamports, tokens_base,
+              tx_base64, tx_message_hash, last_valid_block_height, estimate_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, attemptId, project.id, launch.intent_id, launch.mint, wallet, launch.network,
+    lamports, est.initialBuyLamports ?? null, est.initialBuyMaxLamports ?? null, est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null,
+    built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(est), t, t);
+    db.run(`UPDATE launches SET dev_buy_status = 'awaiting_signature' WHERE project_id = ?`, project.id);
+    note(db, project.idea_id, provider.isMock ? 'MOCK dev buy ready for your wallet (step 2)' : 'dev buy transaction ready for your wallet (step 2)', { actor: `wallet:${wallet}` });
+  });
+  return attemptAnswer(provider, db.get('SELECT * FROM dev_buy_attempts WHERE id = ?', attemptId));
+}
+
+/** Right before the wallet opens: the SAME buy (same tokens, same cap: the review stays true) with a fresh blockhash.
+ *  If the price moved past the cap meanwhile the attempt is cancelled and the author reads why. */
+export async function refreshDevBuy(db, cfg, project, wallet) {
+  const provider = getProvider(cfg, db);
+  const a = db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no dev buy transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  if (provider.isMock) return attemptAnswer(provider, a, { resumed: true });
+  let built;
+  try {
+    built = await buildDevBuyChecked(provider, { mint: a.mint, signer: wallet, lamports: a.requested_lamports },
+      { reuse: { tokensBase: a.tokens_base, costLamports: a.cost_lamports, maxLamports: a.max_lamports } });
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 409) {
+      db.tx(() => {
+        db.run(`UPDATE dev_buy_attempts SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`, `before signing: ${e.message.slice(0, 200)}`, now(), a.id);
+        db.run(`UPDATE launches SET dev_buy_status = 'pending' WHERE project_id = ? AND dev_buy_status = 'awaiting_signature'`, project.id);
+      });
+    }
+    throw e;
+  }
+  db.run(`UPDATE dev_buy_attempts SET tx_base64 = ?, tx_message_hash = ?, last_valid_block_height = ?, estimate_json = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
+    built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(built.estimate ?? null), now(), a.id);
+  return attemptAnswer(provider, db.get('SELECT * FROM dev_buy_attempts WHERE id = ?', a.id), { resumed: true, refreshed: true });
+}
+
+/** tx2 signed: verify it is the reviewed one, persist the signature, then broadcast. */
+export async function submitDevBuy(db, cfg, project, wallet, signed) {
+  const provider = getProvider(cfg, db);
+  const a = db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no dev buy transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  let checked;
+  try { checked = await provider.verifyDevBuySigned(a, signed); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
+  db.tx(() => {
+    db.run(`UPDATE dev_buy_attempts SET status = 'submitted', tx_signature = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`, checked.signature, now(), a.id);
+    db.run(`UPDATE launches SET dev_buy_status = 'submitted' WHERE project_id = ?`, project.id);
+    note(db, project.idea_id, 'dev buy signed; broadcast and waiting for the network', { actor: `wallet:${wallet}`, data: { signature: checked.signature } });
+  });
+  let uncertain = false;
+  try {
+    await provider.submit(db.get('SELECT * FROM dev_buy_attempts WHERE id = ?', a.id), checked.raw);
+  } catch (e) {
+    if (e.rejected) {
+      const why = PRICE_MOVED_RE.test(String(e.message)) ? PRICE_MOVED_NOTE : `the network rejected the dev buy before it ran (${String(e.message).slice(0, 120)}); nothing was bought`;
+      db.tx(() => {
+        db.run(`UPDATE dev_buy_attempts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, `preflight: ${String(e.message).slice(0, 280)}`, now(), a.id);
+        db.run(`UPDATE launches SET dev_buy_status = 'failed' WHERE project_id = ?`, project.id);
+        note(db, project.idea_id, why);
+      });
+      throw new HttpError(400, 'rejected', why);
+    }
+    uncertain = true;
+    note(db, project.idea_id, 'dev buy broadcast answer unclear; checking the network for the transaction', { actor: 'system' });
+  }
+  enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${a.id}:0`, ideaId: project.idea_id, projectId: project.id, payload: { attemptId: a.id } });
+  return { signature: checked.signature, uncertain };
+}
+
+/** The wallet declined, or the author walked away from tx2: back to 'pending' (a new one waits for this one's window). */
+export function abandonDevBuy(db, project, wallet, reason = 'signature request cancelled') {
+  const a = db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no dev buy transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  db.tx(() => {
+    db.run(`UPDATE dev_buy_attempts SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ?`, reason, now(), a.id);
+    db.run(`UPDATE launches SET dev_buy_status = 'pending' WHERE project_id = ?`, project.id);
+    note(db, project.idea_id, `dev buy: ${reason}; nothing was bought`, { actor: `wallet:${wallet}` });
+  });
+}
+
+/** The author skips the dev buy (final). A waiting, unsigned tx2 is cancelled with it. */
+export function skipDevBuy(db, project, wallet) {
+  const { launch } = launchWithBuy(db, project, wallet);
+  if (!['pending', 'failed', 'awaiting_signature'].includes(launch.dev_buy_status)) {
+    throw new HttpError(409, 'bad_state', launch.dev_buy_status === 'submitted' ? 'the dev buy is already on its way to the network' : `the dev buy is ${launch.dev_buy_status}`);
+  }
+  db.tx(() => {
+    db.run(`UPDATE dev_buy_attempts SET status = 'cancelled', error = 'skipped by the author', updated_at = ? WHERE project_id = ? AND status = 'awaiting_signature'`, now(), project.id);
+    db.run(`UPDATE launches SET dev_buy_status = 'skipped' WHERE project_id = ?`, project.id);
+    note(db, project.idea_id, 'dev buy skipped by the author; nothing was bought', { actor: `wallet:${wallet}` });
+  });
+  return { status: 'skipped' };
+}
+
+/** confirm_dev_buy job: resolve one submitted tx2. "launched" never depends on it. */
+export async function confirmDevBuy(db, cfg, attemptId, progress = () => {}) {
+  const provider = getProvider(cfg, db);
+  const a = db.get('SELECT * FROM dev_buy_attempts WHERE id = ?', attemptId);
+  if (!a) throw new Permanent('dev buy attempt not found');
+  if (a.status !== 'submitted') return { state: `attempt is ${a.status}` };
+  const project = db.get('SELECT * FROM projects WHERE id = ?', a.project_id);
+  const setLaunch = (s) => db.run('UPDATE launches SET dev_buy_status = ? WHERE project_id = ?', s, a.project_id);
+  const st = await provider.devBuyStatus(a);
+  progress(`network status: ${st.state}`);
+  if (st.state === 'pending' || st.state === 'confirmed') throw new Defer(`waiting for finalization (${st.state})`, 4000);
+  if (st.state === 'expired') {
+    db.tx(() => {
+      db.run(`UPDATE dev_buy_attempts SET status = 'expired', error = 'blockhash expired before the transaction landed', updated_at = ? WHERE id = ?`, now(), a.id);
+      setLaunch('pending');
+      note(db, project.idea_id, 'the dev buy expired before it landed; nothing was bought. Try again, or skip it.');
+    });
+    return { state: 'expired' };
+  }
+  if (st.state === 'failed') {
+    const why = PRICE_MOVED_RE.test(st.err) ? PRICE_MOVED_NOTE : `the dev buy failed on-chain (${String(st.err).slice(0, 120)}); nothing was bought but the network fee. Try again, or skip it`;
+    db.tx(() => {
+      db.run(`UPDATE dev_buy_attempts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, st.err, now(), a.id);
+      setLaunch('failed');
+      note(db, project.idea_id, why);
+    });
+    return { state: 'failed' };
+  }
+  const v = await provider.verifyDevBuy(a);
+  if (!v.ok && v.retry) throw new Defer('finalized, but not visible yet on this RPC node; checking again', 15_000);
+  if (!v.ok) {
+    db.tx(() => {
+      db.run(`UPDATE dev_buy_attempts SET status = 'failed', error = 'landed: on-chain verification failed', verification = ?, updated_at = ? WHERE id = ?`, JSON.stringify(v.checks), now(), a.id);
+      setLaunch('failed');
+      audit(db, { actor: 'system', kind: 'dev_buy_mismatch', ideaId: project.idea_id, projectId: project.id, message: 'a dev buy landed but did not match its review', data: { checks: v.checks } });
+      note(db, project.idea_id, 'the dev buy landed but did not match what you reviewed; an admin has been alerted', { data: { checks: v.checks } });
+    });
+    return { state: 'verification_failed', checks: v.checks };
+  }
+  const intent = db.get('SELECT config_json FROM launch_intents WHERE id = ?', a.intent_id);
+  const tokens = a.tokens_base && !provider.isMock ? tokensText(a.tokens_base, parseJson(intent?.config_json)) : null;
+  db.tx(() => {
+    db.run(`UPDATE dev_buy_attempts SET status = 'done', verification = ?, updated_at = ? WHERE id = ?`, JSON.stringify(v.checks), now(), a.id);
+    setLaunch('done');
+    note(db, project.idea_id, `${provider.isMock ? 'MOCK ' : ''}dev buy: ${solString(a.cost_lamports ?? a.requested_lamports)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet`,
+      { data: { signature: a.tx_signature, tokensBase: a.tokens_base, checks: v.checks.length } });
+  });
+  return { state: 'done' };
+}
+
+/** The owner's view of step 2 (GET /api/projects/:slug): null when the launch has no separate dev buy. */
+export function devBuyView(db, provider, project) {
+  const launch = db.get('SELECT dev_buy_status, dev_buy_lamports FROM launches WHERE project_id = ?', project.id);
+  if (!launch?.dev_buy_status) return null;
+  const a = db.get('SELECT * FROM dev_buy_attempts WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', project.id);
+  return { status: launch.dev_buy_status, lamports: launch.dev_buy_lamports, slippageBps: INITIAL_BUY_SLIPPAGE_BPS,
+    attempt: a ? { id: a.id, status: a.status, signature: a.tx_signature, error: a.error ? a.error.replace(/ \[final\]$/, '') : null, costLamports: a.cost_lamports,
+      maxLamports: a.max_lamports, tokensBase: a.tokens_base, verification: a.verification ? parseJson(a.verification) : null,
+      explorerTx: a.tx_signature ? provider?.explorerTx?.(a.tx_signature) ?? null : null, updatedAt: a.updated_at } : null };
 }
 
 // --- fee ledger ---------------------------------------------------------------------------------------------------

@@ -6,9 +6,11 @@
 //     (only pump.fun's own takeover authority can rewrite it).
 //   - fee rates are dynamic: read from Global / FeeConfig at preparation time, never hardcoded.
 //   - no official REST API for creation; no official metadata upload endpoint (metadata is served by this app).
-//   - the dev buy (optional, launch.js initialBuyLamports): buy_v2 in the SAME transaction, after the fee split, quoted
-//     by the SDK at a fresh curve (getBuyTokenAmountFromSolAmount), cost capped at quote + 5%; the author's wallet pays
-//     and receives the tokens. It needs the buy's static accounts in the lookup table (scripts/lookup-table.js --extend).
+//   - the dev buy (optional, launch.js initialBuyLamports): ATA + buy_v2 (exact-out: `amount` tokens, `max_sol_cost`
+//     cap, partial_fill off), cost capped at quote + 5%; the author's wallet pays and receives the tokens. In the
+//     Phantom-safe layout create + split + buy is 1242-1259 bytes, over 1232: the buy is then a SECOND transaction
+//     (devBuyInstructions / prepareDevBuy), quoted on the curve tx1 created, signed by the author alone. It stays
+//     inside tx1 only when that still fits Phantom-safe (launch.js devBuyMode 'same_tx'); never the compact layout.
 // The submitter's own wallet is the payer and creator and signs; this app never holds a key that can move funds.
 // The mint keypair is generated per launch intent, signs once during preparation and is then discarded.
 import { createRequire } from 'node:module';
@@ -28,6 +30,12 @@ function sdk() {
 }
 
 const MAX_TX_BYTES = 1232;
+// Phantom appends its own instructions when it signs (Lighthouse balance assertions, a compute-budget priority fee:
+// see verifySigned), which needs room in the packet. A dev buy stays inside the creation transaction only if that
+// transaction leaves this much; create + split + buy measures 1231-1259 bytes Phantom-safe, so in practice the buy is
+// always its own transaction (tx1 975-997 bytes, tx2 about 1033: both leave ~200 bytes).
+export const WALLET_HEADROOM_BYTES = 150;
+const ONE_TX_BUY_LIMIT = MAX_TX_BYTES - WALLET_HEADROOM_BYTES;
 export const PROGRAMS = {
   pump: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
   pumpFees: 'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ',
@@ -54,7 +62,7 @@ export const BUY_SLIPPAGE_PERCENT = 5;
 export class LaunchBuildError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
-export const TOO_LARGE_NOTE = 'the creation transaction with the dev buy would be larger than the network allows (1232 bytes): shorten the name or the ticker, keep the fee split to 2 recipients, or set the dev buy to 0';
+export const TOO_LARGE_NOTE = 'the creation transaction with the dev buy inside would not leave the wallet room under the 1232-byte network limit in the layout wallets can simulate; prepare the launch again (the dev buy then becomes a second signature)';
 
 /**
  * The dev buy's fee recipients, pinned so the launch lookup table can hold them: the SDK otherwise picks one of
@@ -169,6 +177,8 @@ export function phantomSafeTables(tables) {
     addresses: t.state.addresses.map((a) => (hide.has(a.toBase58()) ? web3.Keypair.generate().publicKey : a)) } }));
 }
 
+/** -> { bytes, fits, phantomSafe }. With a dev buy only the Phantom-safe layout counts (fits: false = the buy must be a
+ *  second transaction); without one the compact layout remains the fallback for large splits. */
 export async function compiledTxBytes(config) {
   const { web3 } = sdk();
   const build = async () => {
@@ -186,6 +196,10 @@ export async function compiledTxBytes(config) {
     .compileToV0Message([table]);
   try {
     const safe = (() => { try { return new web3.VersionedTransaction(message).serialize().length; } catch { return null; } })();
+    if ((Number(config.initialBuyLamports) || 0) > 0) {
+      const ok = safe != null && safe <= ONE_TX_BUY_LIMIT;
+      return { bytes: safe, fits: ok, phantomSafe: ok };
+    }
     if (safe != null && safe <= MAX_TX_BYTES) return { bytes: safe, fits: true, phantomSafe: true };
     const bytes = new web3.VersionedTransaction(compact).serialize().length;
     return { bytes, fits: bytes <= MAX_TX_BYTES, phantomSafe: false };
@@ -214,6 +228,51 @@ export function reviewOfMessage(message) {
   };
 }
 
+/**
+ * The dev buy as its own transaction (tx2), offline: the author's Token-2022 ATA (idempotent) and buy_v2 on the curve
+ * tx1 created. Quoted on that curve as it is NOW (a sniper may have bought first): `amount` = tokens for the requested
+ * SOL, cap = their real cost + 5%. reuse ({tokensBase, costLamports, maxLamports}): the same buy again with a new
+ * blockhash (the review stays true; a price past the cap then fails the simulation instead of buying less).
+ * curve: the decoded BondingCurve (OnlinePumpSdk.fetchBondingCurve); its creator is what buy_v2 must name (the
+ * sharing-config PDA for our launches).
+ */
+export async function devBuyInstructions({ mint, signer, lamports, global, feeConfig, curve, reuse = null }) {
+  const { spl, pump } = sdk();
+  const Big = require('bn.js');
+  if (!curve) throw new LaunchBuildError('no_curve', 'the coin\'s bonding curve is not visible on the network yet; try again in a few seconds');
+  if (curve.complete) throw new LaunchBuildError('curve_complete', 'the bonding curve is already complete (the coin left pump.fun\'s curve); the dev buy cannot run');
+  if (curve.isMayhemMode) throw new LaunchBuildError('curve_mayhem', 'this coin\'s curve is in mayhem mode; the dev buy is not supported there');
+  if (!Number.isInteger(lamports) || lamports <= 0) throw new Error('dev buy must be whole lamports');
+  let tokens, cost, maxQuote;
+  if (reuse) {
+    tokens = new Big(String(reuse.tokensBase)); cost = new Big(String(reuse.costLamports)); maxQuote = new Big(String(reuse.maxLamports));
+  } else {
+    const requested = new Big(String(lamports));
+    const at = { global, feeConfig, mintSupply: curve.tokenTotalSupply, bondingCurve: curve, quoteMint: spl.NATIVE_MINT };
+    tokens = pump.getBuyTokenAmountFromSolAmount({ ...at, amount: requested });
+    if (tokens.isZero()) throw new LaunchBuildError('buy_too_small', 'the dev buy is too small to buy any token');
+    if (tokens.gte(curve.realTokenReserves)) throw new LaunchBuildError('buy_completes_curve', 'the dev buy would buy the rest of the bonding curve and complete it; skip it or launch again with a smaller amount');
+    cost = pump.getBuySolAmountFromTokenAmount({ ...at, amount: tokens });
+    if (cost.isZero()) cost = requested;
+    maxQuote = cost.add(cost.mul(new Big(Math.floor(BUY_SLIPPAGE_PERCENT * 10))).div(new Big(1000)));
+  }
+  const ata = spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID);
+  const feeRecipient = global.feeRecipient, buybackFeeRecipient = await buybackRecipient();
+  const ixs = [spl.createAssociatedTokenAccountIdempotentInstruction(signer, ata, signer, mint, spl.TOKEN_2022_PROGRAM_ID),
+    await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator: curve.creator, amount: tokens, quoteAmount: maxQuote, feeRecipient, buybackFeeRecipient,
+      tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID })];
+  return { ixs, buy: { lamports: Number(cost.toString()), requestedLamports: lamports, maxLamports: Number(maxQuote.toString()), tokensBase: tokens.toString(),
+    ata: ata.toBase58(), creator: curve.creator.toBase58(), feeRecipient: feeRecipient.toBase58(), buybackFeeRecipient: buybackFeeRecipient.toBase58() } };
+}
+
+/** Token balance change of `owner`'s account for `mint` in a fetched transaction (meta pre/post token balances). */
+function tokenDelta(meta, mint, owner) {
+  const pick = (list) => (list || []).find((b) => b.mint === mint && b.owner === owner);
+  const pre = pick(meta?.preTokenBalances), post = pick(meta?.postTokenBalances);
+  if (!post) return null;
+  return { accountIndex: post.accountIndex, delta: BigInt(post.uiTokenAmount.amount) - BigInt(pre?.uiTokenAmount?.amount ?? '0') };
+}
+
 const bnToStr = (x) => (x == null ? null : x.toString());
 
 export function makePumpfunProvider(cfg, { connection } = {}) {
@@ -240,12 +299,12 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     return { totalSupplyBase: bnToStr(global.tokenTotalSupply), decimals: 6, tokenProgram: 'Token-2022', fees };
   }
 
-  /** The launch lookup table (static program accounts), so create + locked fee split fits in one transaction. */
-  /** The signed message differs from the reviewed one: it must be the same launch with wallet guards added. */
+  /** The signed message differs from the reviewed one: it must be the same launch (or the same dev buy) with wallet
+   *  guards added. The reviewed message is decompiled with the tables it names (none for tx2). */
   async function sameLaunch(web3, intent, tx) {
     const reviewed = web3.VersionedTransaction.deserialize(Buffer.from(intent.tx_base64, 'base64')).message;
     const signed = tx.message;
-    const tables = await lookupTables();
+    const tables = reviewed.addressTableLookups?.length ? await lookupTables() : [];
     let a, b;
     try {
       a = web3.TransactionMessage.decompile(reviewed, { addressLookupTableAccounts: tables });
@@ -296,6 +355,28 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     return launchInstructions({ config, mint, signer, ...chain });
   }
 
+  /** Fee, simulation and balance change of a built transaction for the review. buyLamports: the buy's real cost inside
+   *  it (0 for none); accountsLamports is then the rent alone (balance change - buy - fee). */
+  async function estimateOf(tx, message, signer, buyLamports) {
+    const estimate = { networkFeeLamports: null, accountsLamports: null, simulation: null };
+    try { estimate.networkFeeLamports = (await conn.getFeeForMessage(message, 'confirmed')).value; } catch { /* left null */ }
+    try {
+      const pre = await conn.getBalance(signer, 'confirmed');
+      const sim = await conn.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true,
+        accounts: { addresses: [signer.toBase58()], encoding: 'base64' } });
+      if (sim.value.err) estimate.simulation = { ok: false, err: JSON.stringify(sim.value.err), logs: (sim.value.logs || []).slice(-6) };
+      else {
+        const post = sim.value.accounts?.[0]?.lamports;
+        estimate.simulation = { ok: true, unitsConsumed: sim.value.unitsConsumed };
+        if (post != null) estimate.accountsLamports = Math.max(0, pre - post - buyLamports - (estimate.networkFeeLamports ?? 0));
+      }
+      estimate.signerBalanceLamports = pre;
+    } catch (e) {
+      estimate.simulation = { ok: false, err: e.message };
+    }
+    return estimate;
+  }
+
   return {
     name: 'pumpfun',
     network,
@@ -310,22 +391,36 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
 
     /**
      * Build the creation transaction for review. -> {txBase64, messageHash, lastValidBlockHeight, mint, estimate}
-     * config: {name, symbol, uri, signer, feeSharing: {mode, shareholders:[{wallet,bps}]}}
+     * config: {name, symbol, uri, signer, feeSharing: {mode, shareholders:[{wallet,bps}]}, initialBuyLamports}
+     * devBuyMode (with a buy): 'same_tx' = the buy inside, Phantom-safe or a coded tx_too_large; 'second_tx' = tx1
+     * WITHOUT the buy, and estimate.devBuy carries the fresh-curve quote of the buy that follows (what step 2 costs
+     * if nobody buys first). Without a buy the compact layout stays the fallback for large splits.
      */
-    async prepare(config, { mintSecret = null } = {}) {
+    async prepare(config, { mintSecret = null, devBuyMode = 'same_tx' } = {}) {
       const signer = new web3.PublicKey(config.signer);
       // refresh (same intent, fresh blockhash right before the wallet opens): the intent's own mint key, not a new one
       const mintKp = mintSecret ? web3.Keypair.fromSecretKey(Buffer.from(mintSecret, 'base64')) : web3.Keypair.generate();
       const mint = mintKp.publicKey;
+      const wantsBuy = (Number(config.initialBuyLamports) || 0) > 0;
       // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing (+ buy_v2)
-      const { ixs, buy } = await buildInstructions(config, mint, signer);
+      let { ixs, buy } = await buildInstructions(config, mint, signer);
+      let devBuy = null;
+      if (wantsBuy && devBuyMode === 'second_tx') {
+        devBuy = { mode: 'second_tx', requestedLamports: buy.requestedLamports, lamports: buy.lamports, maxLamports: buy.maxLamports, tokensBase: buy.tokensBase, quotedAt: 'fresh curve' };
+        ({ ixs } = await launchInstructions({ config: { ...config, initialBuyLamports: 0 }, mint, signer }));
+        buy = null;
+      }
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       const tables = await lookupTables();
       const compile = (t) => new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(t);
-      const fitsBytes = (m) => { try { return new web3.VersionedTransaction(m).serialize().length <= MAX_TX_BYTES; } catch { return false; } };
-      // the Phantom-safe layout (event authorities written in) whenever it fits; a dev buy can push it over 1232 bytes,
-      // then the compact layout (Phantom may warn) until the buy moves to its own transaction
+      const fitsBytes = (m, limit = MAX_TX_BYTES) => { try { return new web3.VersionedTransaction(m).serialize().length <= limit; } catch { return false; } };
+      // the Phantom-safe layout (event authorities written in) always with a buy; without one it is the default and the
+      // compact layout only the fallback for a split too large for it
       let message = compile(phantomSafeTables(tables)), phantomSafe = true;
+      if (buy && !fitsBytes(message, ONE_TX_BUY_LIMIT)) {
+        if (!cfg.launch.lookupTable) throw new Error('transaction too large: fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)');
+        throw new LaunchBuildError('tx_too_large', TOO_LARGE_NOTE);
+      }
       if (!fitsBytes(message)) { message = compile(tables); phantomSafe = false; }
       const tx = new web3.VersionedTransaction(message);
       // Signing order (Phantom support, 2026-10-11): the wallet signs the untouched transaction FIRST; the mint key signs
@@ -336,36 +431,125 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       try { bytes = tx.serialize(); } catch (e) { if (!/overruns/.test(e.message)) throw e; }
       if (!bytes || bytes.length > MAX_TX_BYTES) {
         const size = bytes ? `${bytes.length} bytes` : 'over 1232 bytes';
-        // an operator problem (no table) is a plain error; with a buy it is the author's choice to change
+        // an operator problem (no table, or a table missing accounts) is a plain error
         if (!cfg.launch.lookupTable) throw new Error(`transaction too large (${size}): fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)`);
-        throw new LaunchBuildError('tx_too_large', buy ? `${TOO_LARGE_NOTE} (${size}; if this persists at 0 the lookup table lacks the buy accounts: npm run lookup-table -- --extend <table>)`
-          : `transaction too large (${size}): the lookup table may be missing accounts (npm run lookup-table -- --extend <table>)`);
+        throw new LaunchBuildError('tx_too_large', `transaction too large (${size}): the lookup table may be missing accounts (npm run lookup-table -- --extend <table>)`);
       }
       const msgBytes = message.serialize();
       // initialBuyLamports: the buy's real cost, fees included (what the simulation's balance change contains);
       // initialBuyMaxLamports: the cap signed in the transaction (cost + slippage); accountsLamports is the rent alone:
       // the simulation's balance change minus the buy and minus the network fee it charged
-      const estimate = { phantomSafe, networkFeeLamports: null, accountsLamports: null, simulation: null,
+      const estimate = { phantomSafe, devBuyMode: wantsBuy ? devBuyMode : null,
         initialBuyLamports: buy ? buy.lamports : 0, initialBuyRequestedLamports: buy ? buy.requestedLamports : 0,
-        initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null };
-      try { estimate.networkFeeLamports = (await conn.getFeeForMessage(message, 'confirmed')).value; } catch { /* left null */ }
-      try {
-        const pre = await conn.getBalance(signer, 'confirmed');
-        const sim = await conn.simulateTransaction(tx, { sigVerify: false, replaceRecentBlockhash: true,
-          accounts: { addresses: [signer.toBase58()], encoding: 'base64' } });
-        if (sim.value.err) estimate.simulation = { ok: false, err: JSON.stringify(sim.value.err), logs: (sim.value.logs || []).slice(-6) };
-        else {
-          const post = sim.value.accounts?.[0]?.lamports;
-          estimate.simulation = { ok: true, unitsConsumed: sim.value.unitsConsumed };
-          if (post != null) estimate.accountsLamports = Math.max(0, pre - post - (buy ? buy.lamports : 0) - (estimate.networkFeeLamports ?? 0));
-        }
-        estimate.signerBalanceLamports = pre;
-      } catch (e) {
-        estimate.simulation = { ok: false, err: e.message };
-      }
+        initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null,
+        ...(devBuy ? { devBuy } : {}), ...(await estimateOf(tx, message, signer, buy ? buy.lamports : 0)) };
       return { txBase64: Buffer.from(bytes).toString('base64'), messageHash: createHash('sha256').update(msgBytes).digest('hex'),
         lastValidBlockHeight, mint: mint.toBase58(), estimate, txBytes: bytes.length,
         mintSecret: Buffer.from(mintKp.secretKey).toString('base64') };
+    },
+
+    /** Would create + split + buy fit ONE Phantom-safe transaction? (offline; compiledTxBytes) */
+    async devBuyFitsOneTx(config) { const s = await compiledTxBytes(config); return s.fits === true && s.phantomSafe === true; },
+
+    /**
+     * Step 2 of a launch with a dev buy: tx2 = the author's ATA + buy_v2, quoted on the live curve, the author the only
+     * signer. No lookup table at all: every account (the pump event authority among them) is a static key, so a
+     * wallet's simulator has nothing to resolve (1033 bytes measured). -> the shape of prepare() without a mint key.
+     * {mint, signer, lamports}; reuse: see devBuyInstructions.
+     */
+    async prepareDevBuy({ mint, signer, lamports }, { reuse = null } = {}) {
+      const { pump } = sdk();
+      const signerKey = new web3.PublicKey(signer), mintKey = new web3.PublicKey(mint);
+      const { global, feeConfig } = await chainAccounts();
+      let curve = null;
+      try { curve = await new pump.OnlinePumpSdk(conn).fetchBondingCurve(mintKey); } catch { /* refused below */ }
+      const { ixs, buy } = await devBuyInstructions({ mint: mintKey, signer: signerKey, lamports, global, feeConfig, curve, reuse });
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+      const message = new web3.TransactionMessage({ payerKey: signerKey, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message();
+      const tx = new web3.VersionedTransaction(message);
+      const bytes = tx.serialize();
+      if (bytes.length > MAX_TX_BYTES) throw new LaunchBuildError('tx_too_large', `the dev buy transaction is ${bytes.length} bytes, over the 1232-byte limit`);
+      const estimate = { phantomSafe: true, devBuyMode: 'second_tx', initialBuyLamports: buy.lamports, initialBuyRequestedLamports: buy.requestedLamports,
+        initialBuyMaxLamports: buy.maxLamports, initialBuyTokensBase: buy.tokensBase, quotedAt: reuse ? 'the reviewed quote, fresh blockhash' : 'the live curve',
+        ...(await estimateOf(tx, message, signerKey, buy.lamports)) };
+      return { txBase64: Buffer.from(bytes).toString('base64'), messageHash: createHash('sha256').update(message.serialize()).digest('hex'),
+        lastValidBlockHeight, mint, estimate, txBytes: bytes.length, buy };
+    },
+
+    /** tx2 signed by the wallet: the reviewed dev buy (Phantom's guards tolerated as in verifySigned), one signer. */
+    async verifyDevBuySigned(attempt, signedBase64) {
+      const tx = web3.VersionedTransaction.deserialize(Buffer.from(signedBase64, 'base64'));
+      const msgBytes = tx.message.serialize();
+      if (createHash('sha256').update(msgBytes).digest('hex') !== attempt.tx_message_hash) await sameLaunch(web3, attempt, tx);
+      const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+      if (keys[0] !== attempt.signer_wallet) throw new Error('payer is not the expected wallet');
+      if (tx.message.header.numRequiredSignatures !== 1) throw new Error('the dev buy is signed by your wallet alone; this transaction asks for another signer');
+      const sig = tx.signatures[0];
+      if (!sig || sig.every((b) => b === 0)) throw new Error('missing wallet signature');
+      if (!verifyWalletSignature(attempt.signer_wallet, msgBytes, sig)) throw new Error('wallet signature does not verify');
+      return { signature: b58encode(sig), raw: Buffer.from(tx.serialize()) };
+    },
+
+    /** tx2's fate by its signature: no mint to look for, so "expired" = the finalized height is past its window. */
+    async devBuyStatus(attempt) {
+      const st = (await conn.getSignatureStatuses([attempt.tx_signature], { searchTransactionHistory: true })).value[0];
+      if (st) {
+        if (st.err) return { state: 'failed', err: JSON.stringify(st.err), slot: st.slot };
+        return { state: st.confirmationStatus === 'finalized' ? 'finalized' : 'confirmed', slot: st.slot };
+      }
+      const height = await conn.getBlockHeight('finalized');
+      if (height <= attempt.last_valid_block_height) return { state: 'pending', height, lastValid: attempt.last_valid_block_height };
+      return { state: 'expired', height };
+    },
+
+    /** An abandoned tx2 attempt (cancelled, expired): could a signed copy still land, or did one? A landed one is a
+     *  finalized, successful transaction paid by the author that put exactly the attempt's tokens in the author's
+     *  account (buy_v2 is exact-out; every blockhash refresh of an attempt keeps the same amount). */
+    async devBuyLandCheck(attempt) {
+      const height = await conn.getBlockHeight('finalized');
+      if (height <= attempt.last_valid_block_height) return { state: 'open', blocksLeft: attempt.last_valid_block_height - height };
+      const { spl } = sdk();
+      const ata = spl.getAssociatedTokenAddressSync(new web3.PublicKey(attempt.mint), new web3.PublicKey(attempt.signer_wallet), true, spl.TOKEN_2022_PROGRAM_ID);
+      const sigs = await conn.getSignaturesForAddress(ata, { limit: 25 }, 'finalized');
+      for (const s of sigs) {
+        if (s.err) continue;
+        const tx = await conn.getTransaction(s.signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
+        if (!tx || tx.meta?.err !== null) continue;
+        const payer = tx.transaction.message.staticAccountKeys[0].toBase58();
+        const d = tokenDelta(tx.meta, attempt.mint, attempt.signer_wallet);
+        if (payer === attempt.signer_wallet && d && attempt.tokens_base && d.delta === BigInt(attempt.tokens_base)) return { state: 'landed', signature: s.signature };
+      }
+      return { state: 'dead' };
+    },
+
+    /** On-chain checks of a finalized tx2. The author's account must gain EXACTLY the reviewed tokens (exact-out), and
+     *  the SOL the buy took must be within the signed cap: the author's balance change minus the network fee and minus
+     *  what funded accounts this transaction created (the author's token account; on devnet 2026-10-12 also the
+     *  project's creator vault, 679,870 lamports on its first trade). A lower bound when the vault is new (its share of
+     *  the creator fee is counted as funding); the program itself enforces max_sol_cost exactly. */
+    async verifyDevBuy(attempt) {
+      const checks = [];
+      const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
+      const tx = await conn.getTransaction(attempt.tx_signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
+      add('transaction found at finalized commitment', tx, attempt.tx_signature);
+      if (!tx) return { ok: false, retry: true, checks };
+      add('transaction succeeded', tx.meta && tx.meta.err === null, JSON.stringify(tx.meta?.err ?? null));
+      const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).keySegments().flat().map((k) => k.toBase58());
+      add('payer is the author', keys[0] === attempt.signer_wallet, keys[0]);
+      add('pump program invoked', keys.includes(PROGRAMS.pump), PROGRAMS.pump);
+      add('mint account in transaction', keys.includes(attempt.mint), attempt.mint);
+      const d = tokenDelta(tx.meta, attempt.mint, attempt.signer_wallet);
+      add('dev buy landed: exactly the reviewed amount of tokens in the author wallet', d && attempt.tokens_base && d.delta === BigInt(attempt.tokens_base),
+        d ? `${d.delta} base units (reviewed ${attempt.tokens_base})` : 'no token balance of the author for this mint');
+      if (d && tx.meta) {
+        const spent = tx.meta.preBalances[0] - tx.meta.postBalances[0];
+        const created = keys.map((k, i) => ({ k, i })).filter(({ i }) => i > 0 && tx.meta.preBalances[i] === 0 && tx.meta.postBalances[i] > 0);
+        const funded = created.reduce((s, { i }) => s + tx.meta.postBalances[i], 0);
+        const buyCost = spent - tx.meta.fee - funded;
+        add('SOL the buy took is within the signed cap', attempt.max_lamports != null && buyCost <= attempt.max_lamports,
+          `${buyCost} lamports (cap ${attempt.max_lamports}; network fee ${tx.meta.fee}; new accounts funded ${funded}: ${created.map(({ k, i }) => `${k.slice(0, 6)}… ${tx.meta.postBalances[i]}`).join(', ') || 'none'})`);
+      }
+      return { ok: checks.every((c) => c.ok), retry: false, checks, slot: tx.slot, blockTime: tx.blockTime, tokensBase: d ? String(d.delta) : null };
     },
 
     reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
@@ -509,7 +693,9 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       } else {
         add('curve creator is the approved recipient', curve && curve.creator.toBase58() === config.feeSharing.shareholders[0].wallet, curve?.creator?.toBase58());
       }
-      if ((Number(config.initialBuyLamports) || 0) > 0) {
+      // the dev buy inside tx1 (same_tx, or an intent from before the two-step launch); a second_tx buy is verified
+      // on its own (verifyDevBuy) and never holds up "launched"
+      if ((Number(config.initialBuyLamports) || 0) > 0 && intent.dev_buy_mode !== 'second_tx') {
         // the dev buy landed in the same transaction: the author's Token-2022 account holds tokens
         const { spl } = sdk();
         const ata = spl.getAssociatedTokenAddressSync(new web3.PublicKey(intent.mint), new web3.PublicKey(intent.signer_wallet), true, spl.TOKEN_2022_PROGRAM_ID);
