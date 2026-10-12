@@ -278,6 +278,25 @@ export function uniqueSlug(db, name) {
 }
 
 /** When a job runs out of attempts: say so on the idea, plainly. */
+/** Builds that died only because a provider key or setting was wrong (HTTP 400/401/403 from the language model,
+ *  e.g. an organization key without its workspace, 2026-10-12) are retried once the server restarts with the fix:
+ *  the idea goes back to "selected" and its generate job is queued again. Only the last 48 h; each job once. */
+export function recoverConfigFailedBuilds(db, t = Date.now()) {
+  const rows = db.all(`SELECT j.id job_id, j.idea_id FROM jobs j JOIN ideas i ON i.id = j.idea_id
+    WHERE j.type = 'generate' AND j.status = 'dead' AND j.updated_at > ? AND i.status = 'failed'
+      AND (j.last_error LIKE 'generator HTTP 40%' OR j.last_error LIKE 'composer HTTP 40%')
+      AND COALESCE(j.result_json, '') NOT LIKE '%"recovered":true%'`, t - 48 * 3_600_000);
+  let n = 0;
+  for (const r of rows) {
+    db.tx(() => {
+      transition(db, r.idea_id, 'failed', 'selected', { actor: 'system', note: 'building again: the language model settings were fixed' });
+      db.run(`UPDATE jobs SET status = 'queued', attempts = 0, run_after = ?, last_error = NULL, result_json = '{"recovered":true}', updated_at = ? WHERE id = ?`, t, t, r.job_id);
+    });
+    n++;
+  }
+  return n;
+}
+
 export function onDead(db, job) {
   if (!job.idea_id) return;
   const idea = db.get('SELECT status FROM ideas WHERE id = ?', job.idea_id);

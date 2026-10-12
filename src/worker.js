@@ -5,7 +5,7 @@ import { hostname } from 'node:os';
 import { loadConfig } from './config.js';
 import { openDb, migrate, backup, getSetting, setSetting } from './db.js';
 import { claim, runJob, enqueue, nudgeDeferredEvaluations } from './jobs.js';
-import { handlers, onDead } from './pipeline.js';
+import { handlers, onDead , recoverConfigFailedBuilds } from './pipeline.js';
 import { sweepSubmitted } from './launch.js';
 import { scheduleCoinStats } from './coin-stats.js';
 import { log } from './log.js';
@@ -14,6 +14,8 @@ import { now } from './util.js';
 export function makeWorker({ cfg, db, fetchImpl = fetch, id = `${hostname()}:${process.pid}` }) {
   const services = { cfg, fetchImpl };
   const nudged = nudgeDeferredEvaluations(db);
+  const rebuilt = recoverConfigFailedBuilds(db);
+  if (rebuilt) log.info('builds retried after a settings fix', { rebuilt });
   if (nudged) log.info('deferred evaluations made due at boot', { nudged });
   async function tick() {
     const job = claim(db, id);
