@@ -101,7 +101,8 @@ if (process.env.DEMO_INITIAL_BUY_SOL) {
 await submitter.call('POST', `/api/ideas/${id}/publish`, { public: true });
 await submitter.call('POST', `/api/projects/${slug}/approve`, { allocationId: p.allocation.id, statement: p.allocation.statement, siteVersion: p.liveSiteVersion });
 step('submitter published the idea and approved site + fee split', { statement: p.allocation.statement });
-await reviewer.call('POST', `/api/admin/projects/${slug}/clear`, {});
+const needClear = (await submitter.call('GET', '/api/config')).requireAdminClearance !== false;   // production runs without the reviewer step
+if (needClear) await reviewer.call('POST', `/api/admin/projects/${slug}/clear`, {});
 step('reviewer cleared it for launch');
 
 p = await until(async () => { const x = await submitter.call('GET', `/api/projects/${slug}`); return x.status === 'launch_prepared' ? x : null; }, 'the launch configuration');

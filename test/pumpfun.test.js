@@ -275,3 +275,17 @@ test('pump.fun prepare (offline, fixture chain): the estimate rows sum (rent exc
   const noTable = makePumpfunProvider(CFG_TABLE, { connection: { ...fixtureConn(), getAddressLookupTable: async () => ({ value: new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey, state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [] } }) }) } });
   await assert.rejects(noTable.prepare({ ...launchConfig(10_000_000, signer, sub01), signer: signer.toBase58() }), (x) => x.code === 'tx_too_large' && /1232 bytes/.test(x.message));
 });
+
+test('pump.fun: Phantom-safe layout keeps both event authorities out of the lookup table (static keys), positions intact', async () => {
+  const { eventAuthorities, phantomSafeTables } = await import('../src/launch/pumpfun.js');
+  const signer = web3.Keypair.generate().publicKey, sub01 = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+  const built = await launchInstructions({ config: launchConfig(0, signer, sub01), mint, signer, global: GLOBAL, feeConfig: FEE_CONFIG });
+  const all = [...new Set(built.ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()))].map((k) => new web3.PublicKey(k));
+  const table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey, state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: all } });
+  const safe = phantomSafeTables([table])[0];
+  assert.equal(safe.state.addresses.length, table.state.addresses.length, 'same positions');
+  const msg = compile(built.ixs, signer, [safe]);
+  const statics = msg.staticAccountKeys.map((k) => k.toBase58());
+  for (const ea of eventAuthorities()) assert.ok(statics.includes(ea.toBase58()), `${ea.toBase58()} is a static key`);
+  assert.ok(new web3.VersionedTransaction(msg).serialize().length <= 1232, 'a launch without a dev buy still fits');
+});

@@ -154,6 +154,21 @@ export async function launchInstructions({ config, mint, signer, global = null, 
  * account (npm run lookup-table). -> { bytes: number|null (null: beyond what a message can hold), fits }
  * config: { name, symbol, uri, feeSharing: {mode, shareholders}, initialBuyLamports }
  */
+// Phantom's simulator cannot predict a pump.fun launch whose program event authorities sit in an address lookup table
+// and shows "This dApp could be malicious" (koynlabs/labs-mcp#14, 2026-10; our launches were flagged the same way). The
+// event authorities of pump and pump fees are therefore always written into the transaction itself (+31 bytes each):
+// the table keeps its positions, those entries are just never used.
+export function eventAuthorities() {
+  const { web3 } = sdk();
+  return [PROGRAMS.pump, PROGRAMS.pumpFees].map((p) => web3.PublicKey.findProgramAddressSync([Buffer.from('__event_authority')], new web3.PublicKey(p))[0]);
+}
+export function phantomSafeTables(tables) {
+  const { web3 } = sdk();
+  const hide = new Set(eventAuthorities().map((k) => k.toBase58()));
+  return tables.map((t) => new web3.AddressLookupTableAccount({ key: t.key, state: { ...t.state,
+    addresses: t.state.addresses.map((a) => (hide.has(a.toBase58()) ? web3.Keypair.generate().publicKey : a)) } }));
+}
+
 export async function compiledTxBytes(config) {
   const { web3 } = sdk();
   const build = async () => {
@@ -166,10 +181,14 @@ export async function compiledTxBytes(config) {
   const table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey,
     state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: statics } });
   const message = new web3.TransactionMessage({ payerKey: a.signer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: a.ixs })
+    .compileToV0Message(phantomSafeTables([table]));
+  const compact = new web3.TransactionMessage({ payerKey: a.signer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: a.ixs })
     .compileToV0Message([table]);
   try {
-    const bytes = new web3.VersionedTransaction(message).serialize().length;
-    return { bytes, fits: bytes <= MAX_TX_BYTES };
+    const safe = (() => { try { return new web3.VersionedTransaction(message).serialize().length; } catch { return null; } })();
+    if (safe != null && safe <= MAX_TX_BYTES) return { bytes: safe, fits: true, phantomSafe: true };
+    const bytes = new web3.VersionedTransaction(compact).serialize().length;
+    return { bytes, fits: bytes <= MAX_TX_BYTES, phantomSafe: false };
   } catch (e) {
     if (/overruns/.test(e.message)) return { bytes: null, fits: false };
     throw e;
@@ -301,8 +320,13 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing (+ buy_v2)
       const { ixs, buy } = await buildInstructions(config, mint, signer);
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
-      const message = new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs })
-        .compileToV0Message(await lookupTables());
+      const tables = await lookupTables();
+      const compile = (t) => new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(t);
+      const fitsBytes = (m) => { try { return new web3.VersionedTransaction(m).serialize().length <= MAX_TX_BYTES; } catch { return false; } };
+      // the Phantom-safe layout (event authorities written in) whenever it fits; a dev buy can push it over 1232 bytes,
+      // then the compact layout (Phantom may warn) until the buy moves to its own transaction
+      let message = compile(phantomSafeTables(tables)), phantomSafe = true;
+      if (!fitsBytes(message)) { message = compile(tables); phantomSafe = false; }
       const tx = new web3.VersionedTransaction(message);
       // Signing order (Phantom support, 2026-10-11): the wallet signs the untouched transaction FIRST; the mint key signs
       // afterwards, server-side, in verifySigned. Phantom's Lighthouse flags transactions that arrive with another
@@ -321,7 +345,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       // initialBuyLamports: the buy's real cost, fees included (what the simulation's balance change contains);
       // initialBuyMaxLamports: the cap signed in the transaction (cost + slippage); accountsLamports is the rent alone:
       // the simulation's balance change minus the buy and minus the network fee it charged
-      const estimate = { networkFeeLamports: null, accountsLamports: null, simulation: null,
+      const estimate = { phantomSafe, networkFeeLamports: null, accountsLamports: null, simulation: null,
         initialBuyLamports: buy ? buy.lamports : 0, initialBuyRequestedLamports: buy ? buy.requestedLamports : 0,
         initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null };
       try { estimate.networkFeeLamports = (await conn.getFeeForMessage(message, 'confirmed')).value; } catch { /* left null */ }
