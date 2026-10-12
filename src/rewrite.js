@@ -70,11 +70,25 @@ export async function rewriteCopy(ctx) {
   const { replanDrafts } = await import('./x.js');
   const v = currentVersion(db, idea.id);
   const brain = parseJson(db.get(`SELECT brain_json FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, idea.id)?.brain_json, {});
-  ctx.progress?.('SUB-01 rewrites the copy');
-  // the idea's latest check (fidelity.js): the rewritten words never present what SUB-01 could not build
-  const { fidelityView } = await import('./fidelity.js');
-  const out = await rewriteSpec({ idea: v, brain, spec, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet),
-    fidelity: fidelityView(db, idea.id) });
+  // a full rebuild with today's SUB-01: the app composed again, the tools picked again, the idea checked again (fidelity.js),
+  // then the words. The name, the ticker, the X handles and the art stay. Any problem there: the words alone, as before.
+  ctx.progress?.('SUB-01 rebuilds the app and rewrites the copy');
+  const { fidelityView, recordFidelity } = await import('./fidelity.js');
+  const { generate } = await import('./generator.js');
+  const submitter = submitterLabel(db, idea.owner_wallet);
+  let out = null;
+  try {
+    const fresh = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter });
+    const next = { ...spec, ...fresh.spec, name: spec.name, ticker: spec.ticker,
+      x: { ...(fresh.spec.x || {}), handles: Array.isArray(spec.x?.handles) && spec.x.handles.length ? spec.x.handles : fresh.spec.x?.handles } };
+    if (fresh.fidelity) { try { recordFidelity(db, { ideaId: idea.id, projectId: project.id, jobId: ctx.job.id, fidelity: fresh.fidelity, id: `fit_rw_${ctx.job.id}` }); } catch { /* recorded best effort */ } }
+    const { validateSpec } = await import('./generator.js');
+    out = { spec: validateSpec(next), generator: fresh.generator, costUsd: fresh.costUsd || 0, fallback: fresh.fallback || null, rebuilt: true };
+  } catch (e) {
+    if (ctx.signal?.aborted) throw e;
+    out = null;
+  }
+  if (!out) out = await rewriteSpec({ idea: v, brain, spec, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter, fidelity: fidelityView(db, idea.id) });
   const by = String(ctx.payload?.by || idea.owner_wallet);
   db.tx(() => {
     const gv = (db.get('SELECT MAX(version) v FROM generations WHERE project_id = ?', project.id)?.v || 0) + 1;
@@ -105,7 +119,7 @@ export async function rewriteCopy(ctx) {
     }
     const who = out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator;
     audit(db, { actor: `wallet:${by}`, kind: 'rewrite', ideaId: idea.id, projectId: project.id, isPublic: true,
-      message: `Copy rewritten by SUB-01 at the author's request, written by ${who}${out.fallback ? ' (the language model failed)' : ''}: site v${site.version}${pub.live ? '' : ', held back by the QA'}` });
+      message: `${out.rebuilt ? 'Site rebuilt (app, tools, words)' : 'Copy rewritten'} by SUB-01 at the author's request, written by ${who}${out.fallback ? ' (the language model failed)' : ''}: site v${site.version}${pub.live ? '' : ', held back by the QA'}` });
   });
-  return { version: site.version, live: pub.live, qa: pub.qa?.line ?? null, generator: out.generator, fallback: out.fallback, reprepared };
+  return { version: site.version, live: pub.live, qa: pub.qa?.line ?? null, generator: out.generator, fallback: out.fallback, reprepared, rebuilt: Boolean(out.rebuilt) };
 }

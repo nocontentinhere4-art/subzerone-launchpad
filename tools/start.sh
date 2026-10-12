@@ -21,6 +21,7 @@ $NODE scripts/backfill-site-tools.js || echo "start: backfill-site-tools failed 
 $NODE scripts/backfill-app.js || echo "start: backfill-app failed (continuing)" >&2
 $NODE scripts/backfill-holder-tools.js || echo "start: backfill-holder-tools failed (continuing)" >&2   # after the app: it appends to the tools the app left
 $NODE scripts/refresh-site-design.js || echo "start: refresh-site-design failed (continuing)" >&2   # last: the coins still on the old design
+$NODE scripts/rebuild-padpad.js || echo "start: rebuild-padpad failed (continuing)" >&2
 
 $NODE src/worker.js &
 WORKER=$!

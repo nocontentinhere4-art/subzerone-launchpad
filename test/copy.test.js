@@ -197,7 +197,7 @@ test('rewrite: owner only, a job writes the copy again (model), a new site versi
     const drafts = h.db.all(`SELECT text FROM x_posts WHERE project_id = ? AND status = 'draft' ORDER BY created_at`, p.id).map((x) => x.text);
     assert.deepEqual(drafts, ramen.x.posts);
     assert.equal(h.db.get('SELECT planned_bio FROM x_accounts WHERE project_id = ?', p.id).planned_bio, ramen.x.bio);
-    assert.match(h.db.get(`SELECT message FROM events WHERE project_id = ? AND kind = 'rewrite'`, p.id).message, /Copy rewritten by SUB-01 at the author's request/);
+    assert.match(h.db.get(`SELECT message FROM events WHERE project_id = ? AND kind = 'rewrite'`, p.id).message, /(Copy rewritten|Site rebuilt \(app, tools, words\)) by SUB-01 at the author's request/);
     // 3 a day
     await owner.call('POST', `/api/projects/${slug}/rewrite`, {}); await drain(h.db, h.cfg, live);
     await owner.call('POST', `/api/projects/${slug}/rewrite`, {}); await drain(h.db, h.cfg, live);
