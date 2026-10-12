@@ -38,6 +38,7 @@ import { drawOmikuji, todayOmikuji, predict, predictionView, leaderboard, emaLis
 import { diaryFor, latestDiary } from './diary.js';
 import { postcardSvg, postcardPng } from './postcard.js';
 import { artView, artFile, chooseArt } from './art-choice.js';
+import { requestRewrite, rewriteView } from './rewrite.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { createChat } from './chat.js';
 import { buildView, createBuildWatch } from './build-steps.js';
@@ -443,7 +444,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   r.get('/api/projects/:slug/art/:file', (ctx) => {
     const { p } = ownedProject(ctx, ctx.params.slug);
     const a = artFile(db, p, ctx.params.file);
-    return ctx.raw(200, a.body, { 'content-type': a.mime, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+    // the live pair changes with the choice: never cached; an older coin's SVG banner is served inert
+    return ctx.raw(200, a.body, { 'content-type': a.mime, 'cache-control': /-live\./.test(ctx.params.file) ? 'no-store' : 'private, max-age=3600', 'x-content-type-options': 'nosniff',
+      ...(/svg/.test(a.mime) ? { 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" } : {}) });
   });
   r.put('/api/projects/:slug/art', async (ctx) => {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
@@ -452,6 +455,16 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const res = chooseArt(db, p, idea, u.wallet, b?.choice);
     return { ok: true, ...res, art: artView(db, projectBySlug(p.slug), db.get('SELECT * FROM ideas WHERE id = ?', idea.id)) };
   });
+  // "Ask SUB-01 to rewrite" (rewrite.js): the copy again with today's brief, for the app the site has now; owner only,
+  // until a launch transaction exists, 3 a day. A job does it (a new site version through SUB-01's QA); GET says where it is.
+  r.post('/api/projects/:slug/rewrite', async (ctx) => {
+    const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    const out = requestRewrite(db, p, idea, u.wallet);
+    wake(out.key);
+    return out;
+  });
+  r.get('/api/projects/:slug/rewrite', (ctx) => { const { p, idea } = ownedProject(ctx, ctx.params.slug); return rewriteView(db, p, idea); });
   r.post('/api/projects/:slug/launch/transaction', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);
     limit('write', u.wallet);

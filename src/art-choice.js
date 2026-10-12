@@ -38,15 +38,23 @@ export function artView(db, project, idea) {
         live: logo?.sha256 === r.logo_sha && banner?.sha256 === r.banner_sha,
         logoUrl: `/api/projects/${project.slug}/art/logo-${r.idx}.png`, bannerUrl: `/api/projects/${project.slug}/art/banner-${r.idx}.png` };
     }),
-    // the live pair, as the coin site and the token metadata use it
-    live: logo ? { logoVersion: logo.version, bannerVersion: banner?.version ?? null } : null,
+    // the live pair, as the coin site and the token metadata use it; the URLs always serve the newest version (the
+    // room PC's X kit downloads them: never a preview link that names an older site version)
+    live: logo ? { logoVersion: logo.version, bannerVersion: banner?.version ?? null,
+      logoUrl: `/api/projects/${project.slug}/art/logo-live.png`, bannerUrl: banner ? `/api/projects/${project.slug}/art/banner-live.png` : null } : null,
   };
 }
 
-/** GET /api/projects/:slug/art/(logo|banner)-(0|1).png (owner): one option's image. -> { mime, body } */
+/** GET /api/projects/:slug/art/(logo|banner)-(0|1|live).png (owner): one option's image, or the live one (the newest
+ * version, an older coin's SVG banner included). -> { mime, body } */
 export function artFile(db, project, file) {
-  const m = String(file).match(/^(logo|banner)-([01])\.png$/);
+  const m = String(file).match(/^(logo|banner)-([01]|live)\.png$/);
   if (!m) throw new HttpError(404, 'not_found');
+  if (m[2] === 'live') {
+    const a = db.get('SELECT mime, body FROM assets WHERE project_id = ? AND kind = ? ORDER BY version DESC LIMIT 1', project.id, m[1]);
+    if (!a) throw new HttpError(404, 'not_found');
+    return { mime: a.mime, body: Buffer.from(a.body) };
+  }
   const c = db.get('SELECT logo_asset_id, banner_asset_id FROM art_candidates WHERE project_id = ? AND idx = ?', project.id, Number(m[2]));
   if (!c) throw new HttpError(404, 'not_found');
   const a = db.get('SELECT mime, body FROM assets WHERE id = ?', m[1] === 'logo' ? c.logo_asset_id : c.banner_asset_id);

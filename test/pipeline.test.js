@@ -5,6 +5,7 @@ import { submitIdea, editIdea, viewIdea } from '../src/ideas.js';
 import { enqueue, claim, runJob } from '../src/jobs.js';
 import { handlers, onDead } from '../src/pipeline.js';
 import { setSetting } from '../src/db.js';
+import { setLogSink } from '../src/log.js';
 
 test('brain says build: idea goes submitted -> evaluating -> selected -> generating -> preview_ready', async () => {
   const { cfg, db } = makeEnv();
@@ -23,7 +24,7 @@ test('brain says build: idea goes submitted -> evaluating -> selected -> generat
   assert.ok(db.get(`SELECT 1 FROM site_versions WHERE project_id = ? AND build_status = 'ok'`, p.id));
   assert.equal(db.get(`SELECT COUNT(*) n FROM assets WHERE project_id = ?`, p.id).n, 4, 'two logo+banner options');
   assert.equal(db.get(`SELECT COUNT(*) n FROM art_candidates WHERE project_id = ?`, p.id).n, 2);
-  assert.equal(db.get(`SELECT COUNT(*) n FROM x_posts WHERE project_id = ? AND status = 'draft'`, p.id).n, 2);
+  assert.equal(db.get(`SELECT COUNT(*) n FROM x_posts WHERE project_id = ? AND status = 'draft'`, p.id).n, 3);
   const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ?`, p.id);
   assert.deepEqual(JSON.parse(alloc.recipients_json).map((r) => [r.wallet, r.bps]), [[w.address, 8000], [SUB01_WALLET, 2000]]);
   assert.equal(db.get(`SELECT wallet FROM project_roles WHERE project_id = ? AND role = 'founder'`, p.id).wallet, w.address, 'founder role granted');
@@ -116,17 +117,28 @@ test('crashed worker: an expired lease is requeued and finishes once', async () 
   assert.equal(ideaStatus(db, id).status, 'selected');
 });
 
-test('generation failure: bounded retries, then failed with a reason', async () => {
-  const { cfg, db } = makeEnv({ GENERATOR: 'anthropic', ANTHROPIC_API_KEY: 'test' });
+test('language model failure: the template writes the copy, the log says the HTTP status and the message, never the key', async () => {
+  const { cfg, db } = makeEnv({ GENERATOR: 'anthropic', ANTHROPIC_API_KEY: 'sk-test-secret-key' });
   const w = user(db);
   const brain = fakeBrain('build');
-  const failing = async (url, init) => (String(url).includes('anthropic') ? new Response('{}', { status: 529 }) : brain.fetchImpl(url, init));
-  const id = submitIdea(db, cfg, w.address, IDEA(w));
-  let t = Date.now();
-  for (let i = 0; i < 6; i++) { await drain(db, cfg, failing, { t }); t += 30 * 60_000; }
-  assert.equal(ideaStatus(db, id).status, 'failed');
-  assert.match(ideaStatus(db, id).status_note, /building failed: generator HTTP 529/);
-  assert.equal(db.get(`SELECT attempts FROM jobs WHERE type = 'generate'`).attempts, 3);
+  const failing = async (url, init) => (String(url).includes('anthropic')
+    ? new Response(JSON.stringify({ type: 'error', error: { type: 'overloaded_error', message: 'Overloaded' } }), { status: 529 }) : brain.fetchImpl(url, init));
+  const lines = [];
+  setLogSink((l) => lines.push(l));
+  try {
+    const id = submitIdea(db, cfg, w.address, IDEA(w));
+    await drain(db, cfg, failing);
+    assert.equal(ideaStatus(db, id).status, 'preview_ready');
+    assert.equal(db.get(`SELECT attempts FROM jobs WHERE type = 'generate'`).attempts, 1, 'no retry: the template wrote it');
+    const gen = db.get('SELECT generator, output_json FROM generations');
+    assert.equal(gen.generator, 'template/1');
+    assert.doesNotMatch(gen.output_json, /just a meme|Not financial advice/i);
+  } finally { setLogSink((l) => process.stdout.write(l + '\n')); }
+  const warn = lines.map((l) => JSON.parse(l)).find((l) => l.level === 'warn' && /^generator: the language model failed/.test(l.msg));
+  assert.ok(warn, 'a clear warning');
+  assert.equal(warn.status, 529);
+  assert.match(warn.why, /generator HTTP 529: Overloaded/);
+  assert.ok(!lines.some((l) => l.includes('sk-test-secret-key')), 'never the key');
 });
 
 test('generator output with markup or financial promises is rejected (unsafe generated content)', async () => {
@@ -140,8 +152,11 @@ test('generator output with markup or financial promises is rejected (unsafe gen
     : brain.fetchImpl(url, init));
   const id = submitIdea(db, cfg, w.address, IDEA(w));
   await drain(db, cfg, gen);
-  assert.equal(ideaStatus(db, id).status, 'failed');
-  assert.equal(db.get('SELECT COUNT(*) n FROM site_versions').n, 0);
+  // refused twice (one retry with the reason), then the template writes it: nothing the model said reaches the page
+  assert.equal(ideaStatus(db, id).status, 'preview_ready');
+  assert.equal(db.get('SELECT generator FROM generations').generator, 'template/1');
+  const html = db.get('SELECT html FROM site_versions').html;
+  assert.doesNotMatch(html, /alert\(1\)|guaranteed 100x|Evil/);
 });
 
 test('policy gate: promised returns are declined before the brain is asked', async () => {

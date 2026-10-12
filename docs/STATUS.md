@@ -26,7 +26,7 @@
 | | Asleep → queued; offline → "nothing decided"; no substitute decider | Working | tests |
 | Pipeline | Durable jobs: state, structured I/O, bounded retries, idempotency, cost and time limits, progress, audit | Working | 13 pipeline tests |
 | Generation | Template generator (no AI) | Working | |
-| | Language-model generator (`GENERATOR=anthropic`) | Mock-tested | needs `ANTHROPIC_API_KEY` and price env vars; tested with a fake API (failure, unsafe output) |
+| | Language-model generator (`GENERATOR=anthropic`) | Working (live-tested 2026-10-12) | composes the app first, then writes the copy for it (docs/APP-COMPOSER.md "The copy"); `ANTHROPIC_MODEL` (default claude-sonnet-5-5); any model error falls back to the template with a warning |
 | | Logo PNG and banner SVG from the brain record | Working | |
 | Site kit | Tools on coin sites: token panel, wall, signed poll, drop box with daily pick, event countdown + .ics, meme maker; one extra (map / sound toy / mini-game / chart) on vendored open-source libraries; SUB-01 picks them by keywords, the author switches them in the room PC (2026-10-12) | Working (mock launch) | `test/tools.test.js` (14); headless Chrome run with a test wallet; holder checks need `HELIUS_API_KEY` (else "any wallet", said on the page); see SITE-KIT.md |
 | Sites | Sandboxed build, validator, versions, rollback, isolated subdomains with a no-script CSP | Working | locally on `*.projects.localhost` |

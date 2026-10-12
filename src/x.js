@@ -25,6 +25,22 @@ export function planAccount(db, projectId, spec) {
   }
 }
 
+/** The copy was rewritten (rewrite.js): the planned bio follows, and the drafts take the new posts in order. Posts
+ * already approved, publishing or published are never touched; drafts beyond the new count are dropped (never posted). */
+export function replanDrafts(db, projectId, spec) {
+  planAccount(db, projectId, spec);
+  db.run('UPDATE x_accounts SET planned_bio = ? WHERE project_id = ?', spec.x.bio, projectId);
+  const drafts = db.all(`SELECT id FROM x_posts WHERE project_id = ? AND status = 'draft' ORDER BY created_at, rowid`, projectId);
+  const sent = db.get(`SELECT COUNT(*) n FROM x_posts WHERE project_id = ? AND status != 'draft'`, projectId).n;
+  const t = now();
+  spec.x.posts.forEach((text, i) => {
+    if (drafts[i]) db.run(`UPDATE x_posts SET text = ?, error = NULL WHERE id = ? AND status = 'draft'`, text, drafts[i].id);
+    else db.run(`INSERT INTO x_posts (id, project_id, kind, text, status, created_at) VALUES (?, ?, ?, ?, 'draft', ?)`,
+      id('xpost'), projectId, i === 0 && !sent ? 'launch' : 'follow_up', text, t + i);
+  });
+  for (const d of drafts.slice(spec.x.posts.length)) db.run(`DELETE FROM x_posts WHERE id = ? AND status = 'draft'`, d.id);
+}
+
 export function startOAuth(db, cfg, projectId, wallet) {
   if (!xConfigured(cfg)) throw new HttpError(503, 'x_not_configured', 'X integration needs X_CLIENT_ID, X_REDIRECT_URI and APP_ENCRYPTION_KEY');
   const verifier = randomBytes(32).toString('base64url');

@@ -8,6 +8,7 @@ import { submitIdea, publishIdea } from '../src/ideas.js';
 import { enqueue, claim, runJob } from '../src/jobs.js';
 import { handlers, onDead } from '../src/pipeline.js';
 import { templateGenerate } from '../src/generator.js';
+import { setSetting } from '../src/db.js';
 import { worldView, PLOT_IDS } from '../src/world.js';
 import { median, quantile, expectFor, remainingFor, estimate, queueStart, buildView, buildSummary, buildRecorder, artOutcome, qaOutcome, clearStatsCache,
   DEFAULT_SECONDS, PIPELINE } from '../src/build-steps.js';
@@ -89,7 +90,7 @@ test('migration 018: build_steps on a fresh database', () => {
 });
 
 // --- recording -----------------------------------------------------------------------------------------------------------
-test('a build records queued → brief → app → art → site → qa → ready with providers; the view ends ready at 100%', async () => {
+test('a build records queued → app → brief (the words) → art → site → qa → ready with providers; the view ends ready at 100%', async () => {
   const { cfg, db } = makeEnv();
   const w = user(db);
   const id = submitIdea(db, cfg, w.address, IDEA(w));
@@ -118,7 +119,7 @@ test('observing changes nothing: the same spec with or without the observer', ()
   const heard = [];
   const a = templateGenerate({ idea, brain }), b = templateGenerate({ idea, brain, observe: (e) => heard.push(e) });
   assert.deepEqual(a, b);
-  assert.deepEqual(heard, ['brief:done', 'app:start', 'app:done']);
+  assert.deepEqual(heard, ['app:done', 'brief:start', 'brief:done'], 'the app first, then the words for it (2026-10-12)');
 });
 
 test('language model build: brief and app by the language model; a composer fallback says rules (no AI) and why', async () => {
@@ -126,7 +127,7 @@ test('language model build: brief and app by the language model; a composer fall
   const w = user(db);
   const brain = fakeBrain('build');
   const spec = { name: 'Ramen Radar', ticker: 'RAMEN', tagline: 'Late-night ramen, mapped.', description: 'A community map of late-night ramen in Tokyo.',
-    sections: [{ heading: 'The idea', body: 'A map.' }], x: { handles: ['ramenradar', 'ramen_sol', 'ramen_sub01'], bio: 'Ramen.', posts: ['Ramen.', 'Map.'] } };
+    sections: [{ heading: 'The idea', body: 'A map.' }], x: { handles: ['ramenradar', 'ramen_sol', 'ramen_sub01'], bio: 'Late-night ramen in Tokyo, mapped.', posts: ['Add a ramen counter.', 'Vote the good bowls up.'] } };
   const fetchImpl = async (url, init) => {
     if (!String(url).includes('api.anthropic.com')) return brain.fetchImpl(url, init);
     if (/You design a small working web app/.test(JSON.parse(init.body).system)) return new Response('{}', { status: 529 });   // the composer: falls back
@@ -143,18 +144,33 @@ test('language model build: brief and app by the language model; a composer fall
   assert.equal(db.get(`SELECT planned FROM build_steps WHERE idea_id = ? AND step = 'app'`, id).planned, 'language model', 'the ETA keeps it as a language-model run');
 });
 
-test('a failed run: the step it stopped on is failed, the build retries; the reason only for the author', async () => {
+test('a language model failure: the words step says the template wrote them, and the build goes on', async () => {
   const { cfg, db } = makeEnv({ GENERATOR: 'anthropic', ANTHROPIC_API_KEY: 'test' });
   const w = user(db);
   const brain = fakeBrain('build');
   const failing = async (url, init) => (String(url).includes('anthropic') ? new Response('{}', { status: 529 }) : brain.fetchImpl(url, init));
   const id = submitIdea(db, cfg, w.address, IDEA(w));
   await drain(db, cfg, failing);
+  assert.equal(ideaStatus(db, id).status, 'preview_ready');
+  const s = Object.fromEntries(buildView(db, cfg, id, { owner: true }).steps.map((x) => [x.id, x]));
+  assert.equal(s.app.provider, 'rules (no AI)');
+  assert.equal(s.brief.state, 'done');
+  assert.equal(s.brief.provider, 'template (no AI)');
+  assert.match(s.brief.note, /the language model failed \(generator HTTP 529\); the template wrote the words/);
+});
+
+test('a failed run: the step it stopped on is failed, the build retries; the reason only for the author', async () => {
+  const { cfg, db } = makeEnv();
+  const w = user(db);
+  const failing = fakeBrain('build').fetchImpl;
+  setSetting(db, 'pause.deployment', true, 'test');          // the site build refuses: the run stops on the site step
+  const id = submitIdea(db, cfg, w.address, IDEA(w));
+  await drain(db, cfg, failing);
   const mine = buildView(db, cfg, id, { owner: true }), pub = buildView(db, cfg, id);
   assert.equal(mine.state, 'retrying');
-  assert.equal(mine.steps.find((s) => s.id === 'brief').state, 'failed');
-  assert.match(mine.steps.find((s) => s.id === 'brief').note, /generator HTTP 529/);
-  assert.equal(pub.steps.find((s) => s.id === 'brief').note, 'stopped here');
+  assert.equal(mine.steps.find((s) => s.id === 'site').state, 'failed');
+  assert.match(mine.steps.find((s) => s.id === 'site').note, /paused/);
+  assert.equal(pub.steps.find((s) => s.id === 'site').note, 'stopped here');
   assert.ok(mine.queue && mine.queue.startsInSeconds > 0, 'waits for the retry');
   assert.ok(mine.etaSeconds >= mine.queue.startsInSeconds);
   // out of attempts: failed, no ETA
@@ -165,7 +181,7 @@ test('a failed run: the step it stopped on is failed, the build retries; the rea
   assert.equal(end.state, 'failed'); assert.equal(end.etaAt, null); assert.equal(end.attempt, 3);
 });
 
-test('a content check that refuses the spec stops on the app step, not on the art', async () => {
+test('copy the content check refuses: the words step says the template wrote them; nothing of it reaches the page', async () => {
   const { cfg, db } = makeEnv({ GENERATOR: 'anthropic', ANTHROPIC_API_KEY: 'test' });
   const w = user(db);
   const brain = fakeBrain('build');
@@ -174,9 +190,11 @@ test('a content check that refuses the spec stops on the app step, not on the ar
   const id = submitIdea(db, cfg, w.address, IDEA(w));
   await drain(db, cfg, gen);
   const v = buildView(db, cfg, id, { owner: true });
-  assert.equal(v.state, 'failed');
-  assert.deepEqual(v.steps.map((s) => s.state), ['done', 'done', 'failed', 'todo', 'todo', 'todo', 'todo']);
-  assert.match(v.steps[2].note, /financial promises/);
+  assert.equal(v.state, 'ready');
+  assert.deepEqual(v.steps.map((s) => s.id), ['queued', 'app', 'brief', 'art', 'site', 'qa', 'ready']);
+  assert.equal(v.steps[2].provider, 'template (no AI)');
+  assert.match(v.steps[2].note, /generator output refused/);
+  assert.doesNotMatch(db.get('SELECT html FROM site_versions').html, /guaranteed 100x/);
 });
 
 test('ETA from data: the medians of the last finished builds replace the defaults; the queue says who is first', async () => {
@@ -189,8 +207,8 @@ test('ETA from data: the medians of the last finished builds replace the default
     db.run(`INSERT INTO ideas (id, owner_wallet, status, visibility, current_version, created_at, updated_at) VALUES (?, ?, 'preview_ready', 'private', 1, ?, ?)`, job.idea_id, old.address, t0, t0);
     const r = buildRecorder(db, job, { cfg });
     let t = t0 + i * 100_000;
-    r.begin(t); t += 10_000; r.done('brief', {}, t);
-    r.start('app', 'language model', null, t); t += 4_000; r.done('app', {}, t);
+    r.begin(t); t += 4_000; r.done('app', {}, t);               // begin(): in line → the app (2026-10-12: the app first)
+    r.start('brief', 'language model', null, t); t += 10_000; r.done('brief', {}, t);
     r.start('art', 'local drawing', null, t); t += 30_000; r.done('art', {}, t);
     r.start('site', 'sandbox', null, t); t += 2_000; r.done('site', {}, t);
     r.start('qa', 'static checks', null, t); t += 500; r.done('qa', {}, t);
@@ -231,23 +249,23 @@ test('while it runs: the running step, the percentage and an ETA that converges'
   const j = db.get('SELECT * FROM jobs WHERE id = ?', job.id);
   const r = buildRecorder(db, j, { cfg: { ...cfg, generator: { ...cfg.generator, provider: 'anthropic' } } });
   const t = Date.now();
-  r.begin(t - 30_000); r.done('brief', {}, t - 10_000); r.start('app', 'language model', null, t - 10_000);
+  r.begin(t - 30_000); r.done('app', {}, t - 10_000); r.start('brief', 'language model', null, t - 10_000);   // the app, then the words
   const v1 = buildView(db, cfg, id, { t });
   assert.equal(v1.state, 'running');
-  assert.equal(v1.steps.find((s) => s.id === 'app').state, 'running');
-  assert.equal(v1.steps.find((s) => s.id === 'app').provider, 'language model');
+  assert.equal(v1.steps.find((s) => s.id === 'brief').state, 'running');
+  assert.equal(v1.steps.find((s) => s.id === 'brief').provider, 'language model');
   assert.ok(v1.percent > 0 && v1.percent < 100);
   const v2 = buildView(db, cfg, id, { t: t + 5_000 });
   assert.ok(v2.etaSeconds < v1.etaSeconds && v2.etaSeconds > 0);
   assert.ok(Math.abs(v2.etaAt - v1.etaAt) < 1000, 'within the medians the finish time holds still');
-  assert.equal(buildSummary(v1).step.id, 'app');
+  assert.equal(buildSummary(v1).step.id, 'brief');
   // the building in /api/world: "Building · 62% · ~1 min left"
   db.run(`INSERT INTO plots (plot_id, kind, wallet, idea_id, claimed_at) VALUES (?, 'project', ?, ?, ?)`, PLOT_IDS[0], w.address, id, t);
   const b = worldView(db, cfg, t).plots.find((p) => p.plotId === PLOT_IDS[0]).project.build;
-  assert.equal(b.state, 'running'); assert.equal(b.step.id, 'app'); assert.ok(b.percent > 0 && b.etaSeconds > 0);
-  // a job no longer running leaves the app step failed (a worker that died mid-step)
+  assert.equal(b.state, 'running'); assert.equal(b.step.id, 'brief'); assert.ok(b.percent > 0 && b.etaSeconds > 0);
+  // a job no longer running leaves the running step failed (a worker that died mid-step)
   db.run(`UPDATE jobs SET status = 'dead', last_error = 'lease expired' WHERE id = ?`, job.id);
-  assert.equal(buildView(db, cfg, id, { t }).steps.find((s) => s.id === 'app').state, 'failed');
+  assert.equal(buildView(db, cfg, id, { t }).steps.find((s) => s.id === 'brief').state, 'failed');
 });
 
 // --- HTTP + the stream ------------------------------------------------------------------------------------------------

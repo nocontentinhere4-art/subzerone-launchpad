@@ -117,7 +117,7 @@ test('child launch (MOCK): one signed message -> SUB-01 build -> the child built
     let st = await k.site('GET', '/_api/launch');
     assert.equal(st.status, 200, st.text);
     assert.equal(st.json.open, false);
-    assert.match(st.json.pausedNote, /once Quantum Launchpad itself is launched/);
+    assert.match(st.json.pausedNote, /once Quantum launchpad itself is launched/);   // the author's name as typed (2026-10-12)
     const visitor = wallet();
     assert.equal((await start(k, visitor)).q.json.error, 'parent_not_launched');
     await ownerLaunch(h, k);
@@ -136,7 +136,7 @@ test('child launch (MOCK): one signed message -> SUB-01 build -> the child built
     assert.equal(q.status, 200, q.text);
     assert.deepEqual(q.json.recipients.map((r) => [r.role, r.wallet, r.bps]), [['submitter', visitor.address, 7000], ['parent', author, 1000], ['sub01', SUB01_WALLET, 2000]]);
     assert.match(q.json.message, /This is a message, not a transaction/);
-    assert.match(q.json.message, new RegExp(`70\\.00% to you, the creator \\(${visitor.address}\\); 10\\.00% to Quantum Launchpad's author \\(${author}\\); 20\\.00% to SUB-01 \\(${SUB01_WALLET}\\)`));
+    assert.match(q.json.message, new RegExp(`70\\.00% to you, the creator \\(${visitor.address}\\); 10\\.00% to Quantum launchpad's author \\(${author}\\); 20\\.00% to SUB-01 \\(${SUB01_WALLET}\\)`));
     assert.match(q.json.message, /Dev buy: 0\.01 SOL/);
     assert.match(q.json.message, new RegExp(`Image sha256: ${sha256(Buffer.from(PNG, 'base64'))}`));
     assert.equal(s.status, 200, s.text);
@@ -227,7 +227,7 @@ test('child launch (MOCK): one signed message -> SUB-01 build -> the child built
     assert.match(logo.headers['content-security-policy'], /sandbox/);
     const w = worldView(h.db, h.cfg);
     const kid = w.plots.find((x) => x.project?.slug === child.slug);
-    assert.deepEqual(kid.project.parent, { slug: k.slug, name: 'Quantum Launchpad' });
+    assert.deepEqual(kid.project.parent, { slug: k.slug, name: 'Quantum launchpad' });
     assert.equal(w.plots.find((x) => x.project?.slug === k.slug)?.project?.childrenLaunched ?? 1, 1);
     // the token metadata image is the creator's image, served as what it is
     const cfgJson = JSON.parse(h.db.get('SELECT config_json FROM launch_intents WHERE project_id = ?', child.id).config_json);

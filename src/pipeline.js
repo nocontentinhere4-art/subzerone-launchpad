@@ -10,7 +10,8 @@ import { askBrain } from './brain.js';
 import { appendVote } from './trust.js';
 import { settlePredictions } from './rituals.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
-import { generate, estimateCostUsd , networkLabel } from './generator.js';
+import { generate, estimateCostUsd , networkLabel, submitterLabel } from './generator.js';
+import { rewriteCopy } from './rewrite.js';
 import { logoPng, bannerSvg } from './art.js';
 import { makeCoinArt, slugBase } from './coinart.js';
 import { bannerCredit } from './site.js';
@@ -136,8 +137,8 @@ export const handlers = {
     // the build timeline the author watches (build-steps.js): observed and recorded, never a reason to fail
     const steps = buildRecorder(db, ctx.job, { cfg, progress: ctx.progress });
     steps.begin();
-    ctx.progress('writing the project identity');
-    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, observe: steps.observe });
+    ctx.progress('composing the app');
+    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet), observe: steps.observe });
     const spec = out.spec;
     // the coin art (coinart.js): two black-and-white candidates, drawn before the transaction (providers are slow);
     // a provider problem ends in the local drawing, only a missing renderer falls back to the old procedural art
@@ -200,7 +201,7 @@ export const handlers = {
         draftAllocation(db, p.id, defaultAllocation(cfg, v.receiving_wallet), 'system');
       }
       audit(db, { actor: 'generator', kind: 'generation', ideaId, projectId: p.id, isPublic: true,
-        message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}; ${artLine(art)}` });
+        message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}${out.fallback ? ` (the language model failed: ${out.fallback.slice(0, 120)})` : ''}; ${artLine(art)}` });
       return p;
     });
     ctx.progress('building the website in the sandbox');
@@ -216,6 +217,9 @@ export const handlers = {
   },
 
   child_build: (ctx) => childBuild(ctx),
+
+  // "Ask SUB-01 to rewrite" (rewrite.js): the copy again for the app the site has now, through the QA gate
+  rewrite_copy: (ctx) => rewriteCopy(ctx),
 
   async build_site(ctx) {
     const { db, cfg } = ctx;

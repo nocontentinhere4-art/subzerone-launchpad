@@ -13,8 +13,9 @@ import { providerOf } from './coinart.js';
 
 export const STEPS = [
   { id: 'queued', label: 'In line' },
-  { id: 'brief', label: 'Name, ticker and story' },
+  // 2026-10-12: SUB-01 composes the app first, then writes the words for that app (generator.js)
   { id: 'app', label: 'The app' },
+  { id: 'brief', label: 'The words: name, tagline, story, X posts' },
   { id: 'art', label: 'Two logo + banner options' },
   { id: 'site', label: 'The website (sandbox build + safety check)' },
   { id: 'qa', label: 'Quality check' },
@@ -22,7 +23,7 @@ export const STEPS = [
 ];
 const LABEL = Object.fromEntries(STEPS.map((s) => [s.id, s.label]));
 /** The generate job's steps, in order (qa: SUB-01's QA gate, site-qa.js publishSite). */
-export const PIPELINE = ['queued', 'brief', 'app', 'art', 'site', 'qa', 'ready'];
+export const PIPELINE = ['queued', 'app', 'brief', 'art', 'site', 'qa', 'ready'];
 /** The steps that are work (timed, counted in the percentage). */
 const WORK = new Set(['brief', 'app', 'art', 'site', 'qa']);
 export const DEFAULT_SECONDS = { brief: 25, app: 20, art: 40, site: 5, qa: 30 };
@@ -111,8 +112,8 @@ export function qaOutcome(qa) {
 // --- recording (pipeline.js) -------------------------------------------------------------------------------------------
 /**
  * One generate run's recorder. Every call is safe: a database problem is logged, never thrown into the build.
- * begin(): the wait in line ends, the brief starts. start(step, provider), done(step, {provider, note, state}).
- * observe(event, info): the hook generator.js calls between the brief and the app ('brief:done', 'app:start', 'app:done').
+ * begin(): the wait in line ends, the app starts. start(step, provider), done(step, {provider, note, state}).
+ * observe(event, info): the hook generator.js calls between the app and the words ('app:done', 'brief:start', 'brief:done').
  */
 export function buildRecorder(db, job, { cfg, progress } = {}) {
   const ideaId = job.idea_id, jobId = job.id, attempt = job.attempts || 1;
@@ -134,14 +135,16 @@ export function buildRecorder(db, job, { cfg, progress } = {}) {
     // in line since the job was queued (a retry: since the previous run ended)
     const prev = db.get(`SELECT MAX(COALESCE(ended_at, updated_at)) t FROM build_steps WHERE idea_id = ? AND job_id = ? AND attempt < ?`, ideaId, jobId, attempt)?.t;
     done('queued', { startedAt: Math.min(t, prev ?? job.created_at ?? t), note: attempt > 1 ? `try ${attempt} after a failed run` : null }, t);
-    start('brief', PROVIDERS.brief(cfg), null, t);
+    start('app', PROVIDERS.app(cfg), null, t);
   });
   const observe = safe((event, info = {}) => {
-    if (event === 'brief:done') done('brief');
-    else if (event === 'app:start') { start('app', info.provider || PROVIDERS.app(cfg)); try { progress?.('composing the app'); } catch { /* the progress text is cosmetic */ } }
-    else if (event === 'app:done') {
+    if (event === 'app:done') {
       const fellBack = Boolean(info.fallback) && cfg?.generator?.provider === 'anthropic';
       done('app', fellBack ? { provider: 'rules (no AI)', note: "the language model's app did not pass the checks; built from the rules" } : { provider: info.provider || null });
+    } else if (event === 'brief:start') { start('brief', info.provider || PROVIDERS.brief(cfg)); try { progress?.('writing the words for the app'); } catch { /* the progress text is cosmetic */ } }
+    else if (event === 'brief:done') {
+      const fellBack = Boolean(info.fallback) && cfg?.generator?.provider === 'anthropic';
+      done('brief', fellBack ? { provider: 'template (no AI)', note: `the language model failed (${String(info.fallback).slice(0, 120)}); the template wrote the words` } : { provider: info.provider || null });
     }
   });
   return { begin, start, done, observe, ideaId, jobId, attempt };

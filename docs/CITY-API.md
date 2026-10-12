@@ -283,7 +283,7 @@ After "He builds it" the generate job records each step it goes through (`build-
 "build": {
   "state": "queued|running|retrying|ready|failed",
   "steps": [
-    { "id": "queued|brief|app|art|site|qa|ready", "label": "Two logo + banner options",
+    { "id": "queued|app|brief|art|site|qa|ready", "label": "Two logo + banner options",
       "state": "todo|running|done|failed|skipped", "startedAt": 0, "endedAt": null,
       "provider": "language model|template (no AI)|rules (no AI)|Higgsfield|Recraft|Higgsfield + local fallback|local fallback|local drawing|sandbox|Chromium|static checks|null",
       "plannedProvider": "Higgsfield (todo steps: who will do it)", "note": "1 of 2 options drawn locally|null",
@@ -295,7 +295,7 @@ After "He builds it" the generate job records each step it goes through (`build-
 }
 ```
 
-- Steps: `queued` (in line) → `brief` (name, ticker and story) → `app` (the idea app) → `art` (two logo + banner
+- Steps (2026-10-12: the app first, then the words for it): `queued` (in line) → `app` (the idea app) → `brief` (the words: name, tagline, story, X posts; a language-model failure says the template wrote them) → `art` (two logo + banner
   options) → `site` (sandbox build + safety check) → `qa` (SUB-01's QA gate, docs/SITE-QA.md: `Chromium` or
   `static checks`) → `ready`.
 - ETA: per step the median duration of the last 20 finished builds (per planned provider once it has 3 runs), the
@@ -1284,6 +1284,18 @@ mini-game / chart). The room PC's Site tab lists them for the owner and saves th
 
 The public site is framed with `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox
 allow-downloads"`: it is another origin, and its kit needs scripts and its own origin (SITE-KIT.md, "Architecture decision").
+
+## Logo pair and copy (room PC: Site, X and Launch tabs) — docs/APP-COMPOSER.md "The copy", art-choice.js
+
+- `GET /api/projects/:slug/art` (owner) → `{choice, chosen, locked, lockedWhy, candidates:[{index, label, provider, symbol,
+  live, logoUrl, bannerUrl}], live:{logoVersion, bannerVersion, logoUrl, bannerUrl}}`; `PUT {choice: 0|1}`. The Site tab
+  shows the pair beside the preview, the X tab's profile kit shows "Choose which pair to use" and downloads that pair
+  (`…/art/logo-<i>.png`, `…/art/banner-<i>.png`; an older coin: `…/art/logo-live.png`, `…/art/banner-live.png`, the newest
+  version, `no-store`), and the kit's Website line is the public site from the fresh project view, never a preview link.
+- `POST /api/projects/:slug/rewrite` (owner) → `{queued, jobId, left}` ("Ask SUB-01 to rewrite"; 429 `rewrite_limit`, 3 a
+  day; 409 `locked` once a launch transaction exists); `GET` → `{allowed, lockedWhy, perDay, left, last:{state:
+  queued|running|done|failed|skipped, progress, version, live, qa, generator, fallback, error}}`. The Site tab polls it
+  every 3 s and reloads the preview on the new version.
 
 ## Hosting the city on the same origin
 

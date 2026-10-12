@@ -20,6 +20,7 @@ export const POLICIES = {
   build_site: { maxAttempts: 3, timeoutMs: 240_000, backoff: backoff(10_000, 60_000) },   // the build + SUB-01's QA (site-qa.js)
   child_build: { maxAttempts: 3, timeoutMs: 240_000, backoff: backoff(10_000, 5 * 60_000) },   // child-launch.js childBuild (+ SUB-01's QA)
   site_qa: { maxAttempts: 2, timeoutMs: 120_000, backoff: backoff(60_000, 10 * 60_000) },
+  rewrite_copy: { maxAttempts: 2, timeoutMs: 240_000, backoff: backoff(30_000, 5 * 60_000) },   // rewrite.js: the copy, a build + SUB-01's QA
   prepare_launch: { maxAttempts: 3, timeoutMs: 30_000, backoff: backoff(10_000, 60_000) },
   confirm_launch: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },
   confirm_dev_buy: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },   // launch.js confirmDevBuy (tx2)

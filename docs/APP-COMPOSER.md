@@ -65,7 +65,7 @@ enables `POST /api/projects/:slug/app/reveal-now` for local tests; such a reveal
   with posters (nothing generates art); a destroyer (`destroy`, `kaiju`, `t-rex`, `godzilla`…) → a target list; a
   building or home → a visitor book with a pass; otherwise a small suggestion board. `honest` says in one line what was
   built and why, including when the idea has no clear product.
-- **Claude** (only with `ANTHROPIC_API_KEY`): `claude-sonnet-5-5`, `max_tokens` 2000, thinking off (`between_tools`),
+- **Claude** (only with `ANTHROPIC_API_KEY`): `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`), `max_tokens` 2000, thinking off (`between_tools`, Sonnet 5.5 only),
   server-side refusal fallback on, the idea passed as untrusted data, the rules' draft included. The answer must be one
   JSON object that `validateApp` accepts (and keep the `pq` block for a quantum idea); anything else falls back to the
   rules with the reason in `fallback`.
@@ -174,3 +174,40 @@ cap (stored coin stats), and the list with logos served on the parent's origin.
 | POST | `/_api/launch/start` | the same + `{nonce, signature, image}` (base64, ≤ 2.2 MB body) → `{id, key}` |
 | GET | `/_api/launch/:id`, `/_api/launch/:id/image`, `/_api/launch/logo/:slug` | status, verdict, configuration, launch, dev buy, registry entry; images inert (nosniff, sandbox CSP) |
 | POST | `/_api/launch/:id/{tx,refresh,signed,abandon}`, `/devbuy/{tx,refresh,signed,abandon,skip}` | `{key, signed?}`: launch.js on the child project, signer = the visitor |
+
+## The copy (2026-10-12)
+
+The owner's brief after "Q-wave: a meme coin for the permissionless launchpad idea … Just a meme, no promises": the sites
+have real functions, so the words present the real product. `generator.js` now composes the app **first** and writes the
+copy **for that app**:
+
+1. `composeApp` (rules, or Claude validated against the rules) with the author's name and ticker.
+2. The copy: `writeCopy` sends `COPY_SYSTEM` (a top product studio's brief: name, a tagline that says what it does, a
+   description, 1–4 sections on the app's actual features, an X bio with no links, 2–3 launch posts; confident, concrete,
+   premium, no hype words) and `copyBrief` (the idea as untrusted data with the author's name, the app's kind, title,
+   lede and one plain sentence per block from `appFeatures`, the site's standard tools from `tools.js` `CATALOG`, the
+   chain panels, the vote in a clause, the composer's `honest` line, the quantum note). JSON-only output
+   (`output_config.format` with `COPY_SCHEMA`), `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`), `max_tokens` 4000.
+3. `checkCopy`: lengths; no markup or emoji; no returns, yield, holder benefits (`RETURNS` and the spec's promise words);
+   no "just a meme", "no promises", NFA or other disclaimer filler (the site prints its legal note in "What this is" and
+   the footer); no hype words; no endorsements; never "conscious"; no quantum-proof / quantum-safe claim about coins, keys,
+   wallets or fees unless negated (the registry only); no links in the bio or the posts; the brain at most twice. A fixed
+   name and ticker win; the vote and the author's credit are added in a short sentence when the model forgot them; handle
+   ideas that do not fit X are replaced by SUB-01's. A broken rule gets one more try with the reason.
+4. Any model problem (HTTP, network, refusal, truncation, invalid JSON, a rule broken twice) falls back to `templateCopy`
+   and logs `generator: the language model failed …` with `status` and the API's message (never the key); the audit
+   line says "the language model failed". The build no longer dies on a model error.
+
+`templateCopy` (no AI) writes from the same app: a tagline per app kind ("The launchpad with a post-quantum registry of
+every launch."), the app's lede as the description, "How it works" from `appFeatures`, "Also on the site" from the tools,
+"Where it comes from" (the author, the vote in one clause, the idea in its author's words). The author's name suggestion
+is kept as typed ("Q-wave", not "Q-Wave").
+
+**Ask SUB-01 to rewrite** (`rewrite.js`, room PC Site tab): `POST /api/projects/:slug/rewrite` (owner; preview_ready /
+approved / launch_prepared; before any launch transaction; 3 a day per project, counted on the jobs table; one at a time)
+queues `rewrite_copy`: `rewriteSpec` writes the copy again for the app and tools the live spec has now (name and ticker
+kept), a new site version goes through SUB-01's QA, and when it is live the X drafts follow (`x.js replanDrafts`: only
+drafts change), the project description too, and a prepared launch configuration is prepared again (its metadata carries
+the description), like the logo choice. `GET` the same path → `{allowed, lockedWhy, perDay, left, last:{state, progress,
+version, live, qa, generator, fallback, error}}`. 429 `rewrite_limit`, 409 `locked`.
+
