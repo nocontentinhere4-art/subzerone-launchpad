@@ -181,7 +181,9 @@ switched everything off) is left alone.
 
 Built by `npm run build:kit` (esbuild, pinned) into `public/_kit/`, which is committed; the container runs no bundler.
 The project host serves `/_kit/*` from memory, gzipped when the browser accepts it (woff2 as is); vendor files and
-fonts are versioned by name and cached a year (`immutable`), `site-kit.v1.*` a day. An incompatible kit change ships as
+fonts are versioned by name and cached a year (`immutable`), `site-kit.v1.*` a day. `/_kit/*` is public, audited static code: it carries `cross-origin-resource-policy: cross-origin` and
+`access-control-allow-origin: *` so the owner's preview (a sandboxed, opaque-origin frame on the launchpad) can load the
+stylesheet and fonts. Nothing private is ever served under `/_kit`. An incompatible kit change ships as
 `site-kit.v2.*` with a validator allowance for it.
 
 | File | Raw | gzip | Loaded when |

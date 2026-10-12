@@ -893,7 +893,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     }
     const gz = hit.gz && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '')), body = gz ? hit.gz : hit.raw;
     const immutable = /^(vendor|fonts)\//.test(m[1]);
-    res.writeHead(200, { 'content-type': KIT_TYPES[extname(m[1])], 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin',
+    // public, audited static files: readable by any page (the owner's preview is a sandboxed, opaque-origin frame, so its
+    // stylesheet and fonts are cross-origin requests; fonts need CORS). Nothing private is ever served under /_kit.
+    res.writeHead(200, { 'content-type': KIT_TYPES[extname(m[1])], 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'cross-origin', 'access-control-allow-origin': '*',
       'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=86400', 'content-length': body.length,
       ...(hit.gz ? { vary: 'accept-encoding' } : {}), ...(gz ? { 'content-encoding': 'gzip' } : {}) });
     return res.end(req.method === 'HEAD' ? undefined : body);
