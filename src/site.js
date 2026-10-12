@@ -125,8 +125,10 @@ export function siteContext(db, cfg, project, { preview }) {
       { href: `https://solscan.io/token/${launch.mint}${launch.network === 'devnet' ? '?cluster=devnet' : ''}`, label: 'Solscan' },
       ...(launch.network === 'mainnet-beta' ? [{ href: `https://dexscreener.com/solana/${launch.mint}`, label: 'DexScreener' }] : []),
     ] };
+  // the coin art since 2026-10-12 (coinart.js) is a black-and-white 16:9 PNG banner; older coins keep their SVG one
+  const banner = db.get(`SELECT mime FROM assets WHERE project_id = ? AND kind = 'banner' ORDER BY version DESC LIMIT 1`, project.id);
   return { preview, launched: Boolean(launch), network: launch?.network, mint: launch?.mint,
-    submitter: idea.owner_wallet, generatorLabel, links, launchpad, token, parent };
+    submitter: idea.owner_wallet, generatorLabel, links, launchpad, token, parent, art: banner && banner.mime !== 'image/svg+xml' ? 'bw' : 'classic' };
 }
 
 /** Every URL a built page may carry: the server's links, the token panel's, the event tool's (checked by tools.js). */

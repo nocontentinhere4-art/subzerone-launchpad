@@ -292,7 +292,7 @@ export function deleteGuestbook(db, wallet, plotId, id) {
 export const PROGRESS = { submitted: 0.05, evaluating: 0.12, selected: 0.2, generating: 0.45, preview_ready: 0.65, approved: 0.75,
   launch_prepared: 0.82, awaiting_signature: 0.88, confirming: 0.94, launched: 1, failed: 0, declined: 0, cancelled: 0 };
 // generate-job progress texts (pipeline.js) -> a finer position inside 'generating'
-const GEN_STEPS = { 'writing the project identity': 0.5, 'building the website in the sandbox': 0.58 };
+const GEN_STEPS = { 'writing the project identity': 0.5, 'drawing the logo and banner': 0.54, 'building the website in the sandbox': 0.58 };
 
 /** A known plot id. With `claim`, a reserved plot (the tower park) is refused too: it can be read but never claimed. */
 export function validatePlotId(plotId, { claim = false } = {}) {

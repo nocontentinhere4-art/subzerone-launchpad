@@ -15,6 +15,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 COPY src ./src
+COPY art ./art
 COPY migrations ./migrations
 COPY public ./public
 COPY docs ./docs

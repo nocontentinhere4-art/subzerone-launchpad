@@ -161,10 +161,11 @@ test('/api/world: a private idea leaks nothing; public data appears once publish
     const pub = w.json.plots.find((p) => p.plotId === 'ebisu-2').project;
     assert.equal(pub.ticker, 'SAUCE');
     assert.ok(pub.slug && pub.name !== 'Private project');
-    // the generated art is public now: same-origin /meta/<slug>/… URLs, and they serve the files
-    assert.equal(pub.logoUrl, `/meta/${pub.slug}/logo-v1.png`);
-    assert.equal(pub.bannerUrl, `/meta/${pub.slug}/banner-v1.svg`);
-    for (const [u, type] of [[pub.logoUrl, 'image/png'], [pub.bannerUrl, 'image/svg+xml']]) {
+    // the generated art is public now: same-origin /meta/<slug>/… URLs, and they serve the files. Two options were
+    // drawn (v1 = option 2, v2 = option 1, the default); the banner path keeps .svg, the body is the stored PNG
+    assert.equal(pub.logoUrl, `/meta/${pub.slug}/logo-v2.png`);
+    assert.equal(pub.bannerUrl, `/meta/${pub.slug}/banner-v2.svg`);
+    for (const [u, type] of [[pub.logoUrl, 'image/png'], [pub.bannerUrl, 'image/png']]) {
       const r = await anon.call('GET', u);
       assert.equal(r.status, 200);
       assert.equal(r.headers.get('content-type'), type);

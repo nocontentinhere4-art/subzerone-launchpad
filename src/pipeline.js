@@ -12,6 +12,7 @@ import { settlePredictions } from './rituals.js';
 import { preGate, scores, SCORECARD_VERSION } from './scorecard.js';
 import { generate, estimateCostUsd , networkLabel } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
+import { makeCoinArt, slugBase } from './coinart.js';
 import { bannerCredit } from './site.js';
 import { buildSiteVersion, setLiveVersion } from './site.js';
 import { planAccount, publishPost } from './x.js';
@@ -133,6 +134,18 @@ export const handlers = {
     ctx.progress('writing the project identity');
     const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl });
     const spec = out.spec;
+    // the coin art (coinart.js): two black-and-white candidates, drawn before the transaction (providers are slow);
+    // a provider problem ends in the local drawing, only a missing renderer falls back to the old procedural art
+    ctx.progress('drawing the logo and banner');
+    let art = null;
+    const artSpend = [];
+    try {
+      art = await makeCoinArt({ cfg, idea: v, spec, slug: existing?.slug || slugBase(spec.name), wallet: idea.owner_wallet, seed: `${ideaId}:${evaluation.id}`,
+        credit: bannerCredit(cfg), fetchImpl: ctx.fetchImpl, signal: ctx.signal, spend: (usd) => artSpend.push(usd) });
+    } catch (e) {
+      if (ctx.signal?.aborted) throw e;
+      log.error('coin art failed; using the procedural art', e);
+    }
     const t = now();
     const project = db.tx(() => {
       let p = existing;
@@ -149,21 +162,38 @@ export const handlers = {
       db.run(`INSERT INTO generations (id, project_id, version, generator, input_json, output_json, cost_usd, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         id('gen'), p.id, gv, out.generator, JSON.stringify({ idea_version: v.version, evaluation: evaluation.id }), JSON.stringify(spec), out.costUsd, t);
       if (out.costUsd > 0) recordSpend(db, { projectId: p.id, kind: 'generation', usd: out.costUsd, jobId: ctx.job.id });
-      const seed = `${p.id}:${evaluation.id}`;
-      const build = brain.vote.options.find((o) => o.label.startsWith('build'));
-      const logo = logoPng({ networks: brain.networks, seed, strength: build?.p });
-      const banner = Buffer.from(bannerSvg({ name: spec.name, ticker: spec.ticker, tagline: spec.tagline, networks: brain.networks, seed, credit: bannerCredit(cfg) }));
-      for (const [kind, mime, body] of [['logo', 'image/png', logo], ['banner', 'image/svg+xml', banner]]) {
+      const insertAsset = (kind, mime, body, generator) => {
         const av = (db.get('SELECT MAX(version) v FROM assets WHERE project_id = ? AND kind = ?', p.id, kind)?.v || 0) + 1;
+        const aid = id('asset');
         db.run(`INSERT INTO assets (id, project_id, kind, version, mime, body, sha256, generator, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          id('asset'), p.id, kind, av, mime, body, sha256(body), 'art/1 (from the brain record)', t);
+          aid, p.id, kind, av, mime, body, sha256(body), generator, t);
+        return aid;
+      };
+      if (art) {
+        // option 2 first, option 1 last: the newest version of each kind is the live one, so option 1 is the default
+        for (const idx of [1, 0]) {
+          const c = art.candidates[idx];
+          const logoId = insertAsset('logo', c.logo.mime, c.logo.body, c.logo.generator);
+          const bannerId = insertAsset('banner', c.banner.mime, c.banner.body, c.banner.generator);
+          db.run(`INSERT INTO art_candidates (project_id, idx, logo_asset_id, banner_asset_id, created_at) VALUES (?, ?, ?, ?, ?)
+                  ON CONFLICT(project_id, idx) DO UPDATE SET logo_asset_id = excluded.logo_asset_id, banner_asset_id = excluded.banner_asset_id, created_at = excluded.created_at`,
+          p.id, idx, logoId, bannerId, t);
+        }
+        db.run('UPDATE projects SET art_choice = NULL WHERE id = ?', p.id);
+        const usd = artSpend.reduce((a, b) => a + b, 0);
+        if (usd > 0) recordSpend(db, { projectId: p.id, kind: 'art', usd, jobId: ctx.job.id });
+      } else {
+        const seed = `${p.id}:${evaluation.id}`;
+        const build = brain.vote.options.find((o) => o.label.startsWith('build'));
+        insertAsset('logo', 'image/png', logoPng({ networks: brain.networks, seed, strength: build?.p }), 'art/1 (from the brain record)');
+        insertAsset('banner', 'image/svg+xml', Buffer.from(bannerSvg({ name: spec.name, ticker: spec.ticker, tagline: spec.tagline, networks: brain.networks, seed, credit: bannerCredit(cfg) })), 'art/1 (from the brain record)');
       }
       planAccount(db, p.id, spec);
       if (!db.get(`SELECT 1 FROM fee_allocations WHERE project_id = ? AND status IN ('draft','approved')`, p.id)) {
         draftAllocation(db, p.id, defaultAllocation(cfg, v.receiving_wallet), 'system');
       }
       audit(db, { actor: 'generator', kind: 'generation', ideaId, projectId: p.id, isPublic: true,
-        message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}; art drawn from the brain record` });
+        message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}; ${artLine(art)}` });
       return p;
     });
     ctx.progress('building the website in the sandbox');
@@ -231,8 +261,16 @@ export const handlers = {
   },
 };
 
+/** The audit line about the art: who drew the two options and what fell back. */
+function artLine(art) {
+  if (!art) return 'art drawn from the brain record (the black-and-white renderer was unavailable)';
+  const who = { 'owner-supplied': "the owner's own art", local: 'the local generator (no AI)', higgsfield: 'Higgsfield', recraft: 'Recraft' };
+  const sym = art.symbol.abstract ? `an abstract ${art.symbol.id}` : `a ${art.symbol.id} for "${art.symbol.keyword}"`;
+  return `two logo options (${art.provider.map((p, i) => `${i + 1}: ${who[p] || p}`).join(', ')}), symbol ${sym}${art.notes.length ? `; ${art.notes.join('; ')}` : ''}`;
+}
+
 export function uniqueSlug(db, name) {
-  const base = String(name).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'project';
+  const base = slugBase(name);
   let slug = base, n = 1;
   const reserved = new Set(['www', 'api', 'admin', 'app', 'mail', 'sub01', 'sub-01', 'subzerone', 'launchpad', 'static', 'meta']);
   while (reserved.has(slug) || db.get('SELECT 1 FROM projects WHERE slug = ?', slug)) slug = `${base}-${++n}`;

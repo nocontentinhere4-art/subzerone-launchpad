@@ -36,6 +36,7 @@ import { calendarView, jstDate } from './calendar.js';
 import { drawOmikuji, todayOmikuji, predict, predictionView, leaderboard, emaList, cheerEma, touchSeen, recordVisit, awayView } from './rituals.js';
 import { diaryFor, latestDiary } from './diary.js';
 import { postcardSvg, postcardPng } from './postcard.js';
+import { artView, artFile, chooseArt } from './art-choice.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { createChat } from './chat.js';
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
@@ -406,6 +407,20 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const lamports = parseInitialBuySol(cfg, b.initialBuySol);
     return { ok: true, ...(await setInitialBuy(db, cfg, p, idea, u.wallet, lamports)), maxInitialBuyLamports: maxInitialBuyLamports(cfg) };
   });
+  // the two logo+banner options of a new coin (art-choice.js): owner only; the pick locks once a transaction exists
+  r.get('/api/projects/:slug/art', (ctx) => { const { p, idea } = ownedProject(ctx, ctx.params.slug); return artView(db, p, idea); });
+  r.get('/api/projects/:slug/art/:file', (ctx) => {
+    const { p } = ownedProject(ctx, ctx.params.slug);
+    const a = artFile(db, p, ctx.params.file);
+    return ctx.raw(200, a.body, { 'content-type': a.mime, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+  });
+  r.put('/api/projects/:slug/art', async (ctx) => {
+    const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    const b = await ctx.body();
+    const res = chooseArt(db, p, idea, u.wallet, b?.choice);
+    return { ok: true, ...res, art: artView(db, projectBySlug(p.slug), db.get('SELECT * FROM ideas WHERE id = ?', idea.id)) };
+  });
   r.post('/api/projects/:slug/launch/transaction', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);
     limit('write', u.wallet);
@@ -741,10 +756,12 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       return ctx.raw(200, Buffer.from(a.body), { 'content-type': a.mime, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; sandbox",
         'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
     }
-    if (banner) {                                            // our own SVG (art.js); opened directly it is still inert
-      const a = db.get(`SELECT body FROM assets WHERE project_id = ? AND kind = 'banner' AND version = ?`, p.id, Number(banner[1]));
+    // the path keeps its .svg name (sites and the city link it); the body is what was stored: our own SVG for coins
+    // before 2026-10-12 (art.js; opened directly it is still inert), a PNG since (coinart.js)
+    if (banner) {
+      const a = db.get(`SELECT mime, body FROM assets WHERE project_id = ? AND kind = 'banner' AND version = ?`, p.id, Number(banner[1]));
       if (!a) throw new HttpError(404, 'not_found');
-      return ctx.raw(200, Buffer.from(a.body), { 'content-type': 'image/svg+xml', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+      return ctx.raw(200, Buffer.from(a.body), { 'content-type': a.mime, 'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         'cache-control': 'public, max-age=31536000, immutable', 'access-control-allow-origin': '*' });
     }
     const m = f.match(/^([0-9a-f]{16})\.json$/);

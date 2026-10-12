@@ -86,7 +86,7 @@ export async function review(el, slug) {
         <table><tr><th>v</th><th>build</th><th>by</th><th></th></tr>${p.versions.map((v) => html`<tr><td>${v.version}${v.version === live ? ' ●' : ''}</td><td>${v.build_status}</td><td class="tiny">${String(v.created_by || '').startsWith('wallet:') ? 'you' : v.created_by}</td>
           <td>${v.build_status === 'ok' && v.version !== live && editable ? html`<button class="tiny" data-rollback="${v.version}">use this</button>` : ''}</td></tr>`)}</table>
         <h3 style="margin-top:16px">Art</h3>
-        <div class="row"><img class="logo-big" src="${p.previewUrl.replace('index.html', 'logo.png')}" alt="logo"><span class="faint tiny">Drawn from SUB-01's brain record: ring colours are the networks your idea drove, thickness is how strongly. The banner is on the site.</span></div>
+        <div class="row"><img class="logo-big" src="${p.previewUrl.replace('index.html', 'logo.png')}" alt="logo"><span class="faint tiny">The live logo. New coins get two black-and-white options (the idea's initial and its subject); pick one on the computer in your room, Launch tab. The banner is on the site.</span></div>
       </div>
     </div>
 

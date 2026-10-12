@@ -68,7 +68,7 @@ test('desk: owner sees all projects with preview, office, X drafts and ideas; vi
     assert.equal(prev.status, 200);
     assert.match(prev.headers.get('content-security-policy'), /frame-ancestors 'self' http:\/\/localhost:8787; sandbox$/);
     assert.equal((await owner.call('GET', d.logoUrl)).status, 200);
-    assert.equal((await owner.call('GET', d.bannerUrl)).headers.get('content-type'), 'image/svg+xml');
+    assert.equal((await owner.call('GET', d.bannerUrl)).headers.get('content-type'), 'image/png', 'the stored type (coinart.js PNG) under the banner.svg path');
     for (const r of [o, v]) assert.ok(!r.text.includes(owner.w.address), 'never a wallet');
 
     // public: the visitor sees it, without anything owner-only
@@ -82,12 +82,12 @@ test('desk: owner sees all projects with preview, office, X drafts and ideas; vi
     assert.equal(d.officePath, null);
     assert.equal(d.x.posts, null);
     assert.equal(v.json.desk.ideas, null);
-    assert.equal(d.logoUrl, `/meta/${slug}/logo-v1.png`);
-    assert.equal(d.bannerUrl, `/meta/${slug}/banner-v1.svg`);
+    assert.equal(d.logoUrl, `/meta/${slug}/logo-v2.png`, 'v1 = option 2, v2 = option 1 (the default)');
+    assert.equal(d.bannerUrl, `/meta/${slug}/banner-v2.svg`);
     const banner = await visitor.call('GET', d.bannerUrl);
     assert.equal(banner.status, 200);
-    assert.equal(banner.headers.get('content-type'), 'image/svg+xml');
-    assert.match(banner.headers.get('content-security-policy'), /^default-src 'none'.*sandbox$/, 'the SVG is inert even when opened directly');
+    assert.equal(banner.headers.get('content-type'), 'image/png', 'the stored type, not the extension');
+    assert.match(banner.headers.get('content-security-policy'), /^default-src 'none'.*sandbox$/, 'inert even when opened directly');
     assert.equal((await visitor.call('GET', d.logoUrl)).headers.get('content-type'), 'image/png');
     assert.ok(!v.text.includes(owner.w.address));
     // on the project's own plot it is the plot's project

@@ -18,6 +18,11 @@ const TRUST = { trades: ['Every buy and sell', 'Each trade on the bonding curve,
   fees: ['Where the fees go', 'The creator fees of this coin: who gets what, as locked on chain when it launched (SUB-01 keeps 20%), what was paid out and what is waiting.'],
   alerts: ['Alerts', 'Get told when the market cap crosses a line you set, or when the dev sells. Kept in your browser only.'] };
 const DASH = '—';
+// the black-and-white coin art (2026-10-12): a 16:9 banner whose left half is empty black, kept whole and anchored on
+// its lettermark; the name and logo sit in that empty space; no colour filter on a picture that has no colour
+const BW_CSS = '\n.art-bw .banner{aspect-ratio:16/9;max-height:min(70vh,660px);object-fit:cover;object-position:right center;filter:none;border-bottom:0;background:#000}' +
+  '.art-bw .hero{background:#000}.art-bw .hero-glow{height:26%}.art-bw .head{position:relative;margin-top:clamp(-210px,-15vw,-36px)}' +
+  '.art-bw .logo{background:#000;border-color:#000;box-shadow:0 0 0 1px rgba(255,255,255,.16),0 18px 50px -14px rgba(0,0,0,.9)}';
 
 let input = '';
 process.stdin.setEncoding('utf8');
@@ -125,8 +130,8 @@ function render({ spec, context }) {
 <meta name="referrer" content="no-referrer">
 ${KIT_CSS}
 <style>
-:root{--ac:${accent};--ac2:${second}}
-</style></head><body>
+:root{--ac:${accent};--ac2:${second}}${context.art === 'bw' ? BW_CSS : ''}
+</style></head><body${context.art === 'bw' ? ' class="art-bw"' : ''}>
 <div class="hero"><img class="banner" src="./banner.svg" alt=""><div class="hero-glow"></div></div>
 <main>
 <header class="head reveal-hero"><img class="logo" src="./logo.png" alt="${esc(spec.name)} logo"><div><h1 class="grad">${esc(spec.name)}</h1><span class="tk">$${esc(spec.ticker)}</span></div></header>

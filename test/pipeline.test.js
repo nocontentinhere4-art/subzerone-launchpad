@@ -21,7 +21,8 @@ test('brain says build: idea goes submitted -> evaluating -> selected -> generat
   const p = db.get('SELECT * FROM projects WHERE idea_id = ?', id);
   assert.equal(p.ticker, 'RAMEN');
   assert.ok(db.get(`SELECT 1 FROM site_versions WHERE project_id = ? AND build_status = 'ok'`, p.id));
-  assert.equal(db.get(`SELECT COUNT(*) n FROM assets WHERE project_id = ?`, p.id).n, 2);
+  assert.equal(db.get(`SELECT COUNT(*) n FROM assets WHERE project_id = ?`, p.id).n, 4, 'two logo+banner options');
+  assert.equal(db.get(`SELECT COUNT(*) n FROM art_candidates WHERE project_id = ?`, p.id).n, 2);
   assert.equal(db.get(`SELECT COUNT(*) n FROM x_posts WHERE project_id = ? AND status = 'draft'`, p.id).n, 2);
   const alloc = db.get(`SELECT * FROM fee_allocations WHERE project_id = ?`, p.id);
   assert.deepEqual(JSON.parse(alloc.recipients_json).map((r) => [r.wallet, r.bps]), [[w.address, 8000], [SUB01_WALLET, 2000]]);

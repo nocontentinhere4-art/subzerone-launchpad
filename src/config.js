@@ -72,6 +72,22 @@ export function loadConfig(env = process.env) {
       priceOut: num('GENERATOR_PRICE_OUT_PER_MTOK', 0),
       timeoutMs: num('GENERATOR_TIMEOUT_MS', 60000),
     },
+    // the coin art (coinart.js): black-and-white lettermarks. Higgsfield first, Recraft's own API second, the local
+    // generator (no AI) when neither key is set or a provider fails. Model paths: docs/COIN-ART.md says what to check.
+    art: {
+      hfKeyId: e('HF_API_KEY_ID'),
+      hfKeySecret: e('HF_API_KEY_SECRET'),
+      hfBase: e('HF_API_BASE', 'https://api.higgsfield.ai'),
+      hfLogoModel: e('HF_LOGO_MODEL', 'recraft/v4.1/text-to-image'),
+      hfBannerModel: e('HF_BANNER_MODEL', 'recraft/v4.1/text-to-image'),
+      hfParams: e('HF_PARAMS'),                          // JSON merged into every Higgsfield body (a model's extra fields)
+      recraftKey: e('RECRAFT_API_KEY'),
+      recraftModel: e('RECRAFT_MODEL', 'recraftv4_1_vector'),
+      providerBanners: e('ART_PROVIDER_BANNERS') === '1', // 0: banners are composed around the logo (always a matching pair)
+      priceUsd: num('ART_PRICE_USD_PER_IMAGE', 0),       // budget accounting per provider image, from the price page
+      timeoutMs: num('ART_TIMEOUT_MS', 45000),
+      dir: resolve(ROOT, e('ART_DIR', 'art')),           // owner-supplied art, art/<name>/ (coinart.js premadeArt)
+    },
     budgets: {
       globalDailyUsd: num('BUDGET_GLOBAL_DAILY_USD', 5),
       perProjectUsd: num('BUDGET_PER_PROJECT_USD', 1),
