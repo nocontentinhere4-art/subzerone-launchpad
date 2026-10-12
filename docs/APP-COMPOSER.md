@@ -175,6 +175,43 @@ cap (stored coin stats), and the list with logos served on the parent's origin.
 | GET | `/_api/launch/:id`, `/_api/launch/:id/image`, `/_api/launch/logo/:slug` | status, verdict, configuration, launch, dev buy, registry entry; images inert (nosniff, sandbox CSP) |
 | POST | `/_api/launch/:id/{tx,refresh,signed,abandon}`, `/devbuy/{tx,refresh,signed,abandon,skip}` | `{key, signed?}`: launch.js on the child project, signer = the visitor |
 
+## Launchpad families (2026-10-12, `src/family.js`; the PadPad idea)
+
+"A launchpad for launchpads": the launch block's `children` option says what a coin launched from the site is:
+`coins` (the default, as before), `launchpads` (every one gets its own site with a working launch block and the family
+tree, inheriting the parent's options), or `choice` (the launcher ticks "Make it a launchpad"; the tick is in the signed
+payload). Down to `MAX_DEPTH` = 5: a coin at generation 5 is a coin, and the sites say so.
+
+| Generation of the new coin | Creator fees, split on-chain and locked at launch |
+|---|---|
+| 1 (launched from a root launchpad) | creator 70 / parent's author 10 / SUB-01 20 (the block's split) |
+| 2 and deeper | creator 60 / parent's author 10 / grandparent's author 10 / SUB-01 20; it stops at the grandparent |
+
+The grandparent's share comes out of the creator's (who keeps at least 50%); same-wallet rows merge as before. The
+shareholders are the ancestors' recorded author wallets (the creator row of the split their own coin was launched
+with). Computed on the server from the database, signed by the visitor in the start message, stored with the parent's
+block split (`child_launches.split_json`, migration 020), and recomputed at `prepare_launch` and at the signed step
+(`409 split_mismatch`). The pump.fun provider also decodes `update_fee_shares_v2` in the bytes the wallet signed and
+checks every share against the approved configuration. pump.fun allows at most 10 shareholders, each > 0 bps, 10,000 in
+total, no duplicates, set once (`@pump-fun/pump-sdk` 4.0.0 `MAX_SHAREHOLDERS = 10`, `updateFeeSharesV2`; pump-fees
+errors 6010-6017, 6024); a family split has 2 to 4. Devnet simulation of a 4-shareholder launch:
+`docs/demo/sim-padpad-family-2026-10-12.json` (1046 bytes, Phantom-safe, simulation ok). The fees go to the creators of
+launchpads up the tree, never to buyers or holders, and every site says so.
+
+The `tree` block (only with a launch block) reads `GET /_api/tree` on the project host, the same as the public
+`GET /api/projects/:slug/tree` (15 s cache): `{root, focus, maxDepth, rule, note, totals: {coins, launchpads,
+launched24h, deepest, inProgress}, fastest: [...], mostDescendants: [...], nodes: [{slug, name, ticker, depth, parent,
+launchpad, launched, launchedAt, mock, network, mint, siteUrl, children, descendants, launches24h, branch24h,
+inProgress, marketCapUsd, volume24hUsd}], truncated}`. Launched coins only (in-progress ones are counted), public ideas
+only, at most 400 nodes. "Fastest-growing" = most launches in the branch in the last 24 h; market numbers only when
+coin-stats.js already stored them (nothing is fetched).
+
+The composer: an idea about launching launchpads (a launchpad for/of launchpads, launch a launchpad, launchpads that
+launch, a family tree / descendants / grandparent of launchpads; en / it / ja romaji) gets exactly
+`launch{children: 'launchpads'}` + `tree` (+ `pq` when quantum), kind `launchpad-family`, by the rules and through the
+model (which may not drop the tree, change `children`, or add a form, votes, a map …). Its site keeps the coin's own
+tools and the wall; no meme maker, map, poll, drop box, event, synth or game.
+
 ## The copy (2026-10-12)
 
 The owner's brief after "Q-wave: a meme coin for the permissionless launchpad idea … Just a meme, no promises": the sites

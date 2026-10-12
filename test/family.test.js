@@ -91,9 +91,9 @@ test('composer: the PadPad idea gets launch{children: launchpads} + the family t
   assert.deepEqual(blockOf(r.app, 'launch').split, { creator: 7000, parent: 1000, sub01: 2000 });
   assert.match(r.honest, /never to buyers or holders/);
   assert.doesNotMatch(JSON.stringify(r.app), /holders? (get|earn|receive)|yield|returns?/i);
-  // the site's other tools: only the coin's own (no wall, meme maker, map, poll…)
+  // the site's other tools: the coin's own and the fixed wall (no meme maker, map, poll…)
   const tools = ['token', 'wall', 'memes', 'map', 'poll', 'drop', 'event', 'chart', 'trades', 'holders', 'devwatch', 'fees', 'alerts'].map((id) => ({ id }));
-  assert.deepEqual(toolsBeside(tools, r.app).map((t) => t.id), ['token', 'chart', 'trades', 'holders', 'devwatch', 'fees', 'alerts']);
+  assert.deepEqual(toolsBeside(tools, r.app).map((t) => t.id), ['token', 'wall', 'chart', 'trades', 'holders', 'devwatch', 'fees', 'alerts']);
   // other ways of saying it (en / it / ja romaji); a single launchpad is still a plain launchpad
   for (const c of ['a launchpad of launchpads', 'launchpads that launch launchpads', 'you launch a launchpad here, not a coin', 'a launchpad with the family tree of every coin launched from it',
     'una piattaforma dove lanciare un launchpad', 'Shibuya no raunchipaddo no raunchipaddo']) {
@@ -226,7 +226,7 @@ test('PadPad end to end (MOCK): launchpads launched from launchpads down to 5 ge
     // the root site: the launcher of launchpads and the tree; no wall, meme maker or map
     const spec0 = JSON.parse(h.db.get('SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?', p0.id, p0.live_site_version).spec_json);
     assert.deepEqual(spec0.app.screens.flatMap((s) => s.blocks).map((b) => [b.type, b.children ?? null]), [['launch', 'launchpads'], ['tree', null]]);
-    assert.deepEqual(spec0.tools.map((t) => t.id).filter((id) => ['wall', 'memes', 'map', 'poll', 'drop', 'event', 'game', 'synth'].includes(id)), []);
+    assert.deepEqual(spec0.tools.map((t) => t.id).filter((id) => ['memes', 'map', 'poll', 'drop', 'event', 'game', 'synth'].includes(id)), []);
     let page = (await k0.site('GET', '/')).text;
     assert.match(page, /data-type="tree"/);
     assert.match(page, /Launch a launchpad/);

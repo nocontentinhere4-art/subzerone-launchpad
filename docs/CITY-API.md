@@ -392,6 +392,17 @@ receives). Poll every 3–5 s.
   later shows its events of the last 24 h). `name`/`ticker` follow the same rules as `project` (current project name
   or idea title; project ticker or the suggested one). `plotId` is null when the idea has no building.
 
+### Launchpad families (`project.family`, 2026-10-12)
+
+A coin launched from a launchpad's site has no plot of its own. The project on the root's plot carries
+`family: {total, members: [{slug, name, ticker, depth, parent, stage, launched, mock, launchpad, siteUrl}]}`: its
+descendants without a plot, breadth first, at most 24 (`total` counts them all; declined and cancelled ones are left
+out; a legacy child with its own plot is drawn on its plot and lists its own family). The city client
+(`src/family.js`) gives each member an existing, smaller lot of the root's district (nearest first, every child next
+to its own parent, street lots before back-lane houses), drawn in the root's colour, lighter each generation, with a
+rooftop sign (a launchpad: a mast and a beacon), a construction site while not launched; no new draw call. A tap opens
+the member's card; `#project/<slug>` finds a member; the root's label reads `… · family N`.
+
 ## Coin stats (building lights)
 
 Owner's rule: **real numbers or nothing.** A launched project's building shows its market cap, and its height/lights

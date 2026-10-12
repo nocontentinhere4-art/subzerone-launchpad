@@ -25,10 +25,10 @@ export const LIMITS = Object.freeze({ core: 5, feature: 80, reason: 200, terms: 
 
 // Capabilities the platform itself provides outside a site (the city, the X drafts, …): a feature may be built there.
 // Add a line when one ships; the rules read these lines as evidence, like the block and tool lines.
-// (When the city's family neighbourhood ships with the PadPad feature work, add its line here: until then the rules call
-// a "neighbourhood of children in the city" missing.)
 export const PLATFORM = Object.freeze([
   { id: 'city-building', line: 'Every project gets its own building in the SUBZERONE city.' },
+  // the PadPad feature work (family.js, world.js `family`, the city client's family.js): shipped 2026-10-12
+  { id: 'family-neighbourhood', line: 'A launchpad\'s family grows around its building in the SUBZERONE city as a neighbourhood: every coin and launchpad launched from its site, and from theirs, is a smaller building around it.' },
   { id: 'x-drafts', line: 'Every project gets an X account plan and launch post drafts the author approves.' },
 ]);
 

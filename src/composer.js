@@ -408,9 +408,10 @@ export async function composeApp(idea, brain, { name, ticker, cfg, fetchImpl, si
 
 /** The site's tools once the app exists: the app's form replaces the drop box, its schedule the daily event at the same
  * time, its map the map tool. Everything else stays. */
-// A launchpad for launchpads keeps only the tools about its own coin (price, chart, the holder tools): a wall, a meme
-// maker, a map, a poll, a drop box, an event, a synth or a game have nothing to do with launching launchpads.
-const FAMILY_TOOLS_OFF = new Set(['wall', 'poll', 'drop', 'event', 'memes', 'map', 'synth', 'game']);
+// A launchpad for launchpads keeps the tools about its own coin (price, chart, the holder tools) and the fixed wall
+// (tools.js FIXED_TOOLS): a meme maker, a map, a poll, a drop box, an event, a synth or a game have nothing to do with
+// launching launchpads.
+const FAMILY_TOOLS_OFF = new Set(['poll', 'drop', 'event', 'memes', 'map', 'synth', 'game']);
 export const isFamilyApp = (app) => app?.kind === 'launchpad-family' || blocksOf(app, 'launch').some((b) => b.children && b.children !== 'coins');
 export function toolsBeside(tools, app) {
   const all = app.screens.flatMap((s) => s.blocks), on = (t) => all.some((b) => b.type === t);
