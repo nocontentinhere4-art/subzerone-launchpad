@@ -43,7 +43,7 @@ trap 'rm -rf "$STAGE"' EXIT
 ( cd "$BACKEND"
   cp package.json package-lock.json Dockerfile railway.json .dockerignore "$STAGE/"
   mkdir -p "$STAGE/tools" && cp tools/start.sh "$STAGE/tools/"
-  for d in src migrations public docs scripts city-dist; do rsync -a --exclude '*.bak*' --exclude '.DS_Store' "$d/" "$STAGE/$d/"; done )
+  for d in src art migrations public docs scripts city-dist; do rsync -a --exclude '*.bak*' --exclude '.DS_Store' "$d/" "$STAGE/$d/"; done )
 # belt and braces: nothing secret or local may be in the staged tree
 for forbidden in .env data node_modules test; do
   [ -e "$STAGE/$forbidden" ] && { echo "refusing to upload: $forbidden is in the staged tree" >&2; exit 1; }
