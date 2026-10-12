@@ -42,14 +42,14 @@
    "sha256": "d0d4e818808f2a0ba39b2b09d1989366f63494e295f003c7ef436697378507e8"
   },
   "site-kit.v1.css": {
-   "bytes": 10662,
-   "gzip": 3163,
-   "sha256": "5182a18b06f268a7c6c11000bf2c688adda46951a75f1f6e6c63e50c28a3b478"
+   "bytes": 10696,
+   "gzip": 3169,
+   "sha256": "4b25e4e1ab459fcff7250d570629dc6d455258a539fc5cce91574e796062acb5"
   },
   "site-kit.v1.js": {
-   "bytes": 33209,
-   "gzip": 13731,
-   "sha256": "bfe7d12aef1f2ba701996f0e32738ef61b8f854134327db83d7cd8b6570039e1"
+   "bytes": 33230,
+   "gzip": 13747,
+   "sha256": "0124c6e767d90866f5af9be87a45f0906459936738a199a22d791e1693dde92f"
   },
   "vendor/anime-4.5.0.js": {
    "bytes": 39995,

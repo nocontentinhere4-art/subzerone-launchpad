@@ -28,6 +28,7 @@
 | Generation | Template generator (no AI) | Working | |
 | | Language-model generator (`GENERATOR=anthropic`) | Mock-tested | needs `ANTHROPIC_API_KEY` and price env vars; tested with a fake API (failure, unsafe output) |
 | | Logo PNG and banner SVG from the brain record | Working | |
+| Site kit | Tools on coin sites: token panel, wall, signed poll, drop box with daily pick, event countdown + .ics, meme maker; one extra (map / sound toy / mini-game / chart) on vendored open-source libraries; SUB-01 picks them by keywords, the author switches them in the room PC (2026-10-12) | Working (mock launch) | `test/tools.test.js` (14); headless Chrome run with a test wallet; holder checks need `HELIUS_API_KEY` (else "any wallet", said on the page); see SITE-KIT.md |
 | Sites | Sandboxed build, validator, versions, rollback, isolated subdomains with a no-script CSP | Working | locally on `*.projects.localhost` |
 | | Public hosting on `<slug>.projects.subzerone.live` | Blocked | needs DNS wildcard + TLS (see DEPLOY.md) |
 | X | Planned handle, bio, drafts; manual account creation step; OAuth 2.0 PKCE connect; approval-gated posting | Mock-tested | needs an X developer app (`X_CLIENT_ID`, redirect URI). Posting needs a paid X API tier. Bio/avatar must be set by hand |

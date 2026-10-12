@@ -52,7 +52,7 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
     case 'memes': return tool(t, 'Make a meme', `<img class="meme-logo" src="./logo.png" alt="${esc(spec.name)} logo" width="160" height="160"><p class="fine">The logo plus your text, saved as a PNG. Made in your browser; nothing is uploaded.</p>`);
     case 'map': return tool(t, c.title || 'Map', `<div class="map" data-map></div>${(c.places || []).length ? `<ul class="places">${c.places.map((p) => `<li>${esc(p.name)}</li>`).join('')}</ul>` : ''}<p class="fine">Map data © OpenStreetMap contributors.</p>`, { wide: true });
     case 'synth': return tool(t, c.title || 'Sound toy', `<p>An eight-step loop on the ${esc(c.scale)} scale at ${esc(c.bpm)} BPM. Tap the grid, press play.</p>`);
-    case 'game': return tool(t, c.title || 'Mini-game', '<p>Thirty seconds: catch the falling coins, dodge the red ones.</p>');
+    case 'game': return tool(t, c.title || 'Mini-game', '<p>Thirty seconds: catch the falling coins, dodge the red ones.</p>', { wide: true });
     case 'chart': return tool(t, c.title || 'Chart', `<div class="chart" data-chart></div><p class="fine">Price over the last ${c.range === '7d' ? 'week' : 'day'}, from the stored samples. No samples, no line.</p>`, { wide: true });
     default: return '';
   }

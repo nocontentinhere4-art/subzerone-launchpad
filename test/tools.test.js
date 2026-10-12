@@ -161,6 +161,9 @@ test('project host: the kit files, the CSP, tool endpoints, and nothing else', a
     assert.equal(js.headers['content-type'], 'text/javascript; charset=utf-8');
     assert.equal(js.headers['x-content-type-options'], 'nosniff');
     assert.equal((await k.site('GET', '/_kit/vendor/leaflet-1.9.4.js')).headers['cache-control'], 'public, max-age=31536000, immutable');
+    const gz = await k.site('GET', '/_kit/vendor/tone-15.1.22.js', undefined, { 'accept-encoding': 'gzip, br' });
+    assert.equal(gz.headers['content-encoding'], 'gzip');
+    assert.ok(Number(gz.headers['content-length']) < 100_000, 'Tone.js travels gzipped');
     assert.match((await k.site('GET', '/_kit/LICENSES.txt')).text, /Leaflet 1\.9\.4 \(BSD-2-Clause\)/);
     for (const p of ['/_kit/../package.json', '/_kit/site-kit.v2.js', '/_kit/vendor/../../src/app.js', '/_api/nothing']) assert.equal((await k.site('GET', p)).status, 404, p);
     assert.equal((await k.site('POST', '/', {})).status, 405);

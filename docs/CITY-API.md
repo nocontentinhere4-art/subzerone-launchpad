@@ -1187,6 +1187,23 @@ In the city the disclosure is product-level, as above.
 `GET` lists up to 200 messages (`?reported=1`: reported ones, latest report first) as `<msg>` plus `wallet`,
 `reports`, `reportedAt` (admin only). `DELETE` removes one, records it in the audit log and broadcasts `del`.
 
+## Site tools (room PC, Site tab) — docs/SITE-KIT.md
+
+The coin sites carry tools (token panel, wall, poll, drop box, event, meme maker, and at most one of map / sound toy /
+mini-game / chart). The room PC's Site tab lists them for the owner and saves the on/off set and a few fields.
+
+- `GET /api/projects/:slug/tools` (owner, or admin) → `{editable, status, lockedNote, tools:[{id, config}], catalog:{<id>:
+  {name, line, kind:'generic'|'extra', lib, fields:[{key, label, type:'text'|'bool'|'time'|'datetime'|'url'|'number'|'options'|'choice', max?, min?, count?, choices?}]}},
+  extras, libs, holderChecks, liveSiteVersion, inbox:{drop:[…], wall:[…], map:[…], poll:{question, options, counts, total}|null}}`.
+  Inbox rows: `{id, text, at, by, hidden, featured, featuredBy}` (map rows add `lat`, `lng`). Drop rows are private: only here.
+- `PUT /api/projects/:slug/tools` (owner) `{tools:[{id, config?}]}`: the ENABLED tools in order; omitted = off. Missing fields
+  get SUB-01's defaults. → `{version, tools}` (a new site version, live at once). 400 `invalid` with the first problem;
+  409 `locked` between approval and launch. While `preview_ready` it resets the approvals, like the site editor.
+- `POST /api/projects/:slug/tools/entries/:id` (owner, or admin) `{hidden: bool}` / `{featured: true}` (drop only) → `{ok}`.
+
+The public site is framed with `sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox
+allow-downloads"`: it is another origin, and its kit needs scripts and its own origin (SITE-KIT.md, "Architecture decision").
+
 ## Hosting the city on the same origin
 
 Set `CITY_DIST` to the absolute path of the city's `dist/`. Then `/` is the city, `/assets/*` its files (immutable

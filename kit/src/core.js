@@ -398,14 +398,14 @@ const TOOLS = {
     const accent = getComputedStyle(doc.documentElement).getPropertyValue('--brand').trim() || '#fb752b';
     box.replaceChildren();
     const plot = new UPlot({ width: Math.max(280, box.clientWidth || 600), height: 220, legend: { show: false }, cursor: { drag: { x: false, y: false } },
-      axes: [{ stroke: '#9a98a6', grid: { stroke: 'rgba(255,255,255,.06)' } }, { stroke: '#9a98a6', grid: { stroke: 'rgba(255,255,255,.06)' }, values: (u, v) => v.map(usd) }],
+      axes: [{ stroke: '#9a98a6', grid: { stroke: 'rgba(255,255,255,.06)' } }, { stroke: '#9a98a6', size: 86, grid: { stroke: 'rgba(255,255,255,.06)' }, values: (u, v) => v.map(usd) }],
       series: [{}, { label: 'Price', stroke: accent, width: 2, fill: 'rgba(251,117,43,.12)' }] }, [pts.map((x) => x[0] / 1000), pts.map((x) => x[1])], box);
     win.addEventListener('resize', () => plot.setSize({ width: Math.max(280, box.clientWidth), height: 220 }));
   },
 };
 
 function runGame(kaplay, cv, m, best, setBest, done) {
-  const k = kaplay({ canvas: cv, width: 640, height: 480, global: false, background: [11, 11, 16], loadingScreen: false, burp: false, crisp: true, touchToMouse: true, maxFPS: 60, focus: false });
+  const k = kaplay({ canvas: cv, width: 640, height: 480, global: false, background: [11, 11, 16], letterbox: true, loadingScreen: false, burp: false, crisp: true, touchToMouse: true, maxFPS: 60, focus: false });
   k.loadSprite('logo', './logo.png');
   k.scene('play', () => {
     let score = 0, left = 30;

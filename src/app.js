@@ -2,6 +2,7 @@
 // metadata. createApp() returns a node:http request handler; server.js listens.
 import { readFileSync, existsSync, statSync } from 'node:fs';
 import { join, extname, normalize, sep } from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { ROOT, SUB01 } from './config.js';
 import { router, parseCookies, readJson, clientIp, rateLimiter, securityHeaders, APP_CSP, sendJson, sendError } from './http.js';
 import { issueNonce, verifySignIn, sessionUser, signOut } from './auth.js';
@@ -882,15 +883,19 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   function serveKit(req, res, path) {
     const m = KIT_FILE.exec(path);
     if (!m || (req.method !== 'GET' && req.method !== 'HEAD')) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
-    let body = kitCache.get(m[1]);
-    if (!body) {
+    let hit = kitCache.get(m[1]);
+    if (!hit) {
       const file = join(KIT_DIR, m[1]);
       if (!existsSync(file)) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
-      body = readFileSync(file); kitCache.set(m[1], body);
+      const raw = readFileSync(file);
+      hit = { raw, gz: m[1].endsWith('.woff2') ? null : gzipSync(raw, { level: 9 }) };   // woff2 is compressed already
+      kitCache.set(m[1], hit);
     }
+    const gz = hit.gz && /\bgzip\b/.test(String(req.headers['accept-encoding'] || '')), body = gz ? hit.gz : hit.raw;
     const immutable = /^(vendor|fonts)\//.test(m[1]);
     res.writeHead(200, { 'content-type': KIT_TYPES[extname(m[1])], 'x-content-type-options': 'nosniff', 'cross-origin-resource-policy': 'same-origin',
-      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=86400', 'content-length': body.length });
+      'cache-control': immutable ? 'public, max-age=31536000, immutable' : 'public, max-age=86400', 'content-length': body.length,
+      ...(hit.gz ? { vary: 'accept-encoding' } : {}), ...(gz ? { 'content-encoding': 'gzip' } : {}) });
     return res.end(req.method === 'HEAD' ? undefined : body);
   }
 
