@@ -62,14 +62,26 @@ function fakeLaunch(h, slug, { network = 'mock', provider = 'mock' } = {}) {
 }
 
 // --- schemas and SUB-01's pick ---------------------------------------------------------------------------------------
-test('SUB-01 picks 3–4 generic tools plus at most one idea-specific one, by keywords (en/it/ja) and the brain', () => {
-  const k = pickTools({ name: 'Konbini Confession', concept: KONBINI, networks: { language: 1 } });
-  assert.deepEqual(k.map((t) => t.id), ['token', 'drop', 'wall', 'event', ...TRUST], 'the holder tools on every coin');
-  assert.equal(k[1].config.revealJst, '23:00');
-  assert.match(k[1].config.prompt, /^Drop your confession\. It stays private; one is featured here every day at 23:00 JST\.$/);
+test('SUB-01 picks the token panel and the wall, then only the tools the idea calls for (at most 3, one extra), each with a why', () => {
+  const k = pickTools({ name: 'Konbini Confession', concept: KONBINI });
+  assert.deepEqual(k.map((t) => t.id), ['token', 'wall', 'drop', 'event', ...TRUST], 'the holder tools on every coin');
+  assert.equal(k[2].config.revealJst, '23:00');
+  assert.match(k[2].config.prompt, /^Drop your confession\. It stays private; one is featured here every day at 23:00 JST\.$/);
   assert.equal(k[3].config.daily, '23:00');
-  assert.equal(pickTools({ name: 'X', concept: KONBINI, networks: { reward: 1 } })[2].id, 'poll', 'reward / control -> poll');
-  assert.deepEqual(own(pickTools({ name: 'Ramen Radar', concept: 'A hand-drawn map of the best late-night ramen in Tokyo.', networks: {} })), ['token', 'wall', 'memes', 'map']);
+  assert.equal(k[2].why, 'the idea asks people to send confessions');
+  assert.equal(k[3].why, 'the idea has a set moment (23:00 JST)');
+  assert.ok(k.filter((t) => TRUST.includes(t.id)).every((t) => !t.why), 'the chain panels need no reason');
+  assert.equal(pickTools({ name: 'X', concept: KONBINI, networks: { reward: 1 } })[1].id, 'wall', 'the wall is the one default community tool, whatever the brain');
+  // no filler: an idea that asks for nothing extra gets nothing extra (no meme maker to make up the numbers)
+  assert.deepEqual(own(pickTools({ name: 'Ramen Radar', concept: 'A hand-drawn map of the best late-night ramen in Tokyo.' })), ['token', 'wall', 'map']);
+  assert.deepEqual(own(pickTools({ name: 'Plain', concept: 'A coin for people who like quiet mornings.' })), ['token', 'wall']);
+  // memes only when memes are part of the idea or the name (the brand)
+  assert.ok(own(pickTools({ name: 'Frog Lol', concept: 'the frog king of the swamp' })).includes('memes'));
+  assert.ok(!own(pickTools({ name: 'Swamp', concept: 'a quiet swamp' })).includes('memes'));
+  // "city" or "neighbourhood" alone are not places (ideas say it about SUBZERONE's own city); real venues are
+  assert.equal(readConcept('in the city every launchpad becomes a building with its children as a neighbourhood').extra, null);
+  assert.equal(readConcept('the best izakaya spots in Osaka').extra, 'map');
+  assert.equal(readConcept('launch coins on pump.fun').extra, null, 'pump.fun is not a price chart');
   assert.equal(readConcept('lofi beats per gatti, alle 23').extra, 'synth');
   assert.equal(readConcept('un gioco: fai punteggio ogni sera').extra, 'game');
   assert.equal(readConcept('maiban himitsu wo okuru').drop, true);
@@ -77,14 +89,18 @@ test('SUB-01 picks 3–4 generic tools plus at most one idea-specific one, by ke
   assert.equal(conceptTime('at 11pm sharp'), '23:00');
   assert.equal(conceptTime('ogni notte a mezzanotte'), '00:00');
   assert.equal(conceptTime('22ji ni'), '22:00');
-  for (const c of [KONBINI, 'cats', 'a game with a map and music and a chart and secrets every night, lol']) {
-    const list = pickTools({ name: 'N', concept: c, networks: { visual: 1 } }).filter((t) => !TRUST.includes(t.id));
-    const generic = list.filter((t) => !['map', 'synth', 'game', 'chart'].includes(t.id));
-    assert.ok(generic.length >= 3 && generic.length <= 4 && list.length <= 5 && list[0].id === 'token', c);
+  for (const c of [KONBINI, 'cats', 'a game with a map and music and a chart and secrets every night, vote, lol']) {
+    const list = pickTools({ name: 'N', concept: c }).filter((t) => !TRUST.includes(t.id));
+    assert.deepEqual(list.slice(0, 2).map((t) => t.id), ['token', 'wall'], c);
+    assert.ok(list.length <= 5 && list.filter((t) => ['map', 'synth', 'game', 'chart'].includes(t.id)).length <= 1, c);
+    assert.ok(list.slice(2).every((t) => t.why && t.why.length >= 3), c);
   }
   const spec = templateGenerate({ idea: { title: 'Konbini Confession', concept: KONBINI }, brain: { networks: { language: 1 } } }).spec;
   // the idea app (composer.js) replaces the tools it does better: here the drop box and the daily event
   assert.deepEqual(spec.tools, toolsBeside(chooseTools({ title: 'Konbini Confession', concept: KONBINI }, { networks: { language: 1 } }), spec.app));
+  // a why is plain text, validated like any field
+  assert.throws(() => validateTools([{ id: 'wall', config: {}, why: 'x<script>' }]), /why/);
+  assert.equal(validateTools([{ id: 'wall', config: {}, why: ' because ' }])[0].why, 'because');
 });
 
 test('tool configs are validated strictly; the spec refuses a bad tools list', () => {
@@ -175,7 +191,7 @@ test('project host: the kit files, the CSP, tool endpoints, and nothing else', a
     for (const p of ['/_kit/../package.json', '/_kit/site-kit.v2.js', '/_kit/vendor/../../src/app.js', '/_api/nothing']) assert.equal((await k.site('GET', p)).status, 404, p);
     assert.equal((await k.site('POST', '/', {})).status, 405);
     assert.equal((await k.site('OPTIONS', '/_api/wall')).status, 405, 'no CORS preflight answered');
-    assert.equal((await k.site('GET', '/_api/wall')).status, 404, 'the wall is off on this site');
+    assert.equal((await k.site('GET', '/_api/poll')).status, 404, 'the poll is off on this site');
     const tok = await k.site('GET', '/_api/token');
     assert.equal(tok.json.state, 'pre-launch');
     assert.equal(tok.json.priceUsd, null);
@@ -332,7 +348,7 @@ test('room PC: PUT /tools rebuilds the site; owner only; frozen between approval
     const k = await konbini(h);
     const view = (await k.owner.call('GET', `/api/projects/${k.slug}/tools`)).json;
     assert.equal(view.editable, true);
-    assert.deepEqual(own(view.tools), ['token'], 'the idea app took over the drop box, the poll and the event');
+    assert.deepEqual(own(view.tools), ['token', 'wall'], 'the idea app took over the drop box and the event; the wall stays');
     assert.deepEqual(Object.keys(view.catalog).sort(), [...TOOL_IDS].sort());
     const before = k.project().live_site_version;
     const put = await k.owner.call('PUT', `/api/projects/${k.slug}/tools`, { tools: [{ id: 'token' }, { id: 'event', config: { title: 'Receipt printing', at: '2030-01-01T23:00' } }, { id: 'memes' }, { id: 'map' }] });
@@ -387,9 +403,9 @@ test('backfill: launched coins without tools get SUB-01\'s pick as a new public 
     h.db.run('UPDATE site_versions SET spec_json = ? WHERE id = ?', JSON.stringify(old), row.id);   // as built before 2026-10-12
     fakeLaunch(h, k.slug);
     const out = await backfillTools(h.db, h.cfg);
-    assert.deepEqual(out.added.map((a) => [a.slug, own(a.tools)]), [[k.slug, ['token', 'drop', 'poll', 'event']]]);
+    assert.deepEqual(out.added.map((a) => [a.slug, own(a.tools)]), [[k.slug, ['token', 'wall', 'drop', 'event']]]);
     assert.equal(k.project().live_site_version, p.live_site_version + 1);
-    assert.match(h.db.get(`SELECT message FROM events WHERE kind = 'tools' ORDER BY id DESC LIMIT 1`).message, /^SUB-01 added tools to the site: token, drop, poll, event, trades, holders, devwatch, fees, alerts/);
+    assert.match(h.db.get(`SELECT message FROM events WHERE kind = 'tools' ORDER BY id DESC LIMIT 1`).message, /^SUB-01 added tools to the site: token, wall, drop, event, trades, holders, devwatch, fees, alerts/);
     assert.deepEqual((await backfillTools(h.db, h.cfg)).added, [], 'idempotent');
   } finally { h.close(); }
 });

@@ -283,11 +283,12 @@ After "He builds it" the generate job records each step it goes through (`build-
 "build": {
   "state": "queued|running|retrying|ready|failed",
   "steps": [
-    { "id": "queued|app|brief|art|site|qa|ready", "label": "Two logo + banner options",
+    { "id": "queued|app|fit|brief|art|site|qa|ready", "label": "Two logo + banner options",
       "state": "todo|running|done|failed|skipped", "startedAt": 0, "endedAt": null,
       "provider": "language model|template (no AI)|rules (no AI)|Higgsfield|Recraft|Higgsfield + local fallback|local fallback|local drawing|sandbox|Chromium|static checks|null",
       "plannedProvider": "Higgsfield (todo steps: who will do it)", "note": "1 of 2 options drawn locally|null",
-      "expectedSeconds": 40, "p90Seconds": 64, "estimateFrom": "default|median of 12", "elapsedSeconds": 12.4 }
+      "expectedSeconds": 40, "p90Seconds": 64, "estimateFrom": "default|median of 12", "elapsedSeconds": 12.4,
+      "flag": "missing|partial|null (the fit step only)" }
   ],
   "startedAt": 0, "etaSeconds": 68, "etaAt": 0, "elapsedSeconds": 31.2, "percent": 37,
   "queue": { "position": 2, "ahead": 1, "startsInSeconds": 55 },
@@ -295,17 +296,28 @@ After "He builds it" the generate job records each step it goes through (`build-
 }
 ```
 
-- Steps (2026-10-12: the app first, then the words for it): `queued` (in line) → `app` (the idea app) → `brief` (the words: name, tagline, story, X posts; a language-model failure says the template wrote them) → `art` (two logo + banner
+- Steps (2026-10-12: the app first, then the words for it): `queued` (in line) → `app` (the idea app) → `fit` ("Does it
+  match the idea?", docs/APP-COMPOSER.md: its `note` is "Yes: 3 of 3 core features built" or "Not all of it. Missing: …;
+  Only in part: …", and `flag` is `missing` / `partial` when the build is not all of the idea) → `brief` (the words: name, tagline, story, X posts; a language-model failure says the template wrote them) → `art` (two logo + banner
   options) → `site` (sandbox build + safety check) → `qa` (SUB-01's QA gate, docs/SITE-QA.md: `Chromium` or
   `static checks`) → `ready`.
 - ETA: per step the median duration of the last 20 finished builds (per planned provider once it has 3 runs), the
-  defaults until then (brief 25 s, app 20 s, art 40 s, site 5 s, QA 30 s; about 1 s for the no-AI providers).
+  defaults until then (brief 25 s, app 20 s, fit 10 s, art 40 s, site 5 s, QA 30 s; about 1 s for the no-AI providers).
   `etaSeconds` = the wait in line + the medians of the steps not started + what is left of the running one; a step past
   its median is extended to its p90, past that by another p90 at a time; never negative. `percent` counts work only
   (not the wait). The client can re-estimate every second from `expectedSeconds` / `p90Seconds` / `startedAt` and `now`.
 - `queue` (only while it waits): builds run one after another on the worker; `position` 1 = next. A failed run that
   will be retried is `retrying`, with `queue.startsInSeconds` until the retry.
 - `note` on a `failed` step is the job's error for the author and admins, `"stopped here"` for everyone else.
+
+- A finished build without a row for a step (built before the step existed) shows that step `skipped`.
+
+`GET /api/ideas/:id` also carries `fidelity` (the author and the staff; `null` for others and before the build): the
+newest "Does it match the idea?" check, `{v, source: "model|rules", model, verdict: "match|partial|missing", core:
+[{feature, capability, status: "built|partial|missing", builtBy, reason, terms}], tools: [{id, why}], built, message,
+fallback, checkedAt, missing: [...core], partial: [...core]}`. `message` is SUB-01's words to the author. The project
+view (`GET /api/projects/:slug`) carries the same `fidelity` for the author and the staff (the room PC's "Missing from
+your idea" panel).
 
 The web process watches the rows (every second, only while a stream is open) and writes a frame when a step changes:
 

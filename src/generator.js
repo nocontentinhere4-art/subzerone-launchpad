@@ -12,9 +12,10 @@ import { rankedNetworks, palette } from './art.js';
 import { Permanent } from './jobs.js';
 import { pickTools, validateTools, isToolError, CATALOG, TRUST } from './tools.js';
 import { validateApp, isAppError, blockOf, describeApp } from './app-blocks.js';
-import { composeRules, composeApp, toolsBeside, readIdea } from './composer.js';
+import { composeRules, composeApp, readIdea } from './composer.js';
 import { RETURNS } from './scorecard.js';
 import { callModel, parseModelJson, ModelError, modelOf } from './model.js';
+import { fitIdea, rulesFit, honestyProblem, toolsFor } from './fidelity.js';
 import { log } from './log.js';
 
 export const NETWORK_WORDS = {
@@ -101,8 +102,9 @@ export function validateSpec(s) {
   return s;
 }
 
-/** SUB-01's tool pick for a site (no language model): 3–4 generic tools plus at most one idea-specific one, from the
- * concept's keywords (en / it / ja romaji) and the brain's dominant network. Rules in tools.js pickTools. */
+/** SUB-01's tool pick for a site (no language model): the token panel and the wall, then only the tools the concept's
+ * keywords call for (en / it / ja romaji), at most 3 and one idea-specific; the holder tools. Rules in tools.js pickTools;
+ * a new build asks fidelity.js (the language model when configured, these rules otherwise). */
 export function chooseTools(idea, brain, { name } = {}) {
   return pickTools({ name: name || strip(idea?.name_suggestion || idea?.title, 32) || 'this coin', concept: `${idea?.title || ''}. ${idea?.concept || ''}`, networks: brain?.networks });
 }
@@ -182,11 +184,12 @@ export function appFeatures(app, { name = 'this coin' } = {}) {
   return out;
 }
 
-/** The site's tools besides the app, in plain words: {site: ["Poll: …"], chain: ["Live trades", …]}. */
+/** The site's tools besides the app, in plain words: {site: ["Poll: … It is here because …"], chain: ["Live trades", …]}.
+ * Each idea tool carries SUB-01's reason for being there (fidelity.js), so the copy can say why. */
 export function toolFacts(tools) {
   const list = Array.isArray(tools) ? tools : [];
   return {
-    site: list.filter((t) => CATALOG[t.id] && !TRUST.includes(t.id)).map((t) => `${CATALOG[t.id].name}: ${CATALOG[t.id].line}`),
+    site: list.filter((t) => CATALOG[t.id] && !TRUST.includes(t.id)).map((t) => `${CATALOG[t.id].name}: ${CATALOG[t.id].line}${t.why ? ` It is here because ${t.why.replace(/[.]$/, '')}.` : ''}`),
     chain: list.filter((t) => TRUST.includes(t.id)).map((t) => CATALOG[t.id].name),
   };
 }
@@ -203,6 +206,13 @@ function pack(sentences, n) {
   if (cur) out.push(cur);
   return out;
 }
+
+/** What the site really does, as text: the honesty check (fidelity.js honestyProblem) never refuses these words. */
+export function builtText(app, tools, name) {
+  return [...appFeatures(app, { name }).map((f) => f.text), ...(Array.isArray(tools) ? tools : []).filter((t) => CATALOG[t.id]).map((t) => `${CATALOG[t.id].name}: ${CATALOG[t.id].line}`)].join(' ');
+}
+const notBuilt = (fidelity) => (fidelity?.core || []).filter((x) => x.status === 'missing');
+const lc = (s) => (s && /^[A-Z](?![A-Z0-9-])/.test(s) ? s[0].toLowerCase() + s.slice(1) : s);
 
 // --- the template (no AI) -----------------------------------------------------------------------------------------------
 /** The one line that says what the app does, by its kind. */
@@ -224,12 +234,14 @@ function templateTagline(app, name) {
 }
 
 /** Deterministic copy for a composed app: {tagline, description, sections (without the legal note), x: {bio, posts}}. */
-export function templateCopy({ idea, brain, app, tools, name, ticker, submitter }) {
-  const concept = strip(idea?.concept, 480);
+export function templateCopy({ idea, brain, app, tools, name, ticker, submitter, fidelity = null }) {
+  const missing = notBuilt(fidelity);
+  // the author's words describe the whole idea: with parts not built, the copy never repeats them as if they existed
+  const concept = missing.length ? '' : strip(idea?.concept, 480);
   const feats = appFeatures(app, { name });
   const tagline = templateTagline(app, name) || fit(firstSentence(concept) || `${name}, built by SUB-01.`, 90);
   const lede = strip(app?.lede, 400);
-  let description = lede ? (lede.toLowerCase().includes(name.toLowerCase()) ? lede : `${name}: ${lede}`) : concept;
+  let description = lede ? (lede.toLowerCase().includes(name.toLowerCase()) ? lede : `${name}: ${lede}`) : concept || feats[0]?.text || '';
   description = fit(description, 500);
   if (description.length < 10) description = `${name}: built by SUB-01 from an idea dropped in his room.`;
   const who = strip(submitter, 24) || 'its author', Who = who === 'its author' ? 'Its author' : who;
@@ -237,7 +249,11 @@ export function templateCopy({ idea, brain, app, tools, name, ticker, submitter 
   const tf = toolFacts(tools);
   const toolsBody = [...tf.site, ...(tf.chain.length ? [`From the launch on, read from the chain: ${tf.chain.join(', ').toLowerCase()}.`] : [])];
   if (toolsBody.length) sections.push({ heading: 'Also on the site', body: fit(toolsBody.join(' '), 700) });
-  sections.push({ heading: 'Where it comes from', body: fit(`${Who} dropped the idea in SUB-01's room and his brain simulation voted to build it (${voteFacts(brain)}). In the author's words: ${concept || name}`, 700) });
+  const origin = `${Who} dropped the idea in SUB-01's room and his brain simulation voted to build it (${voteFacts(brain)}).`;
+  // what the idea asked for and this version does not do: said once, plainly, the "not built yet" first (a cut keeps it)
+  sections.push({ heading: 'Where it comes from', body: fit(missing.length
+    ? `${origin} The idea asks for more than this first version does. Not built yet: ${missing.map((x) => lc(x.feature.replace(/[.]$/, ''))).join('; ')}.`
+    : `${origin} In the author's words: ${concept || name}`, 700) });
   const one = feats[0]?.text || lede || concept;
   return {
     tagline, description, sections: sections.slice(0, 4),
@@ -253,15 +269,24 @@ export function templateCopy({ idea, brain, app, tools, name, ticker, submitter 
 }
 
 // observe (build-steps.js): the build timeline hears where the app ends and the words start; it changes nothing
-export function templateGenerate({ idea, brain, submitter, app: composed, observe } = {}) {
+// fit: the idea check already made (anthropicGenerate's fallback); without it the rules check it here (fidelity.js)
+export function templateGenerate({ idea, brain, submitter, app: composed, observe, fit: given = null } = {}) {
   const { name, ticker } = baseIdentity(idea);
   let app = composed ?? null;
   // SUB-01 builds the idea's app (rules, no model here) when none was composed; an idea the DSL cannot hold keeps its tools
   if (composed === undefined) { try { app = composeRules(idea, { name, ticker }).app; } catch { app = null; } }
-  observe?.('app:done', { provider: 'rules (no AI)' });
+  let fitted = given;
+  if (!fitted) {
+    observe?.('app:done', { provider: 'rules (no AI)' });
+    observe?.('fit:start', { provider: 'rules (no AI)' });
+    fitted = rulesFit({ idea, app, name, ticker });
+    observe?.('fit:done', { provider: 'rules (no AI)', fidelity: fitted.fidelity });
+  }
+  app = fitted.app ?? app;
+  const fidelity = fitted.fidelity;
   observe?.('brief:start', { provider: 'template (no AI)' });
-  const tools = app ? toolsBeside(chooseTools(idea, brain, { name }), app) : chooseTools(idea, brain, { name });
-  const copy = templateCopy({ idea, brain, app, tools, name, ticker, submitter });
+  const tools = toolsFor(fidelity.tools, { name, concept: `${idea?.title || ''}. ${idea?.concept || ''}`, app });
+  const copy = templateCopy({ idea, brain, app, tools, name, ticker, submitter, fidelity });
   const spec = {
     name, ticker, tagline: copy.tagline, description: copy.description, sections: withDisclaimer(copy.sections),
     x: { handles: handlesFor(name, ticker), bio: copy.x.bio, posts: copy.x.posts },
@@ -269,7 +294,7 @@ export function templateGenerate({ idea, brain, submitter, app: composed, observ
   };
   const checked = validateSpec(spec);
   observe?.('brief:done', { provider: 'template (no AI)' });     // after the content check: a refused spec stops on this step
-  return { spec: checked, generator: 'template/1', costUsd: 0 };
+  return { spec: checked, generator: 'template/1', costUsd: 0, fidelity };
 }
 
 // --- the language model ---------------------------------------------------------------------------------------------
@@ -307,6 +332,11 @@ Rules that are never bent:
   really do: the idea's flavour may colour the words, never add a feature. The tools listed in <app> are standard
   tools on this coin's own site: describe each exactly as its line says, never as customised to the idea and never as
   something the coins launched from the site get.
+- When <facts> lists what the idea asks for and SUB-01 could NOT build: never describe those parts as features of the
+  site, never hint that the site does them, never use their words as if they existed. You may say it once, plainly, in
+  the section on where the idea came from: the idea asks for more, and those parts are not built yet. A part built only
+  in part: describe only the part that exists.
+- Each tool in <app> says why it is on the site ("It is here because"): say so in a short clause, in your own words.
 - Do not call it "just a meme" and write no disclaimers or "no promises" lines: the site prints its own legal note.
 - SUB-01 is a brain simulation. Never say he is conscious, sentient or alive.
 - When the idea is about quantum computing: the post-quantum part is the registry (ML-DSA-65 signatures verified in the
@@ -325,7 +355,7 @@ export const COPY_SCHEMA = {
 };
 
 /** The user message: the idea, the composed app and tools, the facts. Exported for the tests. */
-export function copyBrief({ idea, brain, app, tools, submitter, fixed, honest, retryWhy }) {
+export function copyBrief({ idea, brain, app, tools, submitter, fixed, honest, retryWhy, fidelity = null }) {
   const base = baseIdentity(idea);
   const name = fixed?.name || base.name;
   const quantum = readIdea(`${idea?.title || ''}. ${idea?.concept || ''}`).quantum || Boolean(app && blockOf(app, 'pq'));
@@ -352,6 +382,10 @@ export function copyBrief({ idea, brain, app, tools, submitter, fixed, honest, r
     fixed ? `Fixed name: "${fixed.name}". Fixed ticker: "${fixed.ticker}". Use both exactly.` : `Name: ${idea?.name_suggestion ? `use "${base.name}"` : 'choose one (2 to 32 characters)'}. Ticker: ${idea?.ticker_suggestion ? `use "${base.ticker}"` : 'choose one'}.`,
     `SUB-01's brain vote: ${voteFacts(brain)}${nets.length ? `; the words lit up his ${nets.join(', ')} networks` : ''}.`,
     honest ? `What SUB-01 built, honestly: ${strip(honest, 400)}` : null,
+    ...(notBuilt(fidelity).length ? ['What the idea asks for that SUB-01 could NOT build (the site does not do these; never present them as real):',
+      ...notBuilt(fidelity).map((x) => `- ${strip(x.feature, 80)}: ${strip(x.reason, 200)}`)] : []),
+    ...((fidelity?.core || []).some((x) => x.status === 'partial') ? ['Built only in part (describe only the part that exists):',
+      ...fidelity.core.filter((x) => x.status === 'partial').map((x) => `- ${strip(x.feature, 80)}: ${strip(x.reason, 200)}`)] : []),
     quantum ? 'Quantum: the post-quantum part is the registry (ML-DSA-65, verified in the browser). The coins are Solana tokens with Ed25519 keys: not quantum-proof.' : null,
     'The coin is not launched yet; the site exists in preview.',
     '</facts>',
@@ -371,7 +405,7 @@ const NEGATION = /\b(not|no|never|isn'?t|aren'?t|cannot|can'?t|nor|without)\b/i;
 const LINK = /https?:|www\.|\b[a-z0-9-]+\.(com|io|xyz|live|net|org|app|gg|co|so|me)\b/i;
 
 /** The model's copy, checked and normalised. Throws CopyRule with the first problem. */
-export function checkCopy(out, { fixed = null, submitter = '' } = {}) {
+export function checkCopy(out, { fixed = null, submitter = '', fidelity = null, built = '' } = {}) {
   const need = (c, why) => { if (!c) throw new CopyRule(why); };
   const s = (v) => (typeof v === 'string' ? v.replace(/\s+/g, ' ').trim() : '');
   need(out && typeof out === 'object', 'the answer was not an object');
@@ -404,6 +438,9 @@ export function checkCopy(out, { fixed = null, submitter = '' } = {}) {
   need(!CONSCIOUS.test(all), 'never call SUB-01 conscious or sentient');
   need(!all.split(/(?<=[.;:!?])\s+|\n/).some((t) => QUANTUM_CLAIM.test(t) && !NEGATION.test(t)), 'never claim coins, keys, wallets or fees are quantum-proof or quantum-safe: only the registry is post-quantum');
   need(!LINK.test([bio, ...posts].join(' ').replace(/pump\.fun/gi, 'pumpfun')), 'no links or web addresses in the bio or the posts');
+  // what SUB-01 could not build never appears as a feature (fidelity.js): a sentence may name it only to say it is not there
+  const lie = honestyProblem(prose, fidelity, built);
+  need(!lie, lie);
   const body = [description, ...sections.map((y) => y.body)].join(' ');
   need((body.match(/\bbrain\b/gi) || []).length <= 2, 'mention the brain vote once, briefly');
   // the two credits the brief asks for, added in a short sentence when the model forgot them
@@ -420,13 +457,14 @@ export function checkCopy(out, { fixed = null, submitter = '' } = {}) {
  * The model writes the copy for the composed app. -> {copy, costUsd, model}. Throws ModelError on any model problem
  * (the caller falls back to the template); a broken rule gets one more try with the reason.
  */
-export async function writeCopy({ idea, brain, app, tools, cfg, signal, fetchImpl = fetch, submitter, fixed = null, honest = null }) {
+export async function writeCopy({ idea, brain, app, tools, cfg, signal, fetchImpl = fetch, submitter, fixed = null, honest = null, fidelity = null }) {
   let why = null, costUsd = 0;
+  const built = builtText(app, tools, fixed?.name || baseIdentity(idea).name);
   for (let attempt = 0; attempt < 2; attempt++) {
-    const r = await callModel(cfg, { system: COPY_SYSTEM, user: copyBrief({ idea, brain, app, tools, submitter, fixed, honest, retryWhy: why }),
+    const r = await callModel(cfg, { system: COPY_SYSTEM, user: copyBrief({ idea, brain, app, tools, submitter, fixed, honest, retryWhy: why, fidelity }),
       schema: COPY_SCHEMA, maxTokens: 4000, signal, fetchImpl, label: 'generator' }).catch((e) => { if (e instanceof ModelError) e.costUsd += costUsd; throw e; });
     costUsd += r.costUsd;
-    try { return { copy: checkCopy(parseModelJson(r.text), { fixed, submitter }), costUsd, model: modelOf(cfg) }; } catch (e) {
+    try { return { copy: checkCopy(parseModelJson(r.text), { fixed, submitter, fidelity, built }), costUsd, model: modelOf(cfg) }; } catch (e) {
       if (!(e instanceof CopyRule) && !(e instanceof ModelError)) throw e;
       why = e.message;
     }
@@ -452,41 +490,47 @@ function warnFallback(what, e, extra = {}) {
 
 export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = fetch, submitter, observe }) {
   const base = baseIdentity(idea);
+  const concept = `${idea?.title || ''}. ${idea?.concept || ''}`;
   // 1. the app first: the copy describes what it does
   const composed = await composeApp(idea, brain, { name: base.name, ticker: base.ticker, cfg, fetchImpl, signal });
   if (composed.fallback) log.warn('composer: the language model failed, SUB-01 uses the rules', { why: composed.fallback });
   observe?.('app:done', { provider: composed.fallback ? 'rules (no AI)' : 'language model', fallback: composed.fallback });   // the build timeline
+  // 2. does it match the idea? the core features against the app, and the tools that serve it (fidelity.js; never throws)
+  observe?.('fit:start', { provider: 'language model' });
+  const fitted = await fitIdea({ idea, app: composed.app, name: base.name, ticker: base.ticker, cfg, fetchImpl, signal });
+  if (fitted.fallback) log.warn('fidelity: the language model failed, SUB-01 checks the idea with the rules', { why: fitted.fallback });
+  observe?.('fit:done', { provider: fitted.fidelity.source === 'model' ? 'language model' : 'rules (no AI)', fallback: fitted.fallback, fidelity: fitted.fidelity });
+  const app0 = fitted.app, fidelity = fitted.fidelity;
   observe?.('brief:start', { provider: 'language model' });
-  const tools0 = toolsBeside(chooseTools(idea, brain, { name: base.name }), composed.app);
-  // 2. the copy, for that app and those tools
+  // 3. the copy, for that app and those tools, told what is NOT built
   let c;
   try {
-    c = await writeCopy({ idea, brain, app: composed.app, tools: tools0, cfg, signal, fetchImpl, submitter, honest: composed.honest,
+    c = await writeCopy({ idea, brain, app: app0, tools: fitted.tools, cfg, signal, fetchImpl, submitter, honest: composed.honest, fidelity,
       fixed: idea?.name_suggestion && idea?.ticker_suggestion ? base : null });
   } catch (e) {
     if (signal?.aborted) throw e;
     const why = warnFallback('generator', e, { title: strip(idea?.title, 60) });
-    const out = templateGenerate({ idea, brain, submitter, app: composed.app });
+    const out = templateGenerate({ idea, brain, submitter, app: app0, fit: fitted });
     observe?.('brief:done', { provider: 'template (no AI)', fallback: why });
-    return { ...out, costUsd: e?.costUsd || 0, fallback: why };
+    return { ...out, costUsd: (e?.costUsd || 0) + fitted.costUsd, fallback: why };
   }
   const { copy } = c;
-  const app = renamedApp(composed.app, base, copy, idea, composed.source);
+  const app = renamedApp(app0, base, copy, idea, composed.source);
   const spec = {
     name: copy.name, ticker: copy.ticker, tagline: copy.tagline, description: copy.description, sections: withDisclaimer(copy.sections),
     x: copy.x, disclaimer: DISCLAIMER, palette: palette(brain?.networks),
-    tools: toolsBeside(chooseTools(idea, brain, { name: copy.name }), app),   // never the model's choice
+    tools: toolsFor(fidelity.tools, { name: copy.name, concept, app }),   // the fit's picks (fidelity.js), never the copywriter's
     app,
   };
   try {
     const checked = validateSpec(spec);
     observe?.('brief:done', { provider: 'language model' });   // after the content check
-    return { spec: checked, generator: `anthropic:${c.model}`, costUsd: c.costUsd };
+    return { spec: checked, generator: `anthropic:${c.model}`, costUsd: c.costUsd + fitted.costUsd, fidelity };
   } catch (e) {
     const why = warnFallback('generator', e, { title: strip(idea?.title, 60) });
-    const out = templateGenerate({ idea, brain, submitter, app: composed.app });
+    const out = templateGenerate({ idea, brain, submitter, app: app0, fit: fitted });
     observe?.('brief:done', { provider: 'template (no AI)', fallback: why });
-    return { ...out, costUsd: c.costUsd, fallback: why };
+    return { ...out, costUsd: c.costUsd + fitted.costUsd, fallback: why };
   }
 }
 
@@ -495,7 +539,8 @@ export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = 
  * name and ticker kept. -> {spec, generator, costUsd, fallback}. The model when one is configured, the template otherwise
  * or on any model problem.
  */
-export async function rewriteSpec({ idea, brain, spec, cfg, signal, fetchImpl = fetch, submitter }) {
+// fidelity: the idea's latest check (fidelity.js fidelityView), so the rewritten words stay honest about what is missing
+export async function rewriteSpec({ idea, brain, spec, cfg, signal, fetchImpl = fetch, submitter, fidelity = null }) {
   const fixed = { name: spec.name, ticker: spec.ticker };
   const app = spec.app || null, tools = Array.isArray(spec.tools) ? spec.tools : [];
   let copy = null, generator = 'template/1', costUsd = 0, fallback = null;
@@ -503,7 +548,7 @@ export async function rewriteSpec({ idea, brain, spec, cfg, signal, fetchImpl = 
     let honest = null;
     try { const r = composeRules(idea, fixed); if (app && r.app.kind === app.kind) honest = r.honest; } catch { /* no rules draft */ }
     try {
-      const r = await writeCopy({ idea, brain, app, tools, cfg, signal, fetchImpl, submitter, fixed, honest });
+      const r = await writeCopy({ idea, brain, app, tools, cfg, signal, fetchImpl, submitter, fixed, honest, fidelity });
       copy = r.copy; generator = `anthropic:${r.model}`; costUsd = r.costUsd;
     } catch (e) {
       if (signal?.aborted) throw e;
@@ -511,7 +556,7 @@ export async function rewriteSpec({ idea, brain, spec, cfg, signal, fetchImpl = 
       costUsd = e?.costUsd || 0;
     }
   }
-  if (!copy) copy = templateCopy({ idea, brain, app, tools, name: fixed.name, ticker: fixed.ticker, submitter });
+  if (!copy) copy = templateCopy({ idea, brain, app, tools, name: fixed.name, ticker: fixed.ticker, submitter, fidelity });
   const handles = Array.isArray(spec.x?.handles) && spec.x.handles.length ? spec.x.handles : (copy.x.handles || handlesFor(fixed.name, fixed.ticker));
   const next = { ...spec, tagline: copy.tagline, description: copy.description, sections: withDisclaimer(copy.sections), disclaimer: DISCLAIMER,
     x: { ...(spec.x || {}), handles, bio: copy.x.bio, posts: copy.x.posts } };

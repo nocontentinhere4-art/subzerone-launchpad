@@ -203,6 +203,45 @@ every launch."), the app's lede as the description, "How it works" from `appFeat
 "Where it comes from" (the author, the vote in one clause, the idea in its author's words). The author's name suggestion
 is kept as typed ("Q-wave", not "Q-Wave").
 
+## Does it match the idea? (2026-10-12, `src/fidelity.js`)
+
+The owner's case: "PadPad: a launchpad for launchpads; fees flow up the family tree; the site shows the live family
+tree; in the city each launchpad is a building with its children as a neighbourhood" was shipped as a plain launchpad
+with a wall, a meme maker and a map, its copy described only the plain launchpad, and nobody was told. Now, after the app
+is composed and before a word is written, SUB-01 checks it:
+
+1. **Core features.** The 2–5 things without which it is not this idea, each mapped to the app's blocks and the site's
+   tools: `built`, `partial` or `missing`, with a one-line reason and a reusable kebab-case `capability`. With a model:
+   one call (`FIT_SYSTEM`, JSON schema `FIT_SCHEMA`, the same `ANTHROPIC_MODEL`) that sees the idea (untrusted), the kit
+   (every block of `app-blocks.js BLOCKS` and every tool of `tools.js CATALOG`, read at call time, so a new block counts
+   by itself), what the app has and the optional tools. Its answer is normalised: `builtBy` must name parts present,
+   "built" with nothing behind it becomes missing, and the rules can only make it stricter (a capability they know,
+   e.g. a fee tree, is not "built" without a part whose catalog line does it; titles and ledes are never evidence).
+   Without a model, or on any model problem: `rulesCore`, conservative keyword heuristics (`CAPABILITIES`: recursive
+   launchpads, fee tree, family tree view, city neighbourhood, AI generation, live chat, multiplayer, a custom game,
+   marketplace, NFTs, holder rewards, physical goods, phone app, bots, betting, on-chain governance, live video) plus the
+   app's own product by its kind. `PLATFORM` lists what the platform itself provides (a building in the city, X drafts).
+2. **Tools** (same call): see SITE-KIT.md, "SUB-01's choice".
+3. **The result** (`validateFidelity`, `fidelity/1`): `{v, source: model|rules, model, verdict: match|partial|missing,
+   core: [{feature, capability, status, builtBy, reason, terms}], tools: [{id, why}], built, message, fallback}`.
+   `message` is SUB-01's own words, written from the list, never by the model ("I can't build launchpads that launch
+   launchpads yet. The launch block launches plain coins … What I built instead: …").
+
+**Consequences.** The build timeline has a step "Does it match the idea?" between the app and the words, flagged
+(`flag: missing|partial`) with the list in its note. The check is stored (migration `021_idea_fidelity.sql`:
+`idea_fidelity`, one row per build run, and `fidelity_gaps`, one row per feature not fully built) and shown in
+`GET /api/ideas/:id` and `GET /api/projects/:slug` (`fidelity`, author and staff only), on the room PC's Site tab
+("Missing from your idea") and in the verdict card. A build with a missing feature tells the author in SUB-01's words
+(a public `fidelity` event) and its preview note says "preview ready, but it is not all of your idea"; the author can
+still publish. The admin page lists the **most requested missing capabilities** (each idea once, from its newest check).
+
+**Honest words.** The copy brief lists what is not built ("never present them as real") and what is built only in
+part; `checkCopy` refuses a sentence that uses a missing feature's terms without saying it is not there (a model draft
+gets one more try with the reason, then the template). The template never quotes the author's words when something is
+missing; "Where it comes from" says "The idea asks for more than this first version does. Not built yet: …". The app's
+own title, lede and notes get the same check (`honestApp`: the rules' words replace a lying title or lede). "Ask SUB-01
+to rewrite" reads the latest check too.
+
 **Ask SUB-01 to rewrite** (`rewrite.js`, room PC Site tab): `POST /api/projects/:slug/rewrite` (owner; preview_ready /
 approved / launch_prepared; before any launch transaction; 3 a day per project, counted on the jobs table; one at a time)
 queues `rewrite_copy`: `rewriteSpec` writes the copy again for the app and tools the live spec has now (name and ticker

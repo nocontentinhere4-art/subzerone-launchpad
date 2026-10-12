@@ -6,6 +6,7 @@ import { harness, user, drain, IDEA, logs } from './helpers.js';
 import { templateGenerate, anthropicGenerate, checkCopy, copyBrief, appFeatures, COPY_SYSTEM, DISCLAIMER } from '../src/generator.js';
 import { composeRules } from '../src/composer.js';
 import { loadConfig } from '../src/config.js';
+import { FIT_SYSTEM } from '../src/fidelity.js';
 
 const QWAVE = { title: 'Q-wave', name_suggestion: 'Q-wave', ticker_suggestion: 'QWAVE',
   concept: 'Q-wave is a permissionless launchpad where visitors launch real pump.fun coins from the site, with an ML-DSA-65 post-quantum registry of every launch. Honest note: Solana keys are Ed25519.' };
@@ -67,8 +68,9 @@ test('model: the app is composed first and passed into the brief; JSON schema ou
   assert.equal(out.spec.tagline, GOOD.tagline);
   assert.equal(out.spec.app.kind, 'launchpad', 'the composed app (the rules, since the composer call failed)');
   assert.deepEqual(out.spec.sections.at(-1), { heading: 'What this is', body: DISCLAIMER });
-  const [composer, copy] = m.calls;
+  const [composer, fit, copy] = m.calls;
   assert.match(composer.body.system, /fixed DSL/, 'the composer runs first');
+  assert.equal(fit.body.system, FIT_SYSTEM, 'then: does it match the idea? (fidelity.js)');
   assert.equal(copy.body.system, COPY_SYSTEM);
   assert.equal(copy.body.model, 'claude-sonnet-5-5');
   assert.equal(copy.body.output_config.format.type, 'json_schema');
@@ -84,7 +86,7 @@ test('model: the app is composed first and passed into the brief; JSON schema ou
   const m2 = fakeModel();
   await anthropicGenerate({ idea: QWAVE, brain: BRAIN, cfg: cfgOf({ ANTHROPIC_MODEL: 'claude-opus-5-5' }), fetchImpl: m2.fetchImpl });
   assert.ok(m2.calls.every((c) => c.body.model === 'claude-opus-5-5'));
-  assert.equal(m2.calls[1].body.thinking, undefined, 'Opus 5.5 runs its default thinking');
+  assert.equal(m2.calls.find((c) => c.body.system === COPY_SYSTEM).body.thinking, undefined, 'Opus 5.5 runs its default thinking');
 });
 
 test('model: a rule broken once gets one retry with the reason; twice, or any HTTP error, and the template writes with a warning', async () => {

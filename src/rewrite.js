@@ -71,7 +71,10 @@ export async function rewriteCopy(ctx) {
   const v = currentVersion(db, idea.id);
   const brain = parseJson(db.get(`SELECT brain_json FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, idea.id)?.brain_json, {});
   ctx.progress?.('SUB-01 rewrites the copy');
-  const out = await rewriteSpec({ idea: v, brain, spec, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet) });
+  // the idea's latest check (fidelity.js): the rewritten words never present what SUB-01 could not build
+  const { fidelityView } = await import('./fidelity.js');
+  const out = await rewriteSpec({ idea: v, brain, spec, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet),
+    fidelity: fidelityView(db, idea.id) });
   const by = String(ctx.payload?.by || idea.owner_wallet);
   db.tx(() => {
     const gv = (db.get('SELECT MAX(version) v FROM generations WHERE project_id = ?', project.id)?.v || 0) + 1;

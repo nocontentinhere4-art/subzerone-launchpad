@@ -32,6 +32,12 @@ export async function page(el) {
       <td>${c.admin_cleared_at ? '' : html`<button class="tiny primary" data-clear="${c.slug}">clear for launch</button>`} <button class="tiny danger" data-cancel="${c.idea_id}" ${admin ? '' : 'disabled'}>remove</button></td></tr>`)}</table>`
     : html`<div class="empty">Nothing waiting for clearance.</div>`}
 
+    <h2>Most requested missing capabilities</h2>
+    <p class="small dim">What ideas keep asking for that SUB-01 could not build (or built only in part), from each idea's latest "Does it match the idea?" check.</p>
+    ${(o.missingCapabilities || []).length ? html`<div class="tablewrap"><table><tr><th>capability</th><th>ideas</th><th>missing</th><th>in part</th><th>last asked</th></tr>${o.missingCapabilities.map((c) => html`<tr>
+      <td><b>${c.capability}</b><div class="faint tiny">${c.feature}</div></td><td>${c.ideas}</td><td>${c.missing}</td><td>${c.partial}</td><td class="small">${ago(c.lastAt)}</td></tr>`)}</table></div>`
+    : html`<div class="empty">Every idea checked so far was built as described.</div>`}
+
     <h2>Stopped ideas</h2>
     ${o.failed.length ? html`<table>${o.failed.map((f) => html`<tr><td><a href="/ideas/${f.id}" data-link>${f.title}</a></td><td class="small">${f.status_note}</td><td><button class="tiny" data-retry="${f.id}" ${admin ? '' : 'disabled'}>retry</button></td></tr>`)}</table>` : html`<div class="empty">None.</div>`}
 

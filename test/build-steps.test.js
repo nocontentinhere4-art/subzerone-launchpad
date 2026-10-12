@@ -24,7 +24,7 @@ test('median / p90 of durations', () => {
 });
 
 test('expected seconds: the defaults until there is data, then the median (per provider with 3+ runs)', () => {
-  assert.deepEqual(DEFAULT_SECONDS, { brief: 25, app: 20, art: 40, site: 5, qa: 30 });
+  assert.deepEqual(DEFAULT_SECONDS, { brief: 25, app: 20, fit: 10, art: 40, site: 5, qa: 30 });
   assert.equal(expectFor({}, 'brief', 'language model').expected, 25);
   assert.equal(expectFor({}, 'art', 'Higgsfield').expected, 40);
   assert.equal(expectFor({}, 'brief', 'template (no AI)').expected, 1, 'no network: about a second');
@@ -119,7 +119,7 @@ test('observing changes nothing: the same spec with or without the observer', ()
   const heard = [];
   const a = templateGenerate({ idea, brain }), b = templateGenerate({ idea, brain, observe: (e) => heard.push(e) });
   assert.deepEqual(a, b);
-  assert.deepEqual(heard, ['app:done', 'brief:start', 'brief:done'], 'the app first, then the words for it (2026-10-12)');
+  assert.deepEqual(heard, ['app:done', 'fit:start', 'fit:done', 'brief:start', 'brief:done'], 'the app first, then does it match the idea, then the words for it (2026-10-12)');
 });
 
 test('language model build: brief and app by the language model; a composer fallback says rules (no AI) and why', async () => {
@@ -191,16 +191,17 @@ test('copy the content check refuses: the words step says the template wrote the
   await drain(db, cfg, gen);
   const v = buildView(db, cfg, id, { owner: true });
   assert.equal(v.state, 'ready');
-  assert.deepEqual(v.steps.map((s) => s.id), ['queued', 'app', 'brief', 'art', 'site', 'qa', 'ready']);
-  assert.equal(v.steps[2].provider, 'template (no AI)');
-  assert.match(v.steps[2].note, /generator output refused/);
+  assert.deepEqual(v.steps.map((s) => s.id), ['queued', 'app', 'fit', 'brief', 'art', 'site', 'qa', 'ready']);
+  const brief = v.steps.find((s) => s.id === 'brief');
+  assert.equal(brief.provider, 'template (no AI)');
+  assert.match(brief.note, /generator output refused/);
   assert.doesNotMatch(db.get('SELECT html FROM site_versions').html, /guaranteed 100x/);
 });
 
 test('ETA from data: the medians of the last finished builds replace the defaults; the queue says who is first', async () => {
   const { cfg, db } = makeEnv({ GENERATOR: 'anthropic', ANTHROPIC_API_KEY: 'test' });
   const w = user(db), w2 = user(db), old = user(db);
-  // five finished builds: brief 10 s, app 4 s, art 30 s, site 2 s
+  // five finished builds: brief 10 s, app 4 s, fit 1 s, art 30 s, site 2 s
   const t0 = Date.now() - 3_600_000;
   for (let i = 0; i < 5; i++) {
     const job = { id: `job_old${i}`, idea_id: `idea_old${i}`, attempts: 1, created_at: t0 };
@@ -208,6 +209,7 @@ test('ETA from data: the medians of the last finished builds replace the default
     const r = buildRecorder(db, job, { cfg });
     let t = t0 + i * 100_000;
     r.begin(t); t += 4_000; r.done('app', {}, t);               // begin(): in line → the app (2026-10-12: the app first)
+    r.start('fit', 'language model', null, t); t += 1_000; r.done('fit', {}, t);
     r.start('brief', 'language model', null, t); t += 10_000; r.done('brief', {}, t);
     r.start('art', 'local drawing', null, t); t += 30_000; r.done('art', {}, t);
     r.start('site', 'sandbox', null, t); t += 2_000; r.done('site', {}, t);
@@ -227,13 +229,13 @@ test('ETA from data: the medians of the last finished builds replace the default
   assert.equal(va.steps[0].state, 'running', 'in line');
   assert.equal(va.queue.position, 1); assert.equal(vb.queue.position, 2);
   const s = Object.fromEntries(va.steps.map((x) => [x.id, x]));
-  assert.equal(s.brief.expectedSeconds, 10); assert.equal(s.app.expectedSeconds, 4); assert.equal(s.art.expectedSeconds, 30); assert.equal(s.site.expectedSeconds, 2);
+  assert.equal(s.brief.expectedSeconds, 10); assert.equal(s.app.expectedSeconds, 4); assert.equal(s.fit.expectedSeconds, 1); assert.equal(s.art.expectedSeconds, 30); assert.equal(s.site.expectedSeconds, 2);
   assert.equal(s.brief.estimateFrom, 'median of 5');
   assert.equal(s.brief.plannedProvider, 'language model');
   assert.equal(s.qa.expectedSeconds, 0.5); assert.equal(s.qa.plannedProvider, 'static checks');
-  assert.equal(va.etaSeconds, 46.5);
-  assert.equal(vb.queue.startsInSeconds, 46.5, 'starts when the first one is done');
-  assert.equal(vb.etaSeconds, 93);
+  assert.equal(va.etaSeconds, 47.5);
+  assert.equal(vb.queue.startsInSeconds, 47.5, 'starts when the first one is done');
+  assert.equal(vb.etaSeconds, 95);
   const sum = buildSummary(vb);
   assert.deepEqual(Object.keys(sum).sort(), ['elapsedSeconds', 'etaAt', 'etaSeconds', 'now', 'percent', 'queuePosition', 'state', 'step']);
   assert.equal(sum.queuePosition, 2);

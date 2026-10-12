@@ -2,7 +2,6 @@
 // schema, SUB-01's keyword picker (no language model) and the JST clock the tools run on. Pure: no database, no
 // network. The spec stores `tools: [{id, config}]`; render-child.js draws each one as a <section data-tool>, the
 // audited kit (/_kit/site-kit.v1.js) brings it to life, and tool-api.js answers its /_api calls.
-import { rankedNetworks } from './art.js';
 
 // Generic tools: any coin. Extras: one idea-specific capability at most, built on a vendored open-source library that
 // only that site loads (lazily, from /_kit/vendor/).
@@ -13,6 +12,10 @@ export const EXTRAS = ['map', 'synth', 'game', 'chart'];
 export const TRUST = ['trades', 'holders', 'devwatch', 'fees', 'alerts'];
 export const TOOL_IDS = [...GENERIC, ...EXTRAS, ...TRUST];
 export const MAX_TOOLS = 6;
+// 2026-10-12 (fidelity.js): beside the token panel and the wall, at most 3 tools, each only when it serves the idea
+export const FIXED_TOOLS = ['token', 'wall'];
+export const MAX_IDEA_TOOLS = 3;
+export const WHY_MAX = 140;
 
 // Libraries the extras (and the motion layer) load; the file names are what /_kit/vendor/ serves (kit/build.mjs).
 export const LIBS = Object.freeze({
@@ -181,12 +184,14 @@ export function validateTools(list) {
   const seen = new Set();
   const out = list.map((t) => {
     if (!t || typeof t !== 'object' || Array.isArray(t)) throw new ToolError('tools: each one is {id, config}');
-    const extra = Object.keys(t).filter((k) => k !== 'id' && k !== 'config');
+    const extra = Object.keys(t).filter((k) => k !== 'id' && k !== 'config' && k !== 'why');
     if (extra.length) throw new ToolError(`tools: unknown field ${String(extra[0]).slice(0, 20)}`);
     if (!TOOL_IDS.includes(t.id)) throw new ToolError(`tools: unknown tool ${String(t.id).slice(0, 20)}`);
     if (seen.has(t.id)) throw new ToolError(`tools: ${t.id} twice`);
     seen.add(t.id);
-    return { id: t.id, config: SCHEMAS[t.id](t.config ?? {}) };
+    // why: SUB-01's one line on why this tool serves the idea (2026-10-12, fidelity.js); optional, plain text
+    const why = text(t.id, t.why, 'why', 3, WHY_MAX);
+    return { id: t.id, config: SCHEMAS[t.id](t.config ?? {}), ...(why ? { why } : {}) };
   });
   if (out.filter((t) => !TRUST.includes(t.id)).length > MAX_TOOLS) throw new ToolError(`tools: at most ${MAX_TOOLS} (plus the holder tools)`);
   if (out.filter((t) => EXTRAS.includes(t.id)).length > 1) throw new ToolError('tools: at most one idea-specific tool');
@@ -216,14 +221,17 @@ const RITUAL = ['every night', 'every day', 'every morning', 'every evening', 'e
   'ogni sera', 'ogni notte', 'ogni giorno', 'ogni mattina', 'mezzanotte', 'rituale', 'stasera', 'maiban', 'mainichi', 'maiasa', 'maishuu', 'shinya', 'gishiki', 'konya'];
 const MEME = ['meme*', 'lol', 'lmao', 'funny', 'joke*', 'shitpost*', 'cat', 'cats', 'dog', 'dogs', 'frog*', 'pepe', 'absurd*', 'cursed', 'based', 'degen*', 'troll*',
   'divertent*', 'scherz*', 'gatto', 'gatti', 'cane', 'cani', 'rana', 'ridere', 'neko', 'inu', 'kaeru', 'omoshiroi', 'warai', 'kawaii', 'baka'];
+/** Words for real places people go: what the map needs (exported for fidelity.js). */
+export const PLACE_WORDS = ['map', 'maps', 'places', 'spot', 'spots', 'ramen', 'cafe*', 'restaurant*', 'bar', 'bars', 'shop', 'shops', 'izakaya', 'onsen', 'sento', 'kissaten',
+  'venue*', 'pub', 'pubs', 'park', 'parks', 'museum*', 'street food', 'food spot*',
+  'mappa', 'mappe', 'luoghi', 'posti', 'locali', 'negozi*', 'ristorant*', 'chizu', 'basho', 'mise'];
 const EXTRA_WORDS = {
-  map: ['map', 'maps', 'place*', 'spot', 'spots', 'street*', 'city', 'tokyo', 'osaka', 'kyoto', 'shibuya', 'shinjuku', 'ramen', 'cafe*', 'restaurant*', 'bar', 'bars', 'shop', 'shops',
-    'neighbourhood', 'neighborhood', 'mappa', 'mappe', 'luogh*', 'posto', 'posti', 'quartiere', 'citta', 'chizu', 'basho', 'mise', 'machi', 'izakaya', 'onsen', 'sento'],
+  // real places people go (2026-10-12: not "city" or "neighbourhood" alone, which ideas use about SUBZERONE's own city)
+  map: PLACE_WORDS,
   synth: ['music', 'song*', 'beat*', 'sound*', 'synth*', 'dj', 'lofi', 'lo fi', 'melod*', 'rhythm', 'tune*', 'musica', 'canzon*', 'suono', 'suoni', 'ritmo', 'ongaku', 'uta', 'oto', 'kyoku', 'karaoke', 'city pop'],
   game: ['game', 'games', 'gaming', 'arcade', 'play', 'player*', 'score*', 'level*', 'pixel*', 'gioco', 'giochi', 'giocare', 'punteggio', 'geemu', 'asobi', 'pachinko', 'gacha'],
-  chart: ['chart*', 'price', 'prices', 'trading', 'trader*', 'candle*', 'graph*', 'pump', 'grafico', 'prezzo', 'borsa', 'chaato', 'kabu', 'soba', 'kabuka'],
+  chart: ['chart*', 'price', 'prices', 'trading', 'trader*', 'candle*', 'graph*', 'grafico', 'prezzo', 'borsa', 'chaato', 'kabu', 'soba', 'kabuka'],
 };
-const LANGUAGE_NETS = new Set(['language', 'default']), REWARD_NETS = new Set(['reward', 'control']);
 
 /** A time named in the concept (23:00, 11pm, alle 23, 23ji, midnight / mezzanotte) as 'HH:MM', or null. */
 export function conceptTime(concept) {
@@ -265,30 +273,67 @@ export function defaultConfig(id, { name = 'this coin', concept = '' } = {}) {
   }
 }
 
-/** -> {generic: [...], extra} the keyword reading of a concept, for chooseTools and the tests. */
+/** -> {drop, event, memes, vote, extra} the keyword reading of a concept, for the rules pick and the tests. */
 export function readConcept(concept) {
   const t = fold(concept);
   const drop = DROP_NOUNS.some(([, words]) => hits(t, words) > 0);
   const event = hits(t, RITUAL) > 0 || conceptTime(concept) != null;
   const memes = hits(t, MEME) > 0;
+  const vote = hits(t, VOTE_WORDS) > 0;
   const scored = EXTRAS.map((id) => [id, hits(t, EXTRA_WORDS[id])]).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
-  return { drop, event, memes, extra: scored[0]?.[0] ?? null };
+  return { drop, event, memes, vote, extra: scored[0]?.[0] ?? null };
+}
+const VOTE_WORDS = ['vote*', 'voting', 'poll*', 'choose', 'decide*', 'favorite*', 'favourite*', 'vota*', 'votare', 'sondaggi*', 'scegli*', 'tohyou', 'ankeeto'];
+
+/** The rules' reason for each tool, as a clause that completes "It is here because …" (fidelity.js asks the language
+ * model for its own). */
+export function ruleWhy(id, concept = '') {
+  const time = conceptTime(concept);
+  const noun = DROP_NOUNS.find(([, words]) => hits(fold(concept), words))?.[0];
+  return {
+    token: 'every coin has its panel: price, holders and the contract',
+    wall: 'every site keeps one place for visitors\' short notes',
+    drop: `the idea asks people to send ${noun && noun !== 'idea' ? `${noun}s` : 'something in'}`,
+    event: `the idea has a set moment${time ? ` (${time} JST)` : ''}`,
+    poll: 'the idea asks people to vote or choose',
+    memes: 'memes are part of the idea',
+    map: 'the idea is about real places people go',
+    synth: 'the idea is about music and sound',
+    game: 'the idea asks for a game',
+    chart: 'the idea is about the price and its chart',
+  }[id] || (TRUST.includes(id) ? 'every coin gets the chain panels from its launch on' : null);
 }
 
-/** SUB-01's pick for a new site: 3–4 generic tools (always the token panel; wall or poll by the brain's dominant network;
- * drop, event, memes when the concept calls for them) plus at most one extra when the concept fits, then the holder
- * tools (TRUST) on every coin. */
-export function pickTools({ name, concept, networks }) {
+/** The rules' pick of the idea tools (no language model): only what the concept's words call for, at most
+ * MAX_IDEA_TOOLS and one extra; never filler. -> [{id, why}] */
+export function ruleToolPicks(concept, { name = '' } = {}) {
   const r = readConcept(concept);
-  const top = rankedNetworks(networks).find((n) => LANGUAGE_NETS.has(n.group) || REWARD_NETS.has(n.group));
-  const social = top && REWARD_NETS.has(top.group) ? 'poll' : 'wall';
-  const ids = ['token'];
-  if (r.drop) ids.push('drop');
-  ids.push(social);
-  if (r.event) ids.push('event');
-  if (r.memes) ids.push('memes');
-  const generic = ids.slice(0, 4);
-  if (generic.length < 3) generic.push('memes');
-  const list = [...(r.extra ? [...generic, r.extra] : generic), ...TRUST];
-  return validateTools(list.map((id) => ({ id, config: defaultConfig(id, { name, concept }) })));
+  const memes = r.memes || hits(fold(name), MEME) > 0;    // memes in the idea, or in its name (the brand)
+  const ids = [...(r.drop ? ['drop'] : []), ...(r.event ? ['event'] : []), ...(r.vote ? ['poll'] : []), ...(memes ? ['memes'] : [])];
+  const picks = [...(r.extra ? [r.extra] : []), ...ids].slice(0, MAX_IDEA_TOOLS);
+  return picks.map((id) => ({ id, why: ruleWhy(id, concept) }));
+}
+
+/** The site's tools from the idea picks: the token panel and the wall always, the picks (at most MAX_IDEA_TOOLS, one
+ * extra), then the holder tools (TRUST) on every coin. Each with SUB-01's why and his default config. */
+export function assembleTools(picks, { name, concept }) {
+  const seen = new Set(FIXED_TOOLS);
+  let extra = 0;
+  const chosen = [];
+  for (const p of picks || []) {
+    if (!p || !CATALOG[p.id] || seen.has(p.id) || TRUST.includes(p.id) || chosen.length >= MAX_IDEA_TOOLS) continue;
+    if (EXTRAS.includes(p.id) && extra++ >= 1) continue;
+    seen.add(p.id);
+    chosen.push(p);
+  }
+  const why = (id, w) => String(w || ruleWhy(id, concept) || '').replace(/[\u0000-\u001f\u007f<>`]/g, '').replace(/\s+/g, ' ').trim().slice(0, WHY_MAX) || undefined;
+  const list = [...FIXED_TOOLS.map((id) => ({ id })), ...chosen, ...TRUST.map((id) => ({ id }))]
+    .map((t) => ({ id: t.id, config: defaultConfig(t.id, { name, concept }), why: TRUST.includes(t.id) || t.id === 'token' ? undefined : why(t.id, t.why) }));
+  return validateTools(list.map((t) => (t.why && [...t.why].length >= 3 ? t : { id: t.id, config: t.config })));
+}
+
+/** SUB-01's pick for a new site without a language model: the token panel and the wall, the tools the concept's words
+ * call for (ruleToolPicks), then the holder tools. `networks` is accepted for older callers and no longer decides. */
+export function pickTools({ name, concept }) {
+  return assembleTools(ruleToolPicks(concept, { name }), { name, concept });
 }

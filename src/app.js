@@ -42,6 +42,7 @@ import { requestRewrite, rewriteView } from './rewrite.js';
 import { optedOut, recordTelemetry, telemetryDaily } from './telemetry.js';
 import { createChat } from './chat.js';
 import { buildView, createBuildWatch } from './build-steps.js';
+import { fidelityView, topMissing } from './fidelity.js';
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
@@ -179,7 +180,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const v = viewIdea(db, ctx.params.id, ctx.user);
     if (!v) throw new HttpError(404, 'not_found', 'not found, or private');
     // SUB-01's build, step by step, with its ETA (build-steps.js; null before he builds it or for builds before 2026-10-12)
-    return { ...v, build: buildView(db, cfg, v.id, { owner: v.owner || v.canAdmin }) };
+    // does it match the idea? (fidelity.js): the newest check, for the author and the staff; null before the build
+    return { ...v, build: buildView(db, cfg, v.id, { owner: v.owner || v.canAdmin }), fidelity: v.owner || v.canAdmin ? fidelityView(db, v.id) : null };
   });
   // the revise loop: a passed idea, rewritten and read again (ideas.js reviseIdea: 409 not_declined | max_versions, 429 too_fast)
   r.patch('/api/ideas/:id', async (ctx) => {
@@ -252,6 +254,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       devBuy: (owner || staff) && launch ? devBuyView(db, provider, p) : undefined,
       ledger: launch ? feeLedger(db, p.id) : null,
       pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: vote?.seq ?? null,
+      // what SUB-01 built against the idea (fidelity.js): the room PC's "Missing from your idea" panel
+      fidelity: (owner || staff) ? fidelityView(db, idea.id) : undefined,
     };
   });
 
@@ -345,7 +349,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       const merged = { ...base, ...given };
       if (t.id === 'event' && given.at) delete merged.daily;
       if (t.id === 'event' && given.daily) delete merged.at;
-      return { id: t.id, config: merged };
+      // SUB-01's reason for a tool he picked (fidelity.js) stays with it; a tool the author adds has none
+      const prev = (cur.tools || []).find((x) => x.id === t.id);
+      return { id: t.id, config: merged, ...(prev?.why ? { why: prev.why } : {}) };
     });
     let tools;
     try { tools = validateTools(list); } catch (e) { if (isToolError(e)) throw new HttpError(400, 'invalid', e.message); throw e; }
@@ -844,7 +850,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     return { counts, jobs, clearance, failed, audits, intents, pauses: Object.fromEntries(PAUSES.map((p) => [p, isPaused(db, p)])),
       budget: { ...limits(db, cfg), spentToday: spentToday(db) }, sub01Share: { bps: SUB01_FEE_BPS, wallet: cfg.sub01FeeWallet || null },
       mockBehaviour: cfg.production ? undefined : getSetting(db, 'mock.behaviour', 'ok'), role: ctx.user.role,
-      users: db.all("SELECT wallet, role, created_at, banned_at FROM users WHERE role != 'user' OR banned_at IS NOT NULL") };
+      users: db.all("SELECT wallet, role, created_at, banned_at FROM users WHERE role != 'user' OR banned_at IS NOT NULL"),
+      // what ideas keep asking for that SUB-01 could not build (fidelity.js), most requested first
+      missingCapabilities: topMissing(db) };
   });
   r.post('/api/admin/pause', async (ctx) => {
     const u = requireAdmin(ctx);

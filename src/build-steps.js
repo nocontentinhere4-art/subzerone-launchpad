@@ -15,6 +15,8 @@ export const STEPS = [
   { id: 'queued', label: 'In line' },
   // 2026-10-12: SUB-01 composes the app first, then writes the words for that app (generator.js)
   { id: 'app', label: 'The app' },
+  // 2026-10-12 (fidelity.js): the idea's core features against the app, and the tools that serve it; a gap is flagged
+  { id: 'fit', label: 'Does it match the idea?' },
   { id: 'brief', label: 'The words: name, tagline, story, X posts' },
   { id: 'art', label: 'Two logo + banner options' },
   { id: 'site', label: 'The website (sandbox build + safety check)' },
@@ -23,10 +25,10 @@ export const STEPS = [
 ];
 const LABEL = Object.fromEntries(STEPS.map((s) => [s.id, s.label]));
 /** The generate job's steps, in order (qa: SUB-01's QA gate, site-qa.js publishSite). */
-export const PIPELINE = ['queued', 'app', 'brief', 'art', 'site', 'qa', 'ready'];
+export const PIPELINE = ['queued', 'app', 'fit', 'brief', 'art', 'site', 'qa', 'ready'];
 /** The steps that are work (timed, counted in the percentage). */
-const WORK = new Set(['brief', 'app', 'art', 'site', 'qa']);
-export const DEFAULT_SECONDS = { brief: 25, app: 20, art: 40, site: 5, qa: 30 };
+const WORK = new Set(['brief', 'app', 'fit', 'art', 'site', 'qa']);
+export const DEFAULT_SECONDS = { brief: 25, app: 20, fit: 10, art: 40, site: 5, qa: 30 };
 // providers with no network call take about a second; their own default until they have data
 export const PROVIDER_DEFAULT_SECONDS = { 'template (no AI)': 1, 'rules (no AI)': 1, 'local drawing': 3, 'owner-supplied art': 1, 'static checks': 1 };
 export const SAMPLE = 20, MIN_SAMPLES = 3, P90_FACTOR = 1.6;
@@ -90,6 +92,7 @@ export function queueStart({ ahead = [], dueInSeconds = 0 }) {
 /** The provider words the timeline shows. */
 export const PROVIDERS = { brief: (cfg) => (cfg.generator.provider === 'anthropic' ? 'language model' : 'template (no AI)'),
   app: (cfg) => (cfg.generator.provider === 'anthropic' ? 'language model' : 'rules (no AI)'),
+  fit: (cfg) => (cfg.generator.provider === 'anthropic' ? 'language model' : 'rules (no AI)'),
   art: (cfg) => ({ higgsfield: 'Higgsfield', recraft: 'Recraft' }[providerOf(cfg.art)] || 'local drawing'),
   site: () => 'sandbox', qa: (cfg) => (!cfg.siteQa || cfg.siteQa.browser === 'off' ? 'static checks' : 'Chromium') };
 const ART_NAMES = { higgsfield: 'Higgsfield', recraft: 'Recraft', local: 'local drawing', 'owner-supplied': 'owner-supplied art' };
@@ -101,6 +104,16 @@ export function artOutcome(art, cfg) {
   if (planned && local === ps.length && ps.length) return { provider: 'local fallback', note: `${ART_NAMES[planned]} did not deliver in time; both options drawn locally` };
   if (planned && local) return { provider: `${ART_NAMES[planned]} + local fallback`, note: `${local} of ${ps.length} options drawn locally` };
   return { provider: [...new Set(ps)].map((p) => ART_NAMES[p] || p).join(' + ') || 'local drawing', note: null };
+}
+
+/** The fit step's note (fidelity.js result): "Yes: 3 of 3 core features built" / "Not all of it. Missing: …; only in part: …". */
+export function fitNote(f) {
+  if (!f || !Array.isArray(f.core)) return null;
+  const miss = f.core.filter((x) => x.status === 'missing'), part = f.core.filter((x) => x.status === 'partial');
+  const names = (xs) => xs.map((x) => String(x.feature).replace(/\s*\(.*?\)\s*/g, ' ').trim()).join('; ');
+  if (!miss.length && !part.length) return `Yes: ${f.core.length} of ${f.core.length} core features built`;
+  const s = miss.length ? `Not all of it. Missing: ${names(miss)}${part.length ? `. Only in part: ${names(part)}` : ''}` : `Mostly. Only in part: ${names(part)}`;
+  return s.length > 200 ? `${s.slice(0, 199).replace(/[\s,;:]+\S*$/, '')}…` : s;
 }
 
 /** The QA step's outcome (site-qa.js publishSite `qa`): who checked it and what it found. */
@@ -142,7 +155,13 @@ export function buildRecorder(db, job, { cfg, progress } = {}) {
       const fellBack = Boolean(info.fallback) && cfg?.generator?.provider === 'anthropic';
       done('app', fellBack ? { provider: 'rules (no AI)', note: "the language model's app did not pass the checks; built from the rules" } : { provider: info.provider || null });
     } else if (event === 'brief:start') { start('brief', info.provider || PROVIDERS.brief(cfg)); try { progress?.('writing the words for the app'); } catch { /* the progress text is cosmetic */ } }
-    else if (event === 'brief:done') {
+    else if (event === 'fit:start') start('fit', info.provider || PROVIDERS.fit(cfg));
+    else if (event === 'fit:done') {
+      const fellBack = Boolean(info.fallback) && cfg?.generator?.provider === 'anthropic';
+      const note = fitNote(info.fidelity);
+      done('fit', { provider: fellBack ? 'rules (no AI)' : info.provider || null,
+        note: fellBack ? `the language model failed; checked with the rules. ${note || ''}`.trim().slice(0, 200) : note });
+    } else if (event === 'brief:done') {
       const fellBack = Boolean(info.fallback) && cfg?.generator?.provider === 'anthropic';
       done('brief', fellBack ? { provider: 'template (no AI)', note: `the language model failed (${String(info.fallback).slice(0, 120)}); the template wrote the words` } : { provider: info.provider || null });
     }
@@ -205,6 +224,16 @@ function timeline(db, cfg, ideaId, t, stats, { owner = false } = {}) {
   const q = steps[0];
   if (q.state === 'todo' && live) Object.assign(q, { state: 'running', startedAt: job.created_at, elapsedSeconds: round1(Math.max(0, (t - job.created_at) / 1000)) });
   const ready = byStep.get('ready')?.state === 'done';
+  // a finished run without a row for a step (a build from before the step existed): skipped, not waiting
+  if (ready) for (const s of steps) if (s.state === 'todo' && WORK.has(s.id)) s.state = 'skipped';
+  // the fit step's flag (fidelity.js): 'missing' | 'partial' when the build is not all of the idea
+  const fitStep = steps.find((s) => s.id === 'fit');
+  if (fitStep && run && fitStep.state === 'done') {
+    try {
+      const f = db.get('SELECT verdict FROM idea_fidelity WHERE idea_id = ? AND job_id = ? ORDER BY created_at DESC LIMIT 1', ideaId, run.job_id);
+      fitStep.flag = f && f.verdict !== 'match' ? f.verdict : null;
+    } catch { fitStep.flag = null; }
+  }
   // a run that ended without a running step and without 'ready' (a check failed between steps): the next step failed
   if (!ready && !failedAt && rows.length && !runActive && !(live && job.status === 'queued' && !rows.length)) {
     const next = steps.find((s) => s.state === 'todo');
@@ -222,7 +251,8 @@ function timeline(db, cfg, ideaId, t, stats, { owner = false } = {}) {
  * GET /api/ideas/:id `build` (and the SSE `build` frame): null when the idea has no build (never selected, or built
  * before 2026-10-12). owner: the failed step's reason (the job's error) for the author and admins only.
  * -> {state:'queued'|'running'|'retrying'|'ready'|'failed', steps:[{id,label,state:'todo'|'running'|'done'|'failed'|'skipped',
- *     startedAt,endedAt,provider,plannedProvider,note,expectedSeconds,p90Seconds,estimateFrom,elapsedSeconds}],
+ *     startedAt,endedAt,provider,plannedProvider,note,expectedSeconds,p90Seconds,estimateFrom,elapsedSeconds, flag?}],
+ *     (flag, on the 'fit' step only: 'missing' | 'partial' | null, from idea_fidelity)
  *     startedAt, etaSeconds, etaAt, elapsedSeconds, percent, queue:{position,ahead,startsInSeconds}|null, attempt, now}
  */
 export function buildView(db, cfg, ideaId, { owner = false, t = now() } = {}) {
@@ -263,7 +293,7 @@ export function buildSummary(view) {
 }
 
 /** What changed for the stream (not the clock): the frame goes out only when this differs. */
-export const buildSignature = (v) => (v ? JSON.stringify([v.state, v.queue?.position ?? 0, v.steps.map((s) => [s.id, s.state, s.provider])]) : 'null');
+export const buildSignature = (v) => (v ? JSON.stringify([v.state, v.queue?.position ?? 0, v.steps.map((s) => [s.id, s.state, s.provider, s.flag ?? null])]) : 'null');
 
 /**
  * The web process's watch (app.js): the worker is another process, so every `everyMs` the web process reads which

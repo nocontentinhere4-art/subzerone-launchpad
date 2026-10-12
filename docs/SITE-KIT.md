@@ -101,25 +101,33 @@ the one-line fallback (CSP and the validator do the real work).
 At most 6 tools per site and at most one extra. Every config is validated strictly (`validateTools`: unknown fields,
 duplicates, sizes, markup characters, the financial-promises filter of `validateSpec` over the whole spec).
 
-### SUB-01's choice (no language model)
+### SUB-01's choice: only what serves the idea (2026-10-12)
 
-`chooseTools(idea, brain)` → `pickTools` in `tools.js`, from the concept's words (English, Italian, Japanese romaji;
-a trailing `*` in the word lists matches any ending):
+The PadPad build shipped a meme maker and a map nobody asked for ("in the city" read as a place). Since 2026-10-12 a
+tool beyond the app is on the site only when it serves the idea, and the site says why (`why` on each tool):
 
-- always `token`;
-- `drop` when people send / confess / submit / ask / wish / tell stories (`confess*`, `confessione`, `kokuhaku`,
-  `himitsu`, `domand*`, `onegai`, `tegami`, `okuru`, `tokumei`…); the prompt names the noun ("Drop your confession");
-- `wall` or `poll` by the brain's dominant network: language / default-mode → wall, reward / control → poll;
-- `event` when the concept has a time or a ritual (`every night`, `ogni sera`, `maiban`, `23:00`, `11pm`, `alle 23`,
-  `23ji`, `midnight`, `mezzanotte`); the time found becomes the reveal / event time;
-- `memes` for meme-ish words (`meme`, `cat`, `frog`, `lol`, `gatto`, `neko`, `kawaii`…), or to reach three;
-- one extra when its words win: map (`map`, `place*`, `ramen`, `tokyo`, `izakaya`, `mappa`, `chizu`, `basho`…),
-  synth (`music`, `beat*`, `lofi`, `musica`, `ongaku`, `oto`…), game (`game`, `arcade`, `score*`, `gioco`, `geemu`…),
-  chart (`chart*`, `price`, `trading`, `grafico`, `kabu`…).
+- always `token` (the coin's panel) and `wall` (the one default community tool), and the five holder tools;
+- at most **3** more (`MAX_IDEA_TOOLS`), at most one extra, each with a reason. With a language model, `fidelity.js`
+  asks it in the same call as the idea check (see APP-COMPOSER.md, "Does it match the idea?"): it picks from the catalog
+  (read at call time) with a reason per tool; the map is dropped unless the idea is about real places people go
+  (`PLACE_WORDS`), whatever the model says. Without a model, or on any model problem, `ruleToolPicks` in `tools.js`:
+  - `drop` when people send / confess / submit / ask / wish / tell stories (`confess*`, `kokuhaku`, `himitsu`, `domand*`,
+    `onegai`, `tegami`, `okuru`, `tokumei`…); the prompt names the noun ("Drop your confession");
+  - `event` when the concept has a time or a ritual (`every night`, `ogni sera`, `maiban`, `23:00`, `11pm`, `alle 23`,
+    `23ji`, `midnight`); the time found becomes the reveal / event time;
+  - `poll` when the idea asks people to vote, choose or decide;
+  - `memes` only for meme words in the idea or its name (`meme`, `cat`, `frog`, `lol`, `neko`…), never to make up a number;
+  - one extra when its words win: map (real places only: `ramen`, `izakaya`, `cafe*`, `bar`, `spots`, `map`, `mappa`,
+    `chizu`… — not `city`, `tokyo` or `neighbourhood` alone), synth (`music`, `beat*`, `lofi`, `ongaku`…), game
+    (`game`, `arcade`, `gioco`, `geemu`…), chart (`chart*`, `price`, `trading`, `kabu`… — not `pump`).
+- The brain's networks no longer choose wall or poll.
+- Then the app replaces what it does better (`composer.js toolsBeside`: its form the drop box, its schedule the event, its
+  map the map, its votes the poll, a board app the wall).
 
-Konbini Confession ("every night people drop an anonymous confession at the konbini; at 23:00 JST one gets printed on
-the receipt") gets token, drop (reveal 23:00), wall or poll, event (daily 23:00). Ramen Radar gets token, poll/wall,
-memes, map. The model generator (when configured) gets the same pick; the model never chooses tools.
+Konbini Confession gets token, wall, drop (reveal 23:00), event (daily 23:00), and the app takes over the drop and the
+event. Ramen Radar gets token, wall, map (its places app carries the map). PadPad gets token and wall only. The copy says
+why each tool is there ("It is here because …"). The room PC keeps SUB-01's reason on a tool the author keeps; a tool the
+author adds has none.
 
 ## API
 

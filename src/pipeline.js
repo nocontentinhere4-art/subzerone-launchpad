@@ -24,6 +24,7 @@ import { refreshCoinStats } from './coin-stats.js';
 import { childBuild, afterLaunched } from './child-launch.js';
 import { id, now, sha256, parseJson } from './util.js';
 import { buildRecorder, artOutcome, qaOutcome, PROVIDERS } from './build-steps.js';
+import { recordFidelity } from './fidelity.js';
 
 const BRAIN_WAIT = { asleep: 20 * 60_000 };
 // brain offline: short retries first (the author is watching), then the job policy's minutes
@@ -138,7 +139,16 @@ export const handlers = {
     const steps = buildRecorder(db, ctx.job, { cfg, progress: ctx.progress });
     steps.begin();
     ctx.progress('composing the app');
-    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet), observe: steps.observe });
+    // does it match the idea? (fidelity.js) recorded the moment it is known, so the timeline flags a gap while he builds
+    let fidelityId = null;
+    const observe = (event, info = {}) => {
+      steps.observe(event, info);
+      if (event === 'fit:done' && info.fidelity && !fidelityId) {
+        try { fidelityId = recordFidelity(db, { ideaId, jobId: ctx.job.id, fidelity: info.fidelity, id: id('fit') }); } catch (e) { log.error('fidelity not recorded', e); }
+      }
+    };
+    const out = await generate({ idea: v, brain, cfg, signal: ctx.signal, fetchImpl: ctx.fetchImpl, submitter: submitterLabel(db, idea.owner_wallet), observe });
+    const fidelity = out.fidelity || null;
     const spec = out.spec;
     // the coin art (coinart.js): two black-and-white candidates, drawn before the transaction (providers are slow);
     // a provider problem ends in the local drawing, only a missing renderer falls back to the old procedural art
@@ -202,6 +212,9 @@ export const handlers = {
       }
       audit(db, { actor: 'generator', kind: 'generation', ideaId, projectId: p.id, isPublic: true,
         message: `Identity written by ${out.generator === 'template/1' ? 'the fixed template (no AI)' : out.generator}${out.fallback ? ` (the language model failed: ${out.fallback.slice(0, 120)})` : ''}; ${artLine(art)}` });
+      if (fidelityId) db.run('UPDATE idea_fidelity SET project_id = ? WHERE id = ?', p.id, fidelityId);
+      // SUB-01 tells the author, in his words, what he built and what he could not build yet (fidelity.js messageFor)
+      if (fidelity && fidelity.verdict !== 'match') audit(db, { actor: 'sub01', kind: 'fidelity', ideaId, projectId: p.id, isPublic: true, message: fidelity.message.slice(0, 1200) });
       return p;
     });
     ctx.progress('building the website in the sandbox');
@@ -211,9 +224,12 @@ export const handlers = {
     steps.start('qa', PROVIDERS.qa(cfg));
     const pub = await publishSite(db, cfg, project, site.version, 'system');   // the first version goes live; the QA report rides along
     steps.done('qa', qaOutcome(pub.qa));
-    transition(db, ideaId, 'generating', 'preview_ready', { actor: 'system', note: 'preview ready: review the site, the X drafts and the fee split' });
+    const gaps = (fidelity?.core || []).filter((x) => x.status === 'missing');
+    transition(db, ideaId, 'generating', 'preview_ready', { actor: 'system', note: gaps.length
+      ? `preview ready, but it is not all of your idea: ${gaps.length === 1 ? 'one core feature is' : `${gaps.length} core features are`} not built yet (${gaps.map((x) => x.feature).join('; ').slice(0, 300)}). Review the site, the X drafts and the fee split`
+      : 'preview ready: review the site, the X drafts and the fee split' });
     steps.done('ready');
-    return { project: project.id, site: site.version, qa: pub.qa?.line };
+    return { project: project.id, site: site.version, qa: pub.qa?.line, fidelity: fidelity?.verdict ?? null };
   },
 
   child_build: (ctx) => childBuild(ctx),
