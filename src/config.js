@@ -32,6 +32,13 @@ function list(raw, max, len, name, split = true) {
   return xs;
 }
 
+/** The launch RPC: SOLANA_RPC_URL, except the public mainnet endpoint when a Helius key exists (then Helius mainnet). */
+export function launchRpc(url, network, heliusKey) {
+  const pub = /^https:\/\/api\.mainnet-beta\.solana\.com\/?$/.test(url || '');
+  if (network === 'mainnet-beta' && heliusKey && /^[A-Za-z0-9-]{8,80}$/.test(heliusKey) && (!url || pub)) return `https://mainnet.helius-rpc.com/?api-key=${heliusKey}`;
+  return url;
+}
+
 export function loadConfig(env = process.env) {
   if (env === process.env && !env.LAUNCHPAD_NO_DOTENV) loadDotEnv(resolve(ROOT, '.env'));
   const e = (k, d = '') => (env[k] ?? d).toString().trim();
@@ -99,7 +106,9 @@ export function loadConfig(env = process.env) {
     launch: {
       provider: e('LAUNCH_PROVIDER', 'mock'),            // mock | pumpfun
       network: e('SOLANA_NETWORK', 'devnet'),            // devnet | mainnet-beta (mock: ignored)
-      rpcUrl: e('SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
+      // on mainnet the public endpoint rate-limits (429 on fee reconcile, 2026-10-12): when HELIUS_API_KEY is set and
+      // SOLANA_RPC_URL is unset or the public endpoint, the launch path uses Helius. Never logged, never sent to a browser.
+      rpcUrl: launchRpc(e('SOLANA_RPC_URL', 'https://api.devnet.solana.com'), e('SOLANA_NETWORK', 'devnet'), e('HELIUS_API_KEY')),
       requireAdminClearance: e('REQUIRE_ADMIN_CLEARANCE', '1') !== '0',
       confirmTimeoutS: num('LAUNCH_CONFIRM_TIMEOUT_S', 180),
       metadataUploader: e('METADATA_UPLOADER', 'self'),  // self: metadata JSON + image served by this app
