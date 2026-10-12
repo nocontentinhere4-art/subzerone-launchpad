@@ -1,7 +1,7 @@
 // Builds the site kit (docs/SITE-KIT.md) into public/_kit/, which is committed: the server never runs a bundler and
 // the container ships no build tools. `npm run build:kit`. Deterministic for pinned inputs.
 //   site-kit.v1.js   the core (IIFE, deferred): tools, wallet connector, Motion (motion/mini) for the entrances
-//   site-kit.v1.css  the shared stylesheet + the vendored fonts (fonts/)
+//   site-kit.v2.css  the shared stylesheet (docs/DESIGN.md) + the vendored fonts (fonts/); site-kit.v1.css frozen (kit/legacy)
 //   vendor/*.js      ES modules the core imports lazily, only on sites whose tool needs them
 //   LICENSES.txt     every bundled library's licence text; manifest.json: sizes and hashes (tests and the report)
 import { build } from 'esbuild';
@@ -44,12 +44,15 @@ await build({ ...common, entryPoints: [join(ROOT, 'kit/src/core.js')], outfile: 
 for (const k of ['anime', 'leaflet', 'tone', 'kaplay', 'uplot', 'qrcode', 'pq']) {
   await build({ ...common, entryPoints: [join(ROOT, `kit/src/vendor/${k}.js`)], outfile: join(OUT, 'vendor', LIBS[k].file), format: 'esm' });
 }
-await build({ ...common, entryPoints: [join(ROOT, 'kit/src/site-kit.css')], outfile: join(OUT, 'site-kit.v1.css'), loader: { '.css': 'css' }, external: ['/_kit/*'] });
+// v2 (2026-10-12, docs/DESIGN.md): the black-and-white Swiss redesign; new markup only (render-child.js). v1 is frozen
+// as it was (kit/legacy/), with its Archivo fonts, so a site version built before v2 still looks as it was built.
+await build({ ...common, entryPoints: [join(ROOT, 'kit/src/site-kit.css')], outfile: join(OUT, 'site-kit.v2.css'), loader: { '.css': 'css' }, external: ['/_kit/*'] });
+copyFileSync(join(ROOT, 'kit/legacy/site-kit.v1.css'), join(OUT, 'site-kit.v1.css'));
+for (const w of [400, 700, 800]) copyFileSync(join(ROOT, `kit/legacy/fonts/archivo-${w}.woff2`), join(OUT, 'fonts', `archivo-${w}.woff2`));
 copyFileSync(join(NM, 'leaflet/dist/leaflet.css'), join(OUT, 'vendor', LIBS.leaflet.css));
 copyFileSync(join(NM, 'uplot/dist/uPlot.min.css'), join(OUT, 'vendor', LIBS.uplot.css));
-for (const [src, dst] of [['@fontsource/archivo/files/archivo-latin-400-normal.woff2', 'archivo-400.woff2'], ['@fontsource/archivo/files/archivo-latin-700-normal.woff2', 'archivo-700.woff2'],
-  ['@fontsource/archivo/files/archivo-latin-800-normal.woff2', 'archivo-800.woff2'], ['@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2', 'jetbrains-mono-400.woff2'],
-  ['@fontsource/jetbrains-mono/files/jetbrains-mono-latin-700-normal.woff2', 'jetbrains-mono-700.woff2']]) copyFileSync(join(NM, src), join(OUT, 'fonts', dst));
+// the fonts (docs/DESIGN.md): subset once from the pinned @fontsource packages by kit/fonts/subset.sh and committed
+for (const f of ['inter-var.woff2', 'jetbrains-mono-400.woff2', 'jetbrains-mono-700.woff2']) copyFileSync(join(ROOT, 'kit/fonts', f), join(OUT, 'fonts', f));
 
 // LICENSES.txt: each package's own licence file, verbatim
 // qrcode-generator ships no LICENSE file: its source header says "Copyright (c) 2009 Kazuhiko Arase … Licensed under the
@@ -74,9 +77,10 @@ for (const name of ['@noble/hashes', '@noble/curves', '@noble/ciphers']) {
   const p = pkg(dir);
   parts.push('='.repeat(78), `${name} ${p.version} (${p.license}) bundled in: vendor/${LIBS.pq.file}`, '-'.repeat(78), licenceFile(dir), '');
 }
-for (const name of ['@fontsource/archivo', '@fontsource/jetbrains-mono']) {
+for (const [name, files] of [['@fontsource-variable/inter', 'fonts/inter-var.woff2 (subset: kit/fonts/subset.sh)'], ['@fontsource/jetbrains-mono', 'fonts/jetbrains-mono-*.woff2 (subset: kit/fonts/subset.sh)'],
+  ['@fontsource/archivo', 'fonts/archivo-*.woff2 (site-kit.v1.css only)']]) {
   const p = pkg(name);
-  parts.push('='.repeat(78), `${name} ${p.version} (${p.license}) fonts/${name.includes('archivo') ? 'archivo-*' : 'jetbrains-mono-*'}.woff2`, '-'.repeat(78), licenceFile(name), '');
+  parts.push('='.repeat(78), `${name} ${p.version} (${p.license}) ${files}`, '-'.repeat(78), licenceFile(name), '');
 }
 writeFileSync(join(OUT, 'LICENSES.txt'), parts.join('\n'));
 

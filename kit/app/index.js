@@ -17,7 +17,7 @@ export function hydrateApp(sec, K) {
   const doc = document, body = sec.querySelector('[data-app-body]');
   const ticker = (doc.querySelector('.tk')?.textContent || '').replace(/^\$/, '');
   const name = doc.querySelector('h1')?.textContent || '';
-  const accent = getComputedStyle(doc.documentElement).getPropertyValue('--ac').trim() || '#fb752b';
+  const accent = getComputedStyle(doc.documentElement).getPropertyValue('--ac').trim() || '#ffffff';
   const card = all(app, 'card')[0] || null;
   const voteBlock = (of) => all(app, 'vote').find((b) => b.of === of) || null;
   const subs = new Set();                                   // blocks redrawn when the state changes
@@ -25,7 +25,7 @@ export function hydrateApp(sec, K) {
 
   // --- shared: logo, QR, the card image ------------------------------------------------------------------------------
   const logo = new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = './logo.png'; });
-  const fonts = doc.fonts?.load ? Promise.all(['400 24px "JetBrains Mono"', '700 24px "JetBrains Mono"', '800 40px Archivo', '400 28px Archivo'].map((f) => doc.fonts.load(f).catch(() => null))) : Promise.resolve();
+  const fonts = doc.fonts?.load ? Promise.all(['400 24px "JetBrains Mono"', '700 24px "JetBrains Mono"', '800 40px Inter', '400 28px Inter'].map((f) => doc.fonts.load(f).catch(() => null))) : Promise.resolve();
   const itemUrl = (item) => `${location.origin}/#item-${item.id || 'preview'}`;
   async function qrImage(text) {
     try { const q = (await vendor('qrcode')).default(0, 'M'); q.addData(text); q.make(); const i = new Image(); await new Promise((r) => { i.onload = r; i.onerror = r; i.src = q.createDataURL(6, 2); }); return i; } catch { return null; }

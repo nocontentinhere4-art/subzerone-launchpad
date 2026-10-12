@@ -80,10 +80,13 @@ function slideIn(el) { if (!reduce) animate(el, { opacity: [0, 1], transform: ['
 function motionIn() {
   if (reduce) return;
   const hero = [...doc.querySelectorAll('.reveal-hero')];
-  if (hero.length) animate(hero, { opacity: [0, 1], transform: ['translateY(18px)', 'none'] }, { duration: 0.7, delay: stagger(0.09), easing: 'ease-out' });
+  const EASE = [0.2, 0.7, 0.1, 1];
+  if (hero.length) animate(hero, { opacity: [0, 1], transform: ['translateY(22px)', 'none'] }, { duration: 0.8, delay: stagger(0.07), easing: EASE });
+  const art = doc.querySelector('.hero-art,.hero-mark');
+  if (art) animate(art, { opacity: [0, 1] }, { duration: 1.2, easing: 'ease-out' });
   const cards = [...doc.querySelectorAll('.reveal')];
   for (const c of cards) c.style.opacity = '0';
-  inView(cards, (el) => { animate(el, { opacity: [0, 1], transform: ['translateY(24px) scale(.985)', 'none'] }, { duration: 0.6, easing: 'ease-out' }); }, { amount: 0.15 });
+  inView(cards, (el) => { animate(el, { opacity: [0, 1], transform: ['translateY(16px)', 'none'] }, { duration: 0.6, easing: EASE }); }, { amount: 0.08 });
   setTimeout(() => { for (const c of cards) if (c.style.opacity === '0' && !c.getAnimations?.().length) c.style.opacity = ''; }, 4000);   // never leave a card invisible
 }
 
@@ -290,13 +293,13 @@ const TOOLS = {
     const bottom = h('input', { type: 'text', maxlength: 60, value: conf.bottom || '', placeholder: 'Bottom text', 'aria-label': 'Bottom text' });
     const img = new Image();
     const line = (text, y, base) => {
-      text = text.toUpperCase(); let size = 72; g.font = `800 ${size}px Archivo, Impact, sans-serif`;
-      while (size > 22 && g.measureText(text).width > 600) { size -= 4; g.font = `800 ${size}px Archivo, Impact, sans-serif`; }
+      text = text.toUpperCase(); let size = 72; g.font = `800 ${size}px Inter, Impact, sans-serif`;
+      while (size > 22 && g.measureText(text).width > 600) { size -= 4; g.font = `800 ${size}px Inter, Impact, sans-serif`; }
       g.textAlign = 'center'; g.textBaseline = base; g.lineWidth = Math.max(4, size / 9); g.strokeStyle = '#000'; g.fillStyle = '#fff'; g.lineJoin = 'round';
       g.strokeText(text, 320, y); g.fillText(text, 320, y);
     };
     const draw = () => {
-      const bg = g.createLinearGradient(0, 0, 640, 640); bg.addColorStop(0, '#111118'); bg.addColorStop(1, '#050507'); g.fillStyle = bg; g.fillRect(0, 0, 640, 640);
+      g.fillStyle = '#000'; g.fillRect(0, 0, 640, 640);
       if (img.complete && img.naturalWidth) g.drawImage(img, 120, 120, 400, 400);
       line(top.value, 26, 'top'); line(bottom.value, 614, 'bottom');
     };
@@ -312,12 +315,12 @@ const TOOLS = {
     vendorCss('leafletCss');
     const L = (await vendor('leaflet')).default;
     const box = slot.querySelector('[data-map]') || h('div', { cls: 'map' });
-    const accent = getComputedStyle(doc.documentElement).getPropertyValue('--brand').trim() || '#fb752b';
+    const accent = '#ffffff';
     const map = L.map(box, { scrollWheelZoom: false, attributionControl: true }).setView(s.center, s.zoom);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, referrerPolicy: 'strict-origin-when-cross-origin',
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a> contributors' }).addTo(map);
     const label = (title, sub) => h('div', {}, h('strong', { text: title }), sub ? h('div', { cls: 'fine', text: sub }) : null);
-    const pin = (p, mineOrAuthor) => L.circleMarker([p.lat, p.lng], { radius: mineOrAuthor ? 9 : 7, color: '#000', weight: 2, fillColor: mineOrAuthor ? accent : '#f1efe8', fillOpacity: 0.95 })
+    const pin = (p, mineOrAuthor) => L.circleMarker([p.lat, p.lng], { radius: mineOrAuthor ? 9 : 7, color: '#000', weight: 2, fillColor: mineOrAuthor ? accent : '#8e8e8e', fillOpacity: 0.95 })
       .bindPopup(label(p.name || p.text, mineOrAuthor ? 'from the author' : `pinned ${new Date(p.at).toLocaleDateString()}`)).addTo(map);
     for (const p of s.places) pin(p, true);
     for (const p of s.pins) pin({ ...p, name: p.text }, false);
@@ -376,16 +379,17 @@ const TOOLS = {
 
   game(sec, slot) {
     const cv = h('canvas', { width: 640, height: 480, 'aria-label': 'Mini-game' });
+    const poster = h('div', { cls: 'game-poster', 'aria-hidden': 'true' }, h('img', { src: './logo.png', alt: '' }), h('p', { text: 'Thirty seconds. Catch the coins, dodge the red ones. Press Play.' }));
     const m = msg(), bestKey = `kit.game.${location.host}`;
     const best = () => Number(store.get(bestKey)) || 0;
     let started = false;
     const start = h('button', { cls: 'btn', type: 'button', text: 'Play (30 s)', onclick: () => busy(start, async () => {
       if (started) return; started = true;
       say(m, 'Loading the game engine (KAPLAY)…');
-      try { const kaplay = (await vendor('kaplay')).default; say(m, 'Move with the mouse, a finger or the arrow keys.'); runGame(kaplay, cv, m, best, (v) => store.set(bestKey, String(v)), () => { started = false; }); }
+      try { const kaplay = (await vendor('kaplay')).default; poster.remove(); say(m, 'Move with the mouse, a finger or the arrow keys.'); runGame(kaplay, cv, m, best, (v) => store.set(bestKey, String(v)), () => { started = false; }); }
       catch (e) { started = false; say(m, `The game could not start: ${e.message}`, 'err'); }
     }) });
-    slot.replaceChildren(h('div', { cls: 'game' }, cv), h('div', { cls: 'row' }, start), m, h('p', { cls: 'fine', text: `Best on this device: ${best()} · engine: KAPLAY (MIT).` }));
+    slot.replaceChildren(h('div', { cls: 'game' }, cv, poster), h('div', { cls: 'row' }, start), m, h('p', { cls: 'fine', text: `Best on this device: ${best()} · engine: KAPLAY (MIT).` }));
   },
 
   async chart(sec, slot, conf) {
@@ -395,11 +399,12 @@ const TOOLS = {
     if (pts.length < 2) { box.replaceChildren(h('p', { cls: 'fine', text: s.state === 'pre-launch' ? 'Pre-launch: the chart starts with the first trades.' : 'Not enough samples yet: the chart fills in as the stats refresh.' })); return; }
     vendorCss('uplotCss');
     const UPlot = (await vendor('uplot')).default;
-    const accent = getComputedStyle(doc.documentElement).getPropertyValue('--brand').trim() || '#fb752b';
+    const accent = '#ffffff';
     box.replaceChildren();
     const plot = new UPlot({ width: Math.max(280, box.clientWidth || 600), height: 220, legend: { show: false }, cursor: { drag: { x: false, y: false } },
-      axes: [{ stroke: '#9a98a6', grid: { stroke: 'rgba(255,255,255,.06)' } }, { stroke: '#9a98a6', size: 86, grid: { stroke: 'rgba(255,255,255,.06)' }, values: (u, v) => v.map(usd) }],
-      series: [{}, { label: 'Price', stroke: accent, width: 2, fill: 'rgba(251,117,43,.12)' }] }, [pts.map((x) => x[0] / 1000), pts.map((x) => x[1])], box);
+      axes: [{ stroke: '#8e8e8e', font: '12px "JetBrains Mono", monospace', grid: { stroke: 'rgba(255,255,255,.1)', width: 1 }, ticks: { stroke: 'rgba(255,255,255,.16)', width: 1 } },
+        { stroke: '#8e8e8e', font: '12px "JetBrains Mono", monospace', size: 86, grid: { stroke: 'rgba(255,255,255,.1)', width: 1 }, ticks: { stroke: 'rgba(255,255,255,.16)', width: 1 }, values: (u, v) => v.map(usd) }],
+      series: [{}, { label: 'Price', stroke: accent, width: 1.5, fill: 'rgba(255,255,255,.06)' }] }, [pts.map((x) => x[0] / 1000), pts.map((x) => x[1])], box);
     win.addEventListener('resize', () => plot.setSize({ width: Math.max(280, box.clientWidth), height: 220 }));
   },
 };
@@ -415,11 +420,11 @@ for (const id of ['trades', 'holders', 'devwatch', 'fees', 'alerts']) {
 }
 
 function runGame(kaplay, cv, m, best, setBest, done) {
-  const k = kaplay({ canvas: cv, width: 640, height: 480, global: false, background: [11, 11, 16], letterbox: true, loadingScreen: false, burp: false, crisp: true, touchToMouse: true, maxFPS: 60, focus: false });
+  const k = kaplay({ canvas: cv, width: 640, height: 480, global: false, background: [0, 0, 0], letterbox: true, loadingScreen: false, burp: false, crisp: true, touchToMouse: true, maxFPS: 60, focus: false });
   k.loadSprite('logo', './logo.png');
   k.scene('play', () => {
     let score = 0, left = 30;
-    const player = k.add([k.rect(96, 16, { radius: 8 }), k.pos(320, 452), k.anchor('center'), k.color(251, 117, 43), k.area(), 'player']);
+    const player = k.add([k.rect(96, 16, { radius: 8 }), k.pos(320, 452), k.anchor('center'), k.color(255, 255, 255), k.area(), 'player']);
     const hud = k.add([k.text('', { size: 22 }), k.pos(16, 14), k.color(241, 239, 232)]);
     k.onUpdate(() => {
       const mx = k.mousePos().x; if (mx > 0) player.pos.x = mx;
@@ -428,7 +433,7 @@ function runGame(kaplay, cv, m, best, setBest, done) {
     });
     k.loop(0.55, () => {
       const bad = k.rand() < 0.25, x = k.rand(30, 610);
-      k.add(bad ? [k.circle(14), k.color(255, 90, 106), k.pos(x, -20), k.anchor('center'), k.area(), k.move(k.DOWN, k.rand(180, 300)), k.offscreen({ destroy: true }), 'bad']
+      k.add(bad ? [k.circle(14), k.color(255, 92, 92), k.pos(x, -20), k.anchor('center'), k.area(), k.move(k.DOWN, k.rand(180, 300)), k.offscreen({ destroy: true }), 'bad']
         : [k.sprite('logo', { width: 40, height: 40 }), k.pos(x, -20), k.anchor('center'), k.area(), k.move(k.DOWN, k.rand(160, 260)), k.offscreen({ destroy: true }), 'coin']);
     });
     player.onCollide('coin', (c) => { k.destroy(c); score += 1; });
@@ -437,7 +442,7 @@ function runGame(kaplay, cv, m, best, setBest, done) {
   });
   k.scene('over', (score) => {
     if (score > best()) setBest(score);
-    k.add([k.text(`${score} coins`, { size: 48 }), k.pos(320, 200), k.anchor('center'), k.color(251, 117, 43)]);
+    k.add([k.text(`${score} coins`, { size: 48 }), k.pos(320, 200), k.anchor('center'), k.color(255, 255, 255)]);
     k.add([k.text(`best on this device: ${best()}   ·   click to play again`, { size: 18 }), k.pos(320, 260), k.anchor('center'), k.color(241, 239, 232)]);
     k.onClick(() => k.go('play'));
     say(m, `Game over: ${score}. Click the game to play again.`);
@@ -454,7 +459,7 @@ function spark(box, samples) {
   const [x0, x1, y0, y1] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
   const W = 600, H = 64, px = (x) => ((x - x0) / (x1 - x0 || 1)) * W, py = (y) => H - 4 - ((y - y0) / (y1 - y0 || 1)) * (H - 8);
   const d = pts.map((p, i) => `${i ? 'L' : 'M'}${px(p[0]).toFixed(1)},${py(p[1]).toFixed(1)}`).join('');
-  const up = ys[ys.length - 1] >= ys[0], stroke = up ? '#3ddc84' : '#ff5a6a';
+  const up = ys[ys.length - 1] >= ys[0], stroke = up ? '#38d47a' : '#ff5c5c';
   const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img', 'aria-label': `Price over the last ${pts.length} samples` });
   svg.append(svgEl('path', { d: `${d}L${W},${H}L0,${H}Z`, fill: stroke, 'fill-opacity': '0.12' }), svgEl('path', { d, fill: 'none', stroke, 'stroke-width': '2', 'vector-effect': 'non-scaling-stroke' }));
   box.replaceChildren(svg);
@@ -480,8 +485,29 @@ async function hydrate(sec) {
   }
 }
 
+function copyButton(code) {
+  const mint = code.textContent.trim();
+  const b = h('button', { cls: 'btn btn-sm', type: 'button', text: 'Copy', 'aria-label': 'Copy the contract address', onclick: async () => {
+    try { await navigator.clipboard.writeText(mint); b.textContent = 'Copied'; }
+    catch { const r = doc.createRange(); r.selectNodeContents(code); const s = win.getSelection(); s.removeAllRanges(); s.addRange(r); b.textContent = 'Selected'; }
+    setTimeout(() => { b.textContent = 'Copy'; }, 1600);
+  } });
+  return b;
+}
+function chrome() {
+  for (const box of doc.querySelectorAll('[data-ca-copy]')) { const code = box.querySelector('[data-ca]'); if (code) box.append(copyButton(code)); }
+  const dock = doc.querySelector('.dock');
+  const watch = [doc.querySelector('.hero-cta'), doc.querySelector('#app')].filter(Boolean);
+  if (dock && watch.length && 'IntersectionObserver' in win) {
+    const seen = new Set();
+    const io = new IntersectionObserver((list) => { for (const e of list) { if (e.isIntersecting) seen.add(e.target); else seen.delete(e.target); } dock.classList.toggle('is-away', seen.size > 0); });
+    for (const w of watch) io.observe(w);
+  }
+}
+
 function boot() {
   doc.documentElement.classList.add('kit');
+  chrome();
   motionIn();
   for (const sec of doc.querySelectorAll('section[data-tool]')) hydrate(sec);
   // the idea app (kit/app/*.js, docs/APP-COMPOSER.md): the same helpers, the same text-only rules

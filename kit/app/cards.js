@@ -2,7 +2,7 @@
 // templates (receipt, ticket, poster, postcard, badge) with the coin logo (same origin, so the canvas stays clean and
 // exports), the date in JST, the item's text, a clearly labelled keepsake number and a QR code to the item's page.
 // Text goes through fillText only. Nothing is uploaded: the PNG is made in the visitor's browser.
-const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace', SANS = 'Archivo, ui-sans-serif, system-ui, sans-serif';
+const MONO = '"JetBrains Mono", ui-monospace, Menlo, monospace', SANS = 'Inter, ui-sans-serif, system-ui, sans-serif';
 const WD = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
 const pad = (n) => String(n).padStart(2, '0');
 /** JST parts of an instant. */
@@ -83,7 +83,7 @@ function receipt(card, item, ctx) {
 }
 
 function ticket(card, item, ctx) {
-  const W = 1100, H = 440, stub = 300, ac = ctx.accent || '#fb752b';
+  const W = 1100, H = 440, stub = 300, ac = '#111';   // paper cards print in black ink (docs/DESIGN.md)
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
   g.fillStyle = '#efe7d6'; g.fillRect(0, 0, W, H);
   g.fillStyle = ac; g.fillRect(0, 0, W, 64);
@@ -107,9 +107,9 @@ function ticket(card, item, ctx) {
 }
 
 function poster(card, item, ctx) {
-  const W = 1080, H = 1350, ac = ctx.accent || '#fb752b';
+  const W = 1080, H = 1350, ac = ctx.accent || '#fff';
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
-  const bg = g.createLinearGradient(0, 0, W, H); bg.addColorStop(0, '#0b0b10'); bg.addColorStop(1, '#1a0f0a'); g.fillStyle = bg; g.fillRect(0, 0, W, H);
+  g.fillStyle = '#000'; g.fillRect(0, 0, W, H);
   g.fillStyle = ac; g.fillRect(0, 0, W, 18); g.fillRect(0, H - 18, W, 18);
   g.textBaseline = 'top'; g.textAlign = 'left'; g.fillStyle = ac; g.font = `800 64px ${SANS}`; g.fillText(card.heading, 72, 80);
   g.fillStyle = '#f1efe8'; g.font = `700 28px ${MONO}`; g.fillText(card.sub || '', 72, 164);
@@ -125,7 +125,7 @@ function poster(card, item, ctx) {
 }
 
 function postcard(card, item, ctx) {
-  const W = 1200, H = 800, ac = ctx.accent || '#fb752b';
+  const W = 1200, H = 800, ac = '#111';
   const c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
   g.fillStyle = '#f4efe3'; g.fillRect(0, 0, W, H);
   g.strokeStyle = '#c9c1ad'; g.lineWidth = 2; g.beginPath(); g.moveTo(W / 2 + 40, 120); g.lineTo(W / 2 + 40, H - 80); g.stroke();
@@ -145,11 +145,11 @@ function postcard(card, item, ctx) {
 }
 
 function badge(card, item, ctx) {
-  const S = 800, ac = ctx.accent || '#fb752b';
+  const S = 800, ac = ctx.accent || '#fff';
   const c = document.createElement('canvas'); c.width = S; c.height = S; const g = c.getContext('2d');
-  g.fillStyle = '#07070a'; g.fillRect(0, 0, S, S);
+  g.fillStyle = '#000'; g.fillRect(0, 0, S, S);
   g.fillStyle = ac; g.beginPath(); g.arc(S / 2, S / 2, 360, 0, Math.PI * 2); g.fill();
-  g.fillStyle = '#111118'; g.beginPath(); g.arc(S / 2, S / 2, 330, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#000'; g.beginPath(); g.arc(S / 2, S / 2, 330, 0, Math.PI * 2); g.fill();
   if (ctx.logo) { g.save(); g.beginPath(); g.arc(S / 2, 250, 100, 0, Math.PI * 2); g.clip(); g.drawImage(ctx.logo, S / 2 - 100, 150, 200, 200); g.restore(); }
   g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = ac; g.font = `800 34px ${SANS}`; g.fillText(card.heading, S / 2, 392);
   g.fillStyle = '#f1efe8'; let size = 60; g.font = `800 ${size}px ${SANS}`;

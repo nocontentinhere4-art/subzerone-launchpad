@@ -12,7 +12,8 @@ import { Permanent } from './jobs.js';
 
 const CHILD = join(import.meta.dirname, 'site', 'render-child.js');
 export const KIT_SCRIPT = '<script src="/_kit/site-kit.v1.js" defer></script>';
-export const KIT_STYLE = '<link rel="stylesheet" href="/_kit/site-kit.v1.css">';
+// v2: the black-and-white redesign (docs/DESIGN.md). Pages built before it keep linking v1, which stays served, frozen.
+export const KIT_STYLE = '<link rel="stylesheet" href="/_kit/site-kit.v2.css">';
 /** CSP of a project site. frame-ancestors: the site itself and the launchpad/city origin (the desk computer in a room
  * frames it); nothing else. `scripts`: the public site on its own host (the kit, its vendor modules and its /_api, all
  * 'self'); off for the owner's preview, which is served on the launchpad origin and stays script-free. `tiles`: the
@@ -56,7 +57,8 @@ const TAG_RULES = [
 ];
 const CSS_RULES = [[/url\(/i, 'CSS url()'], [/@import/i, 'CSS import'], [/expression\(/i, 'CSS expression'], [/javascript:/i, 'javascript: in CSS']];
 
-/** -> {ok, problems[]}. Every href/src must be one we put there. The kit is allowed as two exact strings only: the
+const FRAGMENT = /^#[A-Za-z][A-Za-z0-9-]{0,40}$/;
+/** -> {ok, problems[]}. Every href/src must be one we put there (or an in-page #section link). The kit is allowed as two exact strings only: the
  * stylesheet link once, in the head, and the script once, directly before </body>; any other script or link is refused. */
 export function validateHtml(html, allowedUrls) {
   const problems = [];
@@ -87,6 +89,7 @@ export function validateHtml(html, allowedUrls) {
   for (const tag of markup.match(/<[^>]*>/g) || []) {
     for (const m of tag.matchAll(/\b(href|src)\s*=\s*"([^"]*)"/gi)) {
       const url = m[2].replace(/&amp;/g, '&');
+      if (m[1].toLowerCase() === 'href' && FRAGMENT.test(url)) continue;   // a link to a section of the same page
       if (!allowed.has(url)) problems.push(`unexpected ${m[1]}: ${url.slice(0, 80)}`);
     }
     if (/\b(href|src)\s*=\s*[^"\s>]/i.test(tag)) problems.push('unquoted URL attribute');

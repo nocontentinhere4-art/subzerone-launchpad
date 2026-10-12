@@ -3,11 +3,10 @@
 // parent. Input: {spec, context} JSON on stdin. Output: one static HTML page on stdout. No network access is used and
 // none is needed. Self-contained on purpose: it may read only this file.
 // The page carries no script of its own. Its one script is the audited kit (/_kit/site-kit.v1.js) and its one
-// stylesheet the kit's (/_kit/site-kit.v1.css), both exact strings site.js validateHtml allows; the tools are
+// stylesheet the kit's (/_kit/site-kit.v2.css), both exact strings site.js validateHtml allows; the tools are
 // <section data-tool="…" data-config="…"> blocks with a readable static body that the kit brings to life.
 const esc = (s) => String(s ?? '').replace(/[&<>"'`]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' }[c]));
-const color = (c, d) => (/^#[0-9a-fA-F]{6}$/.test(String(c)) ? c : d);
-const KIT_CSS = '<link rel="stylesheet" href="/_kit/site-kit.v1.css">';
+const KIT_CSS = '<link rel="stylesheet" href="/_kit/site-kit.v2.css">';
 const KIT_JS = '<script src="/_kit/site-kit.v1.js" defer></script>';
 const NAMES = { token: 'Token', wall: 'Community wall', poll: 'Poll', drop: 'Drop box', event: 'Next event', memes: 'Meme maker', map: 'Map', synth: 'Sound toy', game: 'Mini-game', chart: 'Chart',
   trades: 'Live trades', holders: 'Holders', devwatch: 'Dev watch', fees: 'Fee ledger', alerts: 'Alerts' };
@@ -18,12 +17,6 @@ const TRUST = { trades: ['Every buy and sell', 'Each trade on the bonding curve,
   fees: ['Where the fees go', 'The creator fees of this coin: who gets what, as locked on chain when it launched (SUB-01 keeps 20%), what was paid out and what is waiting.'],
   alerts: ['Alerts', 'Get told when the market cap crosses a line you set, or when the dev sells. Kept in your browser only.'] };
 const DASH = '—';
-// the black-and-white coin art (2026-10-12): a 16:9 banner whose left half is empty black, kept whole and anchored on
-// its lettermark; the name and logo sit in that empty space; no colour filter on a picture that has no colour
-const BW_CSS = '\n.art-bw .banner{aspect-ratio:16/9;max-height:min(70vh,660px);object-fit:cover;object-position:right center;filter:none;border-bottom:0;background:#000}' +
-  '.art-bw .hero{background:#000}.art-bw .hero-glow{height:26%}.art-bw .head{position:relative;margin-top:clamp(-210px,-15vw,-36px)}' +
-  '.art-bw .logo{background:#000;border-color:#000;box-shadow:0 0 0 1px rgba(255,255,255,.16),0 18px 50px -14px rgba(0,0,0,.9)}';
-
 let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (d) => { input += d; if (input.length > 256 * 1024) { process.stderr.write('input too large'); process.exit(2); } });
@@ -96,56 +89,150 @@ function blockStatic(b, app) {
     default: return '';
   }
 }
-const appLaunches = (app) => Boolean(app && Array.isArray(app.screens) && app.screens.some((s) => s.blocks.some((b) => b.type === 'launch')));
-function appHtml(app) {
+function appHtml(app, index = '01') {
   if (!app || !Array.isArray(app.screens)) return '';
-  const screens = app.screens.map((s) => `<div class="app-screen" data-screen="${esc(s.id)}"><h4 class="app-screen-h">${esc(s.title)}</h4>
+  const screens = app.screens.map((s) => `<div class="app-screen" data-screen="${esc(s.id)}"><h3 class="app-screen-h">${esc(s.title)}</h3>
 ${s.blocks.map((b, i) => `<div class="app-block app-${esc(b.type)}" data-type="${esc(b.type)}" data-i="${i}"><span class="eyebrow">${esc(BLOCK_NAMES[b.type] || b.type)}</span>${b.title ? `<h3>${esc(b.title)}</h3>` : ''}<div data-slot>${blockStatic(b, app)}</div></div>`).join('\n')}</div>`).join('\n');
-  return `<section class="app card reveal" id="app" data-app data-config="${esc(JSON.stringify(app))}">
-<header class="app-h"><span class="eyebrow">The app</span><h2>${esc(app.title)}</h2>${app.lede ? `<p class="app-lede">${esc(app.lede)}</p>` : ''}</header>
+  return `<section class="app card reveal" id="app" data-app data-config="${esc(JSON.stringify(app))}" aria-label="The app">
+<div class="wrap">
+<header class="sect-h app-h"><span class="sect-i">${index} / The app</span><h2>${esc(app.title)}</h2>${app.lede ? `<p class="app-lede sect-lede">${esc(app.lede)}</p>` : ''}</header>
 <div class="app-body" data-app-body>${screens}</div>
 <p class="tool-note" data-static>Interactive on the live site.</p>
+</div>
 </section>`;
 }
 
+
+// ---- the page (docs/DESIGN.md): top bar, hero, figures, the app, the other tools, Check the chain, About, footer ----
+const blocksOf = (app) => (app && Array.isArray(app.screens) ? app.screens.flatMap((s) => s.blocks || []) : []);
+const appLaunches = (app) => blocksOf(app).some((b) => b.type === 'launch');
+/** The hero's one action, from the app spec: what a visitor comes to do. */
+function ctaOf(app, tools) {
+  const blocks = blocksOf(app);
+  if (blocks.some((b) => b.type === 'launch')) return 'Launch a coin';
+  const sub = blocks.find((b) => b.type === 'submit');
+  if (sub) return sub.title && [...sub.title].length <= 28 ? sub.title : sub.button || 'Send yours';
+  if (blocks.some((b) => b.type === 'vote')) return 'Vote';
+  if (blocks.some((b) => b.type === 'pq')) return 'Check the registry';
+  if (blocks.length) return 'Open the app';
+  const t = tools.find((x) => ['drop', 'wall', 'poll', 'memes', 'map', 'synth', 'game'].includes(x.id));
+  return t ? { drop: 'Drop yours', wall: 'Write on the wall', poll: 'Vote in the poll', memes: 'Make a meme', map: 'Open the map', synth: 'Play the sound toy', game: 'Play' }[t.id] : null;
+}
+/** Name size class: the longest word must fit one line of the hero, the whole name at most three. */
+function nameSize(name) {
+  const words = String(name).split(/\s+/), lw = Math.max(...words.map((w) => [...w].length)), n = [...String(name)].length;
+  const byWord = lw <= 7 ? 0 : lw <= 8 ? 1 : lw <= 10 ? 2 : lw <= 13 ? 3 : 4;
+  const byAll = n <= 10 ? 0 : n <= 16 ? 1 : n <= 22 ? 2 : n <= 28 ? 3 : 4;
+  return ['', ' len-m', ' len-l', ' len-xl', ' len-xxl'][Math.max(byWord, byAll)];
+}
+
+/** The hero's one-line pitch: the tagline, unless it is the template's generic one; then the idea's first sentence. */
+const GENERIC_TAGLINE = /^An idea SUB-01 decided to build\b/;
+function pitchOf(spec) {
+  if (spec.tagline && !GENERIC_TAGLINE.test(spec.tagline)) return spec.tagline;
+  const name = String(spec.name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let s = (String(spec.description || '').replace(/^concept:\s*/i, '').match(/^[^.!?]+[.!?]?/) || [''])[0].trim();
+  s = s.replace(new RegExp(`^${name}\\s*[:\u2013\u2014-]\\s*`, 'i'), '');
+  if ([...s].length > 140) s = `${[...s].slice(0, 139).join('').replace(/\s+\S*$/, '')}\u2026`;
+  return s ? s[0].toUpperCase() + s.slice(1) : spec.tagline || '';
+}
+
 function render({ spec, context }) {
-  const p = spec.palette || {};
-  const accent = color(p.accent, '#fb752b'), second = color(p.second, '#ff9a3c');
   const all = Array.isArray(spec.tools) ? spec.tools : [];
-  const tools = all.filter((t) => !TRUST[t.id]), trust = all.filter((t) => TRUST[t.id]);
+  const trust = all.filter((t) => TRUST[t.id]), token = all.find((t) => t.id === 'token');
+  const tools = all.filter((t) => !TRUST[t.id] && t.id !== 'token');
+  const chain = [...(token ? [token] : []), ...trust];
   const tk = context.token || {};
-  const links = (context.links || []).map((l) => link(l, 'btn')).join('');
-  const sections = spec.sections.map((s, i) => `<article class="card reveal${i === 0 ? ' big' : ''}"><h2>${esc(s.heading)}</h2><p>${esc(s.body)}</p></article>`).join('\n');
-  const status = context.launched && context.network === 'mock'
-    ? '<p class="chip">MOCK launch: rehearsal only, no blockchain, no token exists</p>'
-    : context.launched
-    ? `<p class="chip ok">Launched on ${esc(context.network)} · mint <code>${esc(context.mint)}</code></p>`
-    : `<p class="chip">${esc(context.preview ? 'PREVIEW — not launched' : 'Not launched yet')}</p>`;
-  // the ticker strip: the CA and the numbers, twice (the CSS marquee scrolls one copy out as the other comes in)
-  const strip = `<span>$${esc(spec.ticker)}</span><span>CA <b data-ca-short>${esc(tk.mint ? `${tk.mint.slice(0, 6)}…${tk.mint.slice(-6)}` : 'pre-launch')}</b></span><span>Price <b data-k="price">${DASH}</b></span><span>MC <b data-k="mcap">${DASH}</b></span><span>Holders <b data-k="holders">${DASH}</b></span><span>Built by SUB-01</span>`;
+  const bw = context.art === 'bw';
+  const mock = context.launched && context.network === 'mock';
+  const pump = (tk.links || []).find((l) => /pump\.fun/.test(l.href));
+  const app = spec.app && Array.isArray(spec.app.screens) ? spec.app : null;
+  const cta = ctaOf(app, tools);
+  const target = app ? '#app' : tools.length ? '#tools' : null;
+  // sections in order, numbered
+  const order = [app && 'app', tools.length && 'tools', chain.length && 'chain', 'about'].filter(Boolean);
+  const idx = (k) => String(order.indexOf(k) + 1).padStart(2, '0');
+  const state = mock ? '<span class="state mock">MOCK launch · no blockchain</span>'
+    : context.launched ? `<span class="state ok">Live on ${context.network === 'mainnet-beta' ? 'Solana' : `Solana ${esc(context.network)}`}</span>`
+    : `<span class="state pre">${context.preview ? 'Preview · not launched' : 'Not launched yet'}</span>`;
+  const statusLong = mock ? 'MOCK launch: rehearsal only, no blockchain, no token exists.'
+    : context.launched ? `Launched on ${esc(context.network)}. Mint ${esc(context.mint)}, verified by the launchpad.`
+    : context.preview ? 'PREVIEW — not launched. No token exists yet.' : 'Not launched yet. No token exists yet.';
+  const ca = tk.mint ? `<div class="ca-chip reveal-hero${mock ? ' mockca' : ''}" data-ca-copy><span class="ca-k">${mock ? 'MOCK' : 'CA'}</span><code data-ca>${esc(tk.mint)}</code></div>` : '';
+  const ctaBtn = (cls) => (cta && target ? `<a class="btn btn-primary${cls}" href="${target}">${esc(cta)}</a>` : '');
+  const buyBtn = (cls, label) => (pump ? `<a class="btn btn-line${cls}" href="${esc(pump.href)}" rel="noopener noreferrer nofollow" target="_blank">${label}</a>` : '');
+  const nav = [app && ['#app', 'App'], tools.length && ['#tools', 'Tools'], chain.length && ['#chain', 'Chain'], ['#about', 'About']].filter(Boolean)
+    .map(([h, l]) => `<a href="${h}">${l}</a>`).join('');
+  const parent = context.parent?.href && context.parent?.name ? `<p class="hero-parent reveal-hero">Launched at <a href="${esc(context.parent.href)}" rel="noopener noreferrer" target="_blank">${esc(context.parent.name)}${context.parent.ticker ? ` ($${esc(context.parent.ticker)})` : ''}</a></p>` : '';
+  const figures = token && context.launched ? `<div class="figures" aria-label="Market"><div class="wrap"><dl>
+<div><dt>Price</dt><dd data-k="price">${DASH}</dd></div><div><dt>Market cap</dt><dd data-k="mcap">${DASH}</dd></div><div><dt>24h change</dt><dd data-k="chg">${DASH}</dd></div><div><dt>Holders</dt><dd data-k="holders">${DASH}</dd></div>
+</dl></div></div>` : '';
+  const head = (k, title, lede) => `<header class="sect-h"><span class="sect-i">${idx(k)} / ${esc({ tools: 'On this site', chain: 'Check the chain', about: 'About' }[k])}</span>${title}${lede ? `<p class="sect-lede">${lede}</p>` : ''}</header>`;
+  const toolsSec = tools.length ? `<section class="sect" id="tools" aria-label="On this site"><div class="wrap">
+${head('tools', '<h2 class="sec">On this site</h2>', '')}
+<div class="tools">
+${tools.map((t) => toolHtml(t, spec, context)).join('\n')}
+</div></div></section>` : '';
+  const chainSec = chain.length ? `<section class="sect" id="chain" aria-label="Check the chain"><div class="wrap">
+${head('chain', '<h2 class="sec">Check the chain</h2>', 'Every number here is read from Solana or left blank with the reason. Nothing is estimated.')}
+<div class="tools trust">
+${chain.map((t) => toolHtml(t, spec, context)).join('\n')}
+</div></div></section>` : '';
+  const sections = (spec.sections || []).filter((s) => s.body && s.body !== spec.disclaimer);
+  const usesTx = appLaunches(app);
+  const notes = [
+    ['Status', statusLong],
+    spec.disclaimer && ['What this is', esc(spec.disclaimer)],
+    ['The copy', `Written by ${esc(context.generatorLabel)}.`],
+    (all.length || app) && ['The tools', usesTx
+      ? 'The launch block asks your wallet for a transaction only to create the coin you asked for, after you have reviewed it here; every other tool on this page only reads public chain data and asks for signed messages.'
+      : 'The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.'],
+    ['Built by', `SUB-01, a brain simulation, on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>.`],
+    ['Idea by', `<code>${esc(context.submitter)}</code>`],
+  ].filter(Boolean);
+  const aboutSec = `<section class="sect" id="about" aria-label="About"><div class="wrap">
+${head('about', '<h2 class="sec">Why SUB-01 built it</h2>', '')}
+<div class="about">
+${sections.map((s, i) => `<article class="reveal${i === 0 ? ' lead' : ''}"><h3>${esc(s.heading)}</h3><p>${esc(s.body)}</p></article>`).join('\n')}
+<ul class="notes" aria-label="Notes">${notes.map(([k, v]) => `<li><b>${esc(k)}</b><span>${v}</span></li>`).join('')}</ul>
+</div></div></section>`;
+  const links = (context.links || []).map((l) => `<li><a href="${esc(l.href)}" rel="noopener noreferrer nofollow" target="_blank">${esc(l.label)}</a></li>`).join('');
+  const dock = cta && target ? `<nav class="dock" aria-label="Quick actions">${ctaBtn('')}${buyBtn('', 'Buy')}</nav>` : '';
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="./logo.png"><link rel="apple-touch-icon" href="./logo.png"><meta name="viewport" content="width=device-width,initial-scale=1">
+<html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="./logo.png"><link rel="apple-touch-icon" href="./logo.png"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>${esc(spec.name)} ($${esc(spec.ticker)})</title>
 <meta name="description" content="${esc(spec.description)}">
+<meta name="theme-color" content="#000000">
 <meta name="referrer" content="no-referrer">
 ${KIT_CSS}
-<style>
-:root{--ac:${accent};--ac2:${second}}${context.art === 'bw' ? BW_CSS : ''}
-</style></head><body${context.art === 'bw' ? ' class="art-bw"' : ''}>
-<div class="hero"><img class="banner" src="./banner.svg" alt=""><div class="hero-glow"></div></div>
-<main>
-<header class="head reveal-hero"><img class="logo" src="./logo.png" alt="${esc(spec.name)} logo"><div><h1 class="grad">${esc(spec.name)}</h1><span class="tk">$${esc(spec.ticker)}</span></div></header>
-<p class="tag reveal-hero">${esc(spec.tagline)}</p>
-<div class="reveal-hero">${status}${context.parent ? `<p class="chip">Launched at <a href="${esc(context.parent.href)}" rel="noopener noreferrer" target="_blank">${esc(context.parent.name)} ($${esc(context.parent.ticker)})</a></p>` : ''}</div>
-${tools.some((t) => t.id === 'token') ? `<div class="marquee" aria-hidden="true"><div class="marquee-track">${strip}${strip}</div></div>` : ''}
-${appHtml(spec.app)}
-<div class="bento">
-${sections}
+</head><body class="${bw ? 'art-bw' : 'art-classic'}${dock ? ' has-dock' : ''}">
+<a class="skip" href="#main">Skip to content</a>
+<header class="top"><div class="wrap top-in">
+<a class="brand" href="#top"><img src="./logo.png" alt="" width="28" height="28"><span class="brand-n">${esc(spec.name)}</span><span class="brand-t">$${esc(spec.ticker)}</span></a>
+<nav class="top-nav" aria-label="On this page">${nav}</nav>${ctaBtn(' btn-sm top-cta')}
+</div></header>
+<section class="hero" id="top" aria-label="${esc(spec.name)}">
+${bw ? '<img class="hero-art" src="./banner.svg" alt="" width="1536" height="864" fetchpriority="high">' : '<img class="hero-mark" src="./logo.png" alt="" width="512" height="512">'}
+<div class="wrap hero-in">
+<p class="hero-k reveal-hero"><span class="tk">$${esc(spec.ticker)}</span>${state}</p>
+<h1 class="hero-name${nameSize(spec.name)} reveal-hero">${esc(spec.name)}</h1>
+<p class="hero-pitch reveal-hero">${esc(pitchOf(spec))}</p>
+${cta || pump ? `<div class="hero-cta reveal-hero">${ctaBtn(' btn-lg')}${buyBtn(' btn-lg', 'Buy on pump.fun')}</div>` : ''}
+${ca}${parent}
 </div>
-${trust.length ? `<h2 class="sec">Check the chain</h2>\n<div class="tools trust">\n${trust.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
-${tools.length ? `<h2 class="sec">On this site</h2>\n<div class="tools">\n${tools.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
-<nav>${links}</nav>
-<footer>Idea by <code>${esc(context.submitter)}</code>. Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>
-and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${appLaunches(spec.app) ? ' The launch block asks your wallet for a transaction only to create the coin you asked for, after you have reviewed it here; every other tool on this page only reads public chain data and asks for signed messages.' : all.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
-</main>${all.length || spec.app ? KIT_JS : ''}</body></html>`;
+</section>
+${figures}
+<main id="main">
+${appHtml(app, idx('app'))}
+${toolsSec}
+${chainSec}
+${aboutSec}
+</main>
+<footer class="foot"><div class="wrap foot-grid">
+<div class="foot-mark"><img src="./logo.png" alt="" width="40" height="40"><div>${esc(spec.name)}<br><span>$${esc(spec.ticker)}</span></div></div>
+<ul class="foot-links" aria-label="Links">${links}</ul>
+<p class="foot-word${nameSize(spec.name)}" aria-hidden="true">${esc(spec.name)}</p>
+<div class="foot-credit"><p>Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>, built by SUB-01.</p><p>Idea by <code>${esc(context.submitter)}</code>.</p><p>${esc(spec.disclaimer || '')}</p></div>
+</div></footer>
+${dock}${all.length || app ? KIT_JS : ''}</body></html>`;
 }

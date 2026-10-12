@@ -14,9 +14,9 @@
  },
  "files": {
   "LICENSES.txt": {
-   "bytes": 25952,
-   "gzip": 4176,
-   "sha256": "e3a5b889908309ace1d4939debad5ce295fede10ca16b33228b90e326414e8bd"
+   "bytes": 30736,
+   "gzip": 4299,
+   "sha256": "f6c34ec46b15fa95244d3f472cf2c28e9900030e6a32bf6a5c725f5e8a212cd4"
   },
   "fonts/archivo-400.woff2": {
    "bytes": 14700,
@@ -33,20 +33,25 @@
    "gzip": 14439,
    "sha256": "c26cda2400b374eb1adb6e0973c86f455e2df17ca57c6755eb37d7bde47663fb"
   },
+  "fonts/inter-var.woff2": {
+   "bytes": 41296,
+   "gzip": 41323,
+   "sha256": "5fb7487be577773073584518fb7a31108dd82b31ddba62afae17c6799b02e721"
+  },
   "fonts/jetbrains-mono-400.woff2": {
-   "bytes": 21168,
-   "gzip": 21196,
-   "sha256": "14425ba9c695763c1547f48a206b7aa60350a33ae23de09f0407877f3fcd89eb"
+   "bytes": 8228,
+   "gzip": 8251,
+   "sha256": "4d5f46a00eb18ace05dc7d69a765fe545ebf9432040c25589d22bbb82886b7b3"
   },
   "fonts/jetbrains-mono-700.woff2": {
-   "bytes": 21908,
-   "gzip": 21936,
-   "sha256": "d0d4e818808f2a0ba39b2b09d1989366f63494e295f003c7ef436697378507e8"
+   "bytes": 8340,
+   "gzip": 8363,
+   "sha256": "266d138335c1d749bf01eb2df89ff0509aec63859ddeb847d2a7ca90a7242ebc"
   },
   "site-app.v1.js": {
-   "bytes": 30479,
-   "gzip": 11835,
-   "sha256": "9ad91e832076417a1a775eebc1bd9101754642c5dd2e958a27786448a729b6e0"
+   "bytes": 30344,
+   "gzip": 11767,
+   "sha256": "113261eba7b409709dc7993106b2dbd373040ca974514d0eed47cad289feafd8"
   },
   "site-kit.v1.css": {
    "bytes": 22040,
@@ -54,9 +59,14 @@
    "sha256": "45871ed51bf0c926dc552c9f2b9233b8b91937e64bc627ee6d70dce92c4cad3b"
   },
   "site-kit.v1.js": {
-   "bytes": 34627,
-   "gzip": 14383,
-   "sha256": "986e21962d3624ff130bf3db5a260bd17d966065161fec1bb737d352b71e70de"
+   "bytes": 35712,
+   "gzip": 14664,
+   "sha256": "c8defa0072dcfb7e2dffd406d119e56f739bde5c699a1d8427a5f44c49b08c10"
+  },
+  "site-kit.v2.css": {
+   "bytes": 33572,
+   "gzip": 7729,
+   "sha256": "ee1ce409c5a3769b2b3776348c15bbbe9de8e85acebfb717b3baf2c9a1ddf384"
   },
   "site-launch.v1.js": {
    "bytes": 16230,

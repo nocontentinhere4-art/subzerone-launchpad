@@ -288,7 +288,7 @@ test('art choice: GET lists both options; PUT copies the pick live, rebuilds the
     assert.equal(meta.headers.get('content-type'), 'image/png');
     assert.equal(meta.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(siteContext(h.db, h.cfg, p, { preview: true }).art, 'bw');
-    assert.match(h.db.get('SELECT html FROM site_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1', p.id).html, /<body class="art-bw">/);
+    assert.match(h.db.get('SELECT html FROM site_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1', p.id).html, /<body class="art-bw[ "]/);
   } finally { h.close(); }
 });
 
