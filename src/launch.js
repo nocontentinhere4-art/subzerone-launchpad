@@ -2,6 +2,7 @@
 // launch intent (exact transaction, persisted BEFORE the signature is requested) -> wallet signature -> broadcast ->
 // on-chain verification -> launched. A provider's answer alone never marks a project launched.
 import { createHash } from 'node:crypto';
+import { log } from './log.js';
 import { audit, isPaused } from './db.js';
 import { enqueue, Permanent, Defer } from './jobs.js';
 import { transition, note } from './states.js';
@@ -315,7 +316,13 @@ async function buildChecked(provider, config, buyLamports, opts = {}) {
     throw e;
   }
   const est = built.estimate || {};
-  if (est.simulation && est.simulation.ok === false) throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));
+  // every simulation is logged (Phantom support, 2026-10-12: show that only transactions that simulate cleanly reach the wallet)
+  log.info('launch simulation', { mint: built.mint, ok: est.simulation?.ok ?? null, err: est.simulation?.err ?? null,
+    units: est.simulation?.unitsConsumed ?? null, bytes: built.txBytes ?? null, refresh: Boolean(opts.mintSecret) });
+  if (!est.simulation || est.simulation.ok !== true) {
+    if (est.simulation?.logs) log.warn('launch simulation logs', { mint: built.mint, logs: est.simulation.logs });
+    throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));   // nothing goes to the wallet
+  }
   if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
     const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
     if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
