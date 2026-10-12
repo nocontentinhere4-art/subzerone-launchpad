@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { harness, user, drain, IDEA, wallet } from './helpers.js';
 import { validateTools, pickTools, readConcept, conceptTime, lastJst, nextJst, parseJstLocal, defaultConfig, LIBS, CATALOG, TOOL_IDS } from '../src/tools.js';
 import { chooseTools, templateGenerate, validateSpec } from '../src/generator.js';
+import { toolsBeside } from '../src/composer.js';
 import { validateHtml, sandboxBuild, siteCsp } from '../src/site.js';
 import { holderMode, createHolderCheck, runDropRule, backfillTools, tokenState } from '../src/tool-api.js';
 import { refreshCoinStats } from '../src/coin-stats.js';
@@ -80,7 +81,8 @@ test('SUB-01 picks 3–4 generic tools plus at most one idea-specific one, by ke
     assert.ok(generic.length >= 3 && generic.length <= 4 && list.length <= 5 && list[0].id === 'token', c);
   }
   const spec = templateGenerate({ idea: { title: 'Konbini Confession', concept: KONBINI }, brain: { networks: { language: 1 } } }).spec;
-  assert.deepEqual(spec.tools, chooseTools({ title: 'Konbini Confession', concept: KONBINI }, { networks: { language: 1 } }));
+  // the idea app (composer.js) replaces the tools it does better: here the drop box and the daily event
+  assert.deepEqual(spec.tools, toolsBeside(chooseTools({ title: 'Konbini Confession', concept: KONBINI }, { networks: { language: 1 } }), spec.app));
 });
 
 test('tool configs are validated strictly; the spec refuses a bad tools list', () => {
@@ -155,7 +157,10 @@ test('project host: the kit files, the CSP, tool endpoints, and nothing else', a
     assert.equal(page.status, 200);
     assert.match(page.headers['content-security-policy'], /^default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self';.*; sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads$/);
     assert.ok(!/openstreetmap/.test(page.headers['content-security-policy']), 'no map, no tile host');
-    for (const t of ['token', 'drop', 'poll', 'event']) assert.match(page.text, new RegExp(`data-tool="${t}"`));   // the test brain is reward-dominant: a poll
+    // the idea app (composer.js) took over the drop box, the poll and the 23:00 event: the page carries the token panel and the app
+    assert.match(page.text, /data-tool="token"/);
+    for (const t of ['drop', 'poll', 'event']) assert.doesNotMatch(page.text, new RegExp(`data-tool="${t}"`));
+    assert.match(page.text, /<section class="app card reveal" id="app" data-app data-config="/);
     const js = await k.site('GET', '/_kit/site-kit.v1.js');
     assert.equal(js.status, 200);
     assert.equal(js.headers['content-type'], 'text/javascript; charset=utf-8');
@@ -291,6 +296,7 @@ test('drop box: private until featured; the author features one; the daily rule 
   const h = await harness(TP);
   try {
     const k = await konbini(h);
+    assert.equal((await k.owner.call('PUT', `/api/projects/${k.slug}/tools`, { tools: [{ id: 'token' }, { id: 'drop', config: { revealJst: '23:00' } }] })).status, 200, 'the app replaced the drop box; switch it back on');
     const r = await k.site('POST', '/_api/drop', { text: 'I ate the last melon pan and blamed the cat.' });
     assert.equal(r.status, 200, r.text);
     assert.equal(r.json.private, true);
@@ -324,7 +330,7 @@ test('room PC: PUT /tools rebuilds the site; owner only; frozen between approval
     const k = await konbini(h);
     const view = (await k.owner.call('GET', `/api/projects/${k.slug}/tools`)).json;
     assert.equal(view.editable, true);
-    assert.deepEqual(view.tools.map((t) => t.id), ['token', 'drop', 'poll', 'event']);
+    assert.deepEqual(view.tools.map((t) => t.id), ['token'], 'the idea app took over the drop box, the poll and the event');
     assert.deepEqual(Object.keys(view.catalog).sort(), [...TOOL_IDS].sort());
     const before = k.project().live_site_version;
     const put = await k.owner.call('PUT', `/api/projects/${k.slug}/tools`, { tools: [{ id: 'token' }, { id: 'event', config: { title: 'Receipt printing', at: '2030-01-01T23:00' } }, { id: 'memes' }, { id: 'map' }] });
@@ -345,7 +351,9 @@ test('room PC: PUT /tools rebuilds the site; owner only; frozen between approval
     fakeLaunch(h, k.slug);
     const off = await k.owner.call('PUT', `/api/projects/${k.slug}/tools`, { tools: [] });
     assert.equal(off.status, 200, 'launched coins can change their tools');
-    assert.ok(!/<script/.test((await k.site('GET', '/')).text), 'no tools, no kit script');
+    assert.match((await k.site('GET', '/')).text, /<script src="\/_kit\/site-kit\.v1\.js" defer><\/script><\/body>/, 'the app still needs the kit');
+    assert.equal((await k.owner.call('PUT', `/api/projects/${k.slug}/app`, { app: null })).status, 200);
+    assert.ok(!/<script/.test((await k.site('GET', '/')).text), 'no tools and no app, no kit script');
     assert.equal((await k.site('GET', '/_api/token')).status, 404);
   } finally { h.close(); }
 });

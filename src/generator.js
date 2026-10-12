@@ -7,6 +7,8 @@
 import { rankedNetworks, palette } from './art.js';
 import { Permanent } from './jobs.js';
 import { pickTools, validateTools, isToolError } from './tools.js';
+import { validateApp, isAppError } from './app-blocks.js';
+import { composeRules, composeApp, toolsBeside } from './composer.js';
 
 export const NETWORK_WORDS = {
   reward: 'reward', attention: 'attention', visual: 'visual', memory: 'memory', language: 'language',
@@ -62,6 +64,10 @@ export function validateSpec(s) {
   if (s.tools !== undefined) {
     try { s.tools = validateTools(s.tools); } catch (e) { if (isToolError(e)) need(false, e.message); throw e; }
   }
+  // the idea app (app-blocks.js, composer.js): optional, strict when present; null = the author switched it off
+  if (s.app !== undefined && s.app !== null) {
+    try { s.app = validateApp(s.app); } catch (e) { if (isAppError(e)) need(false, e.message); throw e; }
+  }
   const all = JSON.stringify(s);
   need(!/[<>`]/.test(all), 'markup characters');
   need(!/(guarantee|passive income|dividend|profit share|risk[- ]free|\d+\s?x\s+(gains?|returns?))/i.test(all), 'financial promises');
@@ -104,6 +110,8 @@ export function templateGenerate({ idea, brain }) {
     palette: palette(brain?.networks),
     tools: chooseTools(idea, brain, { name }),
   };
+  // SUB-01 builds the idea's app (rules, no model here) and drops the tools it replaces
+  try { spec.app = composeRules(idea, { name, ticker }).app; spec.tools = toolsBeside(spec.tools, spec.app); } catch { /* an idea the DSL cannot hold: the site keeps its tools */ }
   if (spec.x.handles.length === 0) spec.x.handles = [`${ticker}_coin`.slice(0, 15)];
   return { spec: validateSpec(spec), generator: 'template/1', costUsd: 0 };
 }
@@ -136,6 +144,8 @@ export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = 
   const costUsd = ((usage.input_tokens || 0) * g.priceIn + (usage.output_tokens || 0) * g.priceOut) / 1e6;
   const spec = { ...out, ticker: String(out.ticker || '').toUpperCase(), disclaimer: DISCLAIMER, palette: palette(brain?.networks) };
   spec.tools = chooseTools(idea, brain, { name: typeof out.name === 'string' ? out.name : undefined });   // never the model's choice
+  spec.app = (await composeApp(idea, brain, { name: spec.name, ticker: spec.ticker, cfg, fetchImpl })).app;   // validated; rules on any model problem
+  spec.tools = toolsBeside(spec.tools, spec.app);
   spec.sections = [...(spec.sections || []).slice(0, 4), { heading: 'What this is', body: DISCLAIMER }];
   return { spec: validateSpec(spec), generator: `anthropic:${g.anthropicModel}`, costUsd };
 }

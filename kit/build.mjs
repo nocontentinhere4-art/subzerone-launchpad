@@ -5,7 +5,7 @@
 //   vendor/*.js      ES modules the core imports lazily, only on sites whose tool needs them
 //   LICENSES.txt     every bundled library's licence text; manifest.json: sizes and hashes (tests and the report)
 import { build } from 'esbuild';
-import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, rmSync, copyFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
@@ -13,7 +13,7 @@ import { LIBS } from '../src/tools.js';
 
 const ROOT = join(import.meta.dirname, '..'), OUT = join(ROOT, 'public', '_kit'), NM = join(ROOT, 'node_modules');
 const pkg = (name) => JSON.parse(readFileSync(join(NM, name, 'package.json'), 'utf8'));
-const PKG = { anime: 'animejs', motion: 'motion', leaflet: 'leaflet', tone: 'tone', kaplay: 'kaplay', uplot: 'uplot', qrcode: 'qrcode-generator' };
+const PKG = { anime: 'animejs', motion: 'motion', leaflet: 'leaflet', tone: 'tone', kaplay: 'kaplay', uplot: 'uplot', qrcode: 'qrcode-generator', pq: '@noble/post-quantum' };
 for (const [k, name] of Object.entries(PKG)) {
   const v = pkg(name).version;
   if (v !== LIBS[k].version) throw new Error(`${name} is ${v} in node_modules but tools.js LIBS pins ${LIBS[k].version}`);
@@ -23,12 +23,15 @@ mkdirSync(join(OUT, 'vendor'), { recursive: true });
 mkdirSync(join(OUT, 'fonts'), { recursive: true });
 
 const VENDOR = { anime: LIBS.anime.file, leaflet: LIBS.leaflet.file, leafletCss: LIBS.leaflet.css, tone: LIBS.tone.file, kaplay: LIBS.kaplay.file,
-  uplot: LIBS.uplot.file, uplotCss: LIBS.uplot.css, qrcode: LIBS.qrcode.file };
+  uplot: LIBS.uplot.file, uplotCss: LIBS.uplot.css, qrcode: LIBS.qrcode.file, pq: LIBS.pq.file };
 const common = { bundle: true, minify: true, target: ['es2020', 'chrome100', 'firefox100', 'safari15'], legalComments: 'eof', logLevel: 'warning', charset: 'utf8' };
 
+// the idea app's interpreter (kit/app/*.js, docs/APP-COMPOSER.md): its own module next to the core, loaded only on
+// sites that carry an app, cached like the core (a day) so the two never drift apart for long
+await build({ ...common, entryPoints: [join(ROOT, 'kit/app/index.js')], outfile: join(OUT, 'site-app.v1.js'), format: 'esm' });
 await build({ ...common, entryPoints: [join(ROOT, 'kit/src/core.js')], outfile: join(OUT, 'site-kit.v1.js'), format: 'iife', external: ['/_kit/*'],
   define: { __VENDOR__: JSON.stringify(VENDOR) } });
-for (const k of ['anime', 'leaflet', 'tone', 'kaplay', 'uplot', 'qrcode']) {
+for (const k of ['anime', 'leaflet', 'tone', 'kaplay', 'uplot', 'qrcode', 'pq']) {
   await build({ ...common, entryPoints: [join(ROOT, `kit/src/vendor/${k}.js`)], outfile: join(OUT, 'vendor', LIBS[k].file), format: 'esm' });
 }
 await build({ ...common, entryPoints: [join(ROOT, 'kit/src/site-kit.css')], outfile: join(OUT, 'site-kit.v1.css'), loader: { '.css': 'css' }, external: ['/_kit/*'] });
@@ -53,6 +56,13 @@ for (const [k, name] of Object.entries(PKG)) {
   const p = pkg(name), text = licenceFile(name);
   if (!text) throw new Error(`no licence file in ${name}`);
   parts.push('='.repeat(78), `${LIBS[k].name} ${p.version} (${p.license}) ${LIBS[k].url}`, `bundled in: ${LIBS[k].file ? `vendor/${LIBS[k].file}` : 'site-kit.v1.js'}`, '-'.repeat(78), text, '');
+}
+// @noble/post-quantum's own dependencies, bundled into its vendor file (same author, MIT)
+for (const name of ['@noble/hashes', '@noble/curves', '@noble/ciphers']) {
+  const dir = existsSync(join(NM, '@noble/post-quantum/node_modules', name)) ? `@noble/post-quantum/node_modules/${name}` : name;
+  if (!existsSync(join(NM, dir))) continue;
+  const p = pkg(dir);
+  parts.push('='.repeat(78), `${name} ${p.version} (${p.license}) bundled in: vendor/${LIBS.pq.file}`, '-'.repeat(78), licenceFile(dir), '');
 }
 for (const name of ['@fontsource/archivo', '@fontsource/jetbrains-mono']) {
   const p = pkg(name);

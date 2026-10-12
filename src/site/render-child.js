@@ -58,6 +58,37 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
   }
 }
 
+// The idea app (docs/APP-COMPOSER.md): one <section data-app data-config> holding the validated app spec; the static body
+// says in plain words what each block does, the kit (kit/app/*.js) turns it into the working app on the live site.
+const BLOCK_NAMES = { submit: 'Form', schedule: 'Schedule', reveal: 'Reveal', vote: 'Vote', collection: 'Archive', card: 'Card', leaderboard: 'Leaderboard', counter: 'Counter', map: 'Map', timer: 'Countdown', note: 'Note', pq: 'Post-quantum registry' };
+function blockStatic(b, app) {
+  switch (b.type) {
+    case 'submit': return `<p>${esc(b.prompt)}</p><ul class="app-fields">${b.fields.map((f) => `<li>${esc(f.label)}${f.required ? '' : ' (optional)'}</li>`).join('')}</ul>`;
+    case 'schedule': return `<p class="when">${esc(b.label)}</p><div class="count" data-count>${DASH}</div>`;
+    case 'reveal': return `<p>At the scheduled moment one ${esc(app.noun.one)} is chosen: ${esc(b.pick.map((x) => ({ owner: "the author's pick", votes: "the holders' votes", random: 'a random draw seeded by a Solana blockhash' }[x])).join(', else '))}.</p>`;
+    case 'vote': return `<p>One signed vote per wallet (a message, never a transaction)${b.holdersOnly ? ', holders only' : ''}.</p>`;
+    case 'collection': return `<p>${b.show === 'all' ? `Every ${esc(app.noun.one)} people sent` : `Every published ${esc(app.noun.one)}`}, newest first.</p>`;
+    case 'card': return `<p>Each ${esc(app.noun.one)} as a ${esc(b.template)} image you can download.</p>`;
+    case 'leaderboard': return `<p>${b.of === 'wallets' ? 'Wallets' : 'The ' + esc(app.noun.many)} ranked by ${esc(b.by)}.</p>`;
+    case 'counter': return '<p>Live counts.</p>';
+    case 'map': return `<div class="map" data-map></div><p class="fine">Map data © OpenStreetMap contributors.</p>`;
+    case 'timer': return `<p class="when">${b.daily ? `Every day at ${esc(b.daily)} JST` : `${esc(String(b.at || '').replace('T', ' '))} JST`}</p><div class="count" data-count>${DASH}</div>`;
+    case 'note': return `<p>${esc(b.body)}</p>`;
+    case 'pq': return '<p>Every step the launchpad took for this coin, signed with ML-DSA-65 (FIPS 204) and checked by your browser.</p>';
+    default: return '';
+  }
+}
+function appHtml(app) {
+  if (!app || !Array.isArray(app.screens)) return '';
+  const screens = app.screens.map((s) => `<div class="app-screen" data-screen="${esc(s.id)}"><h4 class="app-screen-h">${esc(s.title)}</h4>
+${s.blocks.map((b, i) => `<div class="app-block app-${esc(b.type)}" data-type="${esc(b.type)}" data-i="${i}"><span class="eyebrow">${esc(BLOCK_NAMES[b.type] || b.type)}</span>${b.title ? `<h3>${esc(b.title)}</h3>` : ''}<div data-slot>${blockStatic(b, app)}</div></div>`).join('\n')}</div>`).join('\n');
+  return `<section class="app card reveal" id="app" data-app data-config="${esc(JSON.stringify(app))}">
+<header class="app-h"><span class="eyebrow">The app</span><h2>${esc(app.title)}</h2>${app.lede ? `<p class="app-lede">${esc(app.lede)}</p>` : ''}</header>
+<div class="app-body" data-app-body>${screens}</div>
+<p class="tool-note" data-static>Interactive on the live site.</p>
+</section>`;
+}
+
 function render({ spec, context }) {
   const p = spec.palette || {};
   const accent = color(p.accent, '#fb752b'), second = color(p.second, '#ff9a3c');
@@ -87,12 +118,13 @@ ${KIT_CSS}
 <p class="tag reveal-hero">${esc(spec.tagline)}</p>
 <div class="reveal-hero">${status}</div>
 ${tools.some((t) => t.id === 'token') ? `<div class="marquee" aria-hidden="true"><div class="marquee-track">${strip}${strip}</div></div>` : ''}
+${appHtml(spec.app)}
 <div class="bento">
 ${sections}
 </div>
 ${tools.length ? `<h2 class="sec">On this site</h2>\n<div class="tools">\n${tools.map((t) => toolHtml(t, spec, context)).join('\n')}\n</div>` : ''}
 <nav>${links}</nav>
 <footer>Idea by <code>${esc(context.submitter)}</code>. Made on the SUBZERONE launchpad at <a href="${esc(context.launchpad?.href || 'https://subzerone.live')}" rel="noopener noreferrer" target="_blank">${esc(context.launchpad?.host || 'subzerone.live')}</a>
-and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${tools.length ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
-</main>${tools.length ? KIT_JS : ''}</body></html>`;
+and built by SUB-01, a brain simulation; the copy on this page was written by ${esc(context.generatorLabel)}. ${esc(spec.disclaimer || '')}${tools.length || spec.app ? ' The tools on this page only read public chain data and ask for signed messages; they never ask for a transaction.' : ''}</footer>
+</main>${tools.length || spec.app ? KIT_JS : ''}</body></html>`;
 }

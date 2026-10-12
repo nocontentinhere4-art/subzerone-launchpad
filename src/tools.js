@@ -20,6 +20,8 @@ export const LIBS = Object.freeze({
   kaplay: { name: 'KAPLAY', version: '3001.0.19', licence: 'MIT', url: 'https://kaplayjs.com', file: 'kaplay-3001.0.19.js' },
   uplot: { name: 'uPlot', version: '1.6.32', licence: 'MIT', url: 'https://github.com/leeoniya/uPlot', file: 'uplot-1.6.32.js', css: 'uplot-1.6.32.css' },
   qrcode: { name: 'qrcode-generator', version: '2.0.4', licence: 'MIT', url: 'https://github.com/kazuhikoarase/qrcode-generator', file: 'qrcode-2.0.4.js' },
+  // the app's post-quantum block (app-blocks.js `pq`): ML-DSA-65 verification in the browser, loaded on first use
+  pq: { name: '@noble/post-quantum', version: '0.7.1', licence: 'MIT', url: 'https://github.com/paulmillr/noble-post-quantum', file: 'noble-post-quantum-0.7.1.js' },
 });
 
 // The only outside host a site may ever load from: OpenStreetMap's tiles, and only on a site whose map tool is on.
@@ -181,9 +183,11 @@ export function validateTools(list) {
   return out;
 }
 export const isToolError = (e) => e instanceof ToolError;
+/** One tool's config, validated and normalised (the app composer reuses the map and event schemas for its blocks). */
+export const validateToolConfig = (id, c) => { if (!SCHEMAS[id]) throw new ToolError(`unknown tool ${String(id).slice(0, 20)}`); return SCHEMAS[id](c ?? {}); };
 export const toolOf = (spec, id) => (Array.isArray(spec?.tools) ? spec.tools.find((t) => t.id === id) : null) || null;
-/** The site needs the OSM tile host in its CSP only when the map is on. */
-export const usesTiles = (spec) => !!toolOf(spec, 'map');
+/** The site needs the OSM tile host in its CSP only when a map is on (the map tool, or a map block of the app). */
+export const usesTiles = (spec) => !!toolOf(spec, 'map') || !!(spec?.app?.screens || []).some((s) => (s.blocks || []).some((b) => b.type === 'map'));
 
 // --- SUB-01's choice (keywords, no language model) ----------------------------------------------------------------
 const fold = (s) => ` ${String(s ?? '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^a-z0-9:.\s]/g, ' ').replace(/(?<!\d)[:.]|[:.](?!\d)/g, ' ').replace(/\s+/g, ' ')} `;

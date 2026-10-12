@@ -102,6 +102,8 @@ export function loadConfig(env = process.env) {
       dexGapMs: num('DEXSCREENER_MIN_GAP_MS', 2000),          // one DexScreener call per this many ms, all coins together (≤ 30/min)
     },
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
+    // the app composer's dev-only "reveal now" trigger (app-api.js); refused in production whatever the variable says
+    appDevTrigger: e('APP_DEV_TRIGGER') === '1' && deployEnv !== 'production',
     // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it
     trust: { datasets: list(e('SUB01_DATASETS'), 20, 80, 'SUB01_DATASETS'), operatorName: e('OPERATOR_NAME') ? list(e('OPERATOR_NAME'), 1, 80, 'OPERATOR_NAME', false)[0] : null },
   };

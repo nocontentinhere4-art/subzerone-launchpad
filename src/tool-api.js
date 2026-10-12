@@ -10,6 +10,7 @@ import { moderateText } from './chat.js';
 import { shortWallet } from './world.js';
 import { publicStats } from './coin-stats.js';
 import { toolOf, lastJst, nextJst, parseJstLocal, jstDay } from './tools.js';
+import { createAppApi } from './app-api.js';
 import { HttpError, id, now, parseJson, sha256, token, isSolanaAddress, verifyWalletSignature, b58decode, b58encode } from './util.js';
 
 export const LIMITS = Object.freeze({
@@ -24,7 +25,7 @@ const WHERE = 'on this site';
 export const liveSpec = (db, project) => parseJson(db.get(`SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`,
   project.id, project.live_site_version)?.spec_json, null);
 
-function ipHash(db, ip) {
+export function ipHash(db, ip) {
   let salt = getSetting(db, 'tools.ip_salt', null);
   if (!salt) { salt = token(24); setSetting(db, 'tools.ip_salt', salt, 'system'); }
   return createHmac('sha256', salt).update(String(ip)).digest('base64url').slice(0, 22);
@@ -79,7 +80,7 @@ export function signText({ host, origin, wallet, summary, action, nonce, issuedA
     'This is a message, not a transaction: it moves no funds, costs nothing and gives no one access to your wallet.', '',
     `URI: ${origin}/`, `Action: ${action}`, `Nonce: ${nonce}`, `Issued At: ${new Date(issuedAt).toISOString()}`, `Expiration Time: ${new Date(expiresAt).toISOString()}`].join('\n');
 }
-function issue(db, project, site, { wallet, action, payload, summary }, t) {
+export function issue(db, project, site, { wallet, action, payload, summary }, t) {
   if (!isSolanaAddress(wallet)) throw new HttpError(400, 'bad_wallet', 'not a Solana address');
   db.run('DELETE FROM tool_nonces WHERE expires_at < ?', t - 3_600_000);
   const nonce = token(16), expiresAt = t + LIMITS.nonceTtlMs;
@@ -89,7 +90,7 @@ function issue(db, project, site, { wallet, action, payload, summary }, t) {
   return { nonce, message, expiresAt };
 }
 /** Burns the nonce on the first attempt (a replay fails even if this one fails below), then checks everything. */
-function consume(db, project, { wallet, nonce, signature, action, payload }, t) {
+export function consume(db, project, { wallet, nonce, signature, action, payload }, t) {
   let sig;
   try { sig = b58decode(String(signature)); } catch { throw new HttpError(401, 'bad_signature'); }
   const row = db.get('SELECT * FROM tool_nonces WHERE nonce = ? AND project_id = ?', String(nonce ?? ''), project.id);
@@ -103,7 +104,7 @@ function consume(db, project, { wallet, nonce, signature, action, payload }, t) 
 }
 
 // --- reading -------------------------------------------------------------------------------------------------------
-const launchOf = (db, project) => db.get('SELECT mint, network, provider, verified_at FROM launches WHERE project_id = ?', project.id);
+export const launchOf = (db, project) => db.get('SELECT mint, network, provider, verified_at FROM launches WHERE project_id = ?', project.id);
 const num = (x) => (typeof x === 'number' && Number.isFinite(x) ? x : null);
 
 /** The token panel: stored numbers only (coin-stats.js fills them; this never calls out). No number -> null -> "—". */
@@ -172,9 +173,12 @@ export function eventNext(conf, t = now()) {
 /** `limit(rule, key)` is app.js's rate limiter. Returns handle(ctx) -> {status, body, headers?}. */
 export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
   const isHolder = createHolderCheck({ cfg, fetchImpl });
+  // the idea app's endpoints (/_api/app*, app-api.js) share the signing, the caps and the holder checks
+  const appApi = createAppApi({ db, cfg, fetchImpl, limit, h: { issue, consume, ipHash, launchOf, holderMode, isHolder } });
+  // a tool's config: the site's tool, or the app's block of the same kind (the app's map is the map tool)
   const conf = (spec, tool) => {
-    const t = toolOf(spec, tool);
-    if (!t) throw new HttpError(404, 'tool_off', `this site has no ${tool} tool`);
+    const t = toolOf(spec, tool) || (tool === 'map' ? { config: (spec.app?.screens || []).flatMap((x) => x.blocks).find((b) => b.type === 'map') } : null);
+    if (!t?.config) throw new HttpError(404, 'tool_off', `this site has no ${tool} tool`);
     return t.config;
   };
   // a holders-only write: the signature is required and checked first; then the chain (when the server can read it)
@@ -198,6 +202,11 @@ export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
     const spec = liveSpec(db, project);
     if (!spec) throw new HttpError(404, 'not_found');
     const route = `${method} ${path}`;
+    if (path === '/_api/app' || path.startsWith('/_api/app/')) {
+      limit(method === 'GET' ? 'siteRead' : 'siteWrite', ip);
+      if (method !== 'GET' && method !== 'POST') throw new HttpError(405, 'method_not_allowed');
+      return appApi.handle({ project, spec, method, path, ip, query, body, t });
+    }
     if (method === 'GET') {
       limit('siteRead', ip);
       switch (path) {
@@ -219,9 +228,9 @@ export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
     switch (route) {
       case 'POST /_api/sign': {
         limit('siteSign', ip);
-        const make = intents[b.action];
-        if (!make) throw new HttpError(400, 'bad_action', `action: ${Object.keys(intents).join(' | ')}`);
-        const { payload, summary } = make(spec, b);
+        const make = intents[b.action] || appApi.intents[b.action];
+        if (!make) throw new HttpError(400, 'bad_action', `action: ${[...Object.keys(intents), ...Object.keys(appApi.intents)].join(' | ')}`);
+        const { payload, summary } = make(spec, b, project, t);
         return { body: issue(db, project, site, { wallet: String(b.wallet || ''), action: b.action, payload, summary }, t) };
       }
       case 'POST /_api/wall': {

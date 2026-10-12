@@ -1,3 +1,4 @@
+@import "../app/app.css"; /* the idea app (docs/APP-COMPOSER.md) */
 /* SUBZERONE site kit v1 stylesheet (docs/SITE-KIT.md). Shared by every coin site; the page's own <style> sets only
    --ac / --ac2 (the coin's palette, from SUB-01's brain record). Fonts are served from this host (/_kit/fonts):
    Archivo and JetBrains Mono, SIL OFL 1.1. The looks (gradient title, bento grid, glass cards, shimmer button,

@@ -8,13 +8,14 @@
   "kaplay": "kaplay-3001.0.19.js",
   "uplot": "uplot-1.6.32.js",
   "uplotCss": "uplot-1.6.32.css",
-  "qrcode": "qrcode-2.0.4.js"
+  "qrcode": "qrcode-2.0.4.js",
+  "pq": "noble-post-quantum-0.7.1.js"
  },
  "files": {
   "LICENSES.txt": {
-   "bytes": 20477,
-   "gzip": 3944,
-   "sha256": "87f898c7daf161f1147e51755585cfd10e3498e37fe2fddbc422043e3584efb7"
+   "bytes": 25952,
+   "gzip": 4176,
+   "sha256": "e3a5b889908309ace1d4939debad5ce295fede10ca16b33228b90e326414e8bd"
   },
   "fonts/archivo-400.woff2": {
    "bytes": 14700,
@@ -41,15 +42,20 @@
    "gzip": 21936,
    "sha256": "d0d4e818808f2a0ba39b2b09d1989366f63494e295f003c7ef436697378507e8"
   },
+  "site-app.v1.js": {
+   "bytes": 29630,
+   "gzip": 11543,
+   "sha256": "48a6549a1e899ab7c3820b9b7f4cad8661fd4ab0ee2d614e0d5ad7e489a235d2"
+  },
   "site-kit.v1.css": {
-   "bytes": 10696,
-   "gzip": 3169,
-   "sha256": "4b25e4e1ab459fcff7250d570629dc6d455258a539fc5cce91574e796062acb5"
+   "bytes": 15469,
+   "gzip": 4101,
+   "sha256": "823532b547e04fe1d09440ef0098590ce4f1ce2b5a9dd7a9b52085e4b6249be1"
   },
   "site-kit.v1.js": {
-   "bytes": 33230,
-   "gzip": 13747,
-   "sha256": "0124c6e767d90866f5af9be87a45f0906459936738a199a22d791e1693dde92f"
+   "bytes": 34337,
+   "gzip": 14239,
+   "sha256": "1d2e30a2be96d3070183c8ba4edabf42f66b131e0a717511732995dbfdca4a78"
   },
   "vendor/anime-4.5.0.js": {
    "bytes": 39995,
@@ -70,6 +76,11 @@
    "bytes": 150351,
    "gzip": 43433,
    "sha256": "84a944a660a37e6c547f959bb3e30cd57c99c0c0f0e63836b9698c6bab66b6f5"
+  },
+  "vendor/noble-post-quantum-0.7.1.js": {
+   "bytes": 23726,
+   "gzip": 9219,
+   "sha256": "099775cd6ae9448669001d64b41635f9658ba13a596b7e296dd59fbdf0070a18"
   },
   "vendor/qrcode-2.0.4.js": {
    "bytes": 20808,

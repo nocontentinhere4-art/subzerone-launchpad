@@ -14,6 +14,7 @@ import { enqueue, retryDead, cancelJobs } from './jobs.js';
 import { buildSiteVersion, setLiveVersion, siteCspFor } from './site.js';
 import { CATALOG, EXTRAS, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
 import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
+import { registerAppRoutes } from './app-api.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
@@ -328,6 +329,8 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     limit('write', u.wallet);
     return moderateEntry(db, p, ctx.params.id, await ctx.body(1_000), `${owner ? 'wallet' : 'admin'}:${u.wallet}`);
   });
+  // the idea app (app-api.js, docs/APP-COMPOSER.md): the owner's App section in the room PC
+  registerAppRoutes(r, { db, cfg, fetchImpl, limit, toolsProject, ownedProject, TOOL_STATES, liveSpec, currentVersion });
 
   // previews: same origin, served with CSP "sandbox" (opaque origin, no scripts). The sandboxed page cannot send the
   // session cookie, so its address carries a short-lived signed capability instead (issued to viewers who may see it).
@@ -916,7 +919,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   // the kit's files (public/_kit, built by kit/build.mjs and committed): on every project host, and on the launchpad
   // origin for the preview's stylesheet and fonts. Read once, kept in memory. Versioned vendor files never change.
   const KIT_DIR = join(PUBLIC, '_kit');
-  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
+  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|site-app\.v1\.js|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
   const KIT_TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
   const kitCache = new Map();
   function serveKit(req, res, path) {

@@ -9,7 +9,7 @@ import { animate } from 'motion/mini';
 import { inView, stagger } from 'motion';
 
 /* global __VENDOR__ */
-const VENDOR = __VENDOR__;                                   // {anime, leaflet, leafletCss, tone, kaplay, uplot, uplotCss, qrcode}: file names (build.mjs)
+const VENDOR = __VENDOR__;                                   // {anime, leaflet, leafletCss, tone, kaplay, uplot, uplotCss, qrcode, pq}: file names (build.mjs)
 const doc = document, win = window;
 const reduce = (() => { try { return win.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; } })();
 const DASH = '—';
@@ -474,5 +474,10 @@ function boot() {
   doc.documentElement.classList.add('kit');
   motionIn();
   for (const sec of doc.querySelectorAll('section[data-tool]')) hydrate(sec);
+  // the idea app (kit/app/*.js, docs/APP-COMPOSER.md): the same helpers, the same text-only rules
+  const K = { h, api, signed, save, vendor, msg, say, busy, explain, store, slideIn, tick, TOOLS };
+  for (const sec of doc.querySelectorAll('section[data-app]')) import(/* @vite-ignore */ '/_kit/site-app.v1.js').then((m) => m.hydrateApp(sec, K)).catch((e) => {
+    const n = sec.querySelector('[data-static]'); if (n) n.textContent = `The app could not load right now (${e?.message || 'error'}).`;
+  });
 }
 if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', boot); else boot();
