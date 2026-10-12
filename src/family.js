@@ -157,7 +157,8 @@ export function treeView(db, cfg, project, t = Date.now()) {
 }
 
 function buildTree(db, cfg, root, t) {
-  const rows = familyRows(db, root).filter((r) => r.visibility === 'public' && (r.id === root.id || r.verified_at));
+  // the root is always there (its own preview site reads the tree before it is public); descendants: public and launched
+  const rows = familyRows(db, root).filter((r) => r.id === root.id || (r.visibility === 'public' && r.verified_at));
   const byId = new Map(rows.map((r) => [r.id, { ...r, kids: [] }]));
   for (const r of byId.values()) if (r.id !== root.id) byId.get(r.parent_project_id)?.kids.push(r);
   const inProgress = new Map();

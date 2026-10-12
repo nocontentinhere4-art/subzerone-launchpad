@@ -399,3 +399,13 @@ test('the built kit: the tree block is in the app module, text only, and the lau
   assert.ok(launchJs.includes('Make it a launchpad'));
   assert.ok(css.includes('.tr-kids') && css.includes('.tr-row'));
 });
+
+test('tree: a root still in private preview (not public yet) still has a tree, never a crash', async () => {
+  const { treeView } = await import('../src/family.js');
+  const rows = [];
+  const db = { all: (sql) => (/COUNT\(\*\)/.test(sql) ? [] : [{ id: 'r', slug: 'padpad', name: 'PadPad', ticker: 'PADPAD', parent_project_id: null, idea_id: 'i', live_site_version: 1, depth: 0, status: 'preview_ready', visibility: 'private', verified_at: null }]),
+    get: () => null };
+  const v = treeView(db, { projectsScheme: 'https', projectsHost: 'projects.example' }, { id: 'r', slug: 'padpad', parent_project_id: null });
+  assert.equal(v.focus, 'padpad');
+  void rows;
+});
