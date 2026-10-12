@@ -201,7 +201,9 @@ export function createSiteApi({ db, cfg, fetchImpl = fetch, limit }) {
 
   return async function handle({ project, site, method, path, ip, query, body }) {
     const t = now();
-    const spec = liveSpec(db, project);
+    // SUB-01's QA browser reads the candidate version it is checking (site-qa.js); everyone else the live one
+    const spec = site?.version ? parseJson(db.get(`SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, project.id, site.version)?.spec_json, null)
+      : liveSpec(db, project);
     if (!spec) throw new HttpError(404, 'not_found');
     const route = `${method} ${path}`;
     if (path === '/_api/app' || path.startsWith('/_api/app/')) {
@@ -316,7 +318,7 @@ export function moderateEntry(db, project, entryId, b, actor, t = now()) {
  * mutable after launch by design), set live and recorded publicly as "SUB-01 added tools". Idempotent: a live spec that
  * has a `tools` key at all (even [] after the author switched everything off) is left alone. */
 export async function backfillTools(db, cfg) {
-  const { buildSiteVersion, setLiveVersion } = await import('./site.js');
+  const { buildSiteVersion } = await import('./site.js');
   const { chooseTools } = await import('./generator.js');
   const out = { added: [], skipped: 0, failed: [] };
   const rows = db.all(`SELECT p.* FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN launches l ON l.project_id = p.id
@@ -329,7 +331,7 @@ export async function backfillTools(db, cfg) {
       const brain = parseJson(db.get(`SELECT brain_json FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, p.idea_id)?.brain_json, {});
       const tools = chooseTools(idea, brain, { name: spec.name });
       const site = await buildSiteVersion(db, cfg, p, { ...spec, tools }, 'system:sub01-tools');
-      setLiveVersion(db, p, site.version, 'system');
+      await (await import('./site-qa.js')).publishSite(db, cfg, p, site.version, 'system', { browser: false });   // boot: static QA
       audit(db, { actor: 'system', kind: 'tools', projectId: p.id, ideaId: p.idea_id, isPublic: true,
         message: `SUB-01 added tools to the site: ${tools.map((x) => x.id).join(', ')} (site v${site.version})` });
       out.added.push({ slug: p.slug, version: site.version, tools: tools.map((x) => x.id) });

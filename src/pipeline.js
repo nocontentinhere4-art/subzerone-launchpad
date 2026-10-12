@@ -14,7 +14,8 @@ import { generate, estimateCostUsd , networkLabel } from './generator.js';
 import { logoPng, bannerSvg } from './art.js';
 import { makeCoinArt, slugBase } from './coinart.js';
 import { bannerCredit } from './site.js';
-import { buildSiteVersion, setLiveVersion } from './site.js';
+import { buildSiteVersion } from './site.js';
+import { publishSite } from './site-qa.js';
 import { planAccount, publishPost } from './x.js';
 import { buildLaunchConfig, configHash, confirmIntent, confirmDevBuy, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
@@ -198,9 +199,9 @@ export const handlers = {
     });
     ctx.progress('building the website in the sandbox');
     const site = await buildSiteVersion(db, cfg, project, spec, 'system');
-    setLiveVersion(db, project, site.version, 'system');
+    const pub = await publishSite(db, cfg, project, site.version, 'system');   // the first version goes live; the QA report rides along
     transition(db, ideaId, 'generating', 'preview_ready', { actor: 'system', note: 'preview ready: review the site, the X drafts and the fee split' });
-    return { project: project.id, site: site.version };
+    return { project: project.id, site: site.version, qa: pub.qa?.line };
   },
 
   child_build: (ctx) => childBuild(ctx),
@@ -211,8 +212,17 @@ export const handlers = {
     if (!project) throw new Permanent('project not found');
     const last = db.get(`SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?`, project.id, project.live_site_version);
     const site = await buildSiteVersion(db, cfg, project, parseJson(last.spec_json), 'system');
-    setLiveVersion(db, project, site.version, 'system');
-    return { version: site.version };
+    const pub = await publishSite(db, cfg, project, site.version, 'system');
+    return { version: site.version, live: pub.live, qa: pub.qa?.line };
+  },
+
+  // SUB-01's QA of the live version again (site-qa.js): after a boot refresh, or asked for; the version stays live
+  async site_qa(ctx) {
+    const { db, cfg } = ctx;
+    const project = db.get('SELECT * FROM projects WHERE id = ?', ctx.job.project_id);
+    if (!project?.live_site_version) return { skipped: 'nothing live' };
+    const pub = await publishSite(db, cfg, project, project.live_site_version, 'system:qa');
+    return { version: project.live_site_version, qa: pub.qa?.line };
   },
 
   async prepare_launch(ctx) {

@@ -279,7 +279,7 @@ export function createHolderTools({ db, cfg, fetchImpl = fetch, sleep, poll = PO
  * set live, audited publicly "SUB-01 added holder tools". Once per coin: a coin that has the audit line, already shows
  * all of them, or whose author switched every tool off (tools: []) is left alone. */
 export async function backfillHolderTools(db, cfg) {
-  const { buildSiteVersion, setLiveVersion } = await import('./site.js');
+  const { buildSiteVersion } = await import('./site.js');
   const { liveSpec } = await import('./tool-api.js');
   const out = { added: [], skipped: 0, failed: [] };
   const rows = db.all(`SELECT p.* FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN launches l ON l.project_id = p.id
@@ -292,7 +292,7 @@ export async function backfillHolderTools(db, cfg) {
     try {
       const tools = validateTools([...spec.tools, ...missing.map((id) => ({ id, config: defaultConfig(id, { name: spec.name }) }))]);
       const site = await buildSiteVersion(db, cfg, p, { ...spec, tools }, 'system:sub01-holder-tools');
-      setLiveVersion(db, p, site.version, 'system');
+      await (await import('./site-qa.js')).publishSite(db, cfg, p, site.version, 'system', { browser: false });   // boot: static QA
       audit(db, { actor: 'system', kind: 'tools', projectId: p.id, ideaId: p.idea_id, isPublic: true,
         message: `SUB-01 added holder tools to the site: ${missing.join(', ')} (site v${site.version})` });
       out.added.push({ slug: p.slug, version: site.version, tools: missing });

@@ -12,6 +12,7 @@ import { transition, LABELS, STAGES } from './states.js';
 import { audit, getSetting, setSetting, PAUSES, isPaused, backup } from './db.js';
 import { enqueue, retryDead, cancelJobs } from './jobs.js';
 import { buildSiteVersion, setLiveVersion, siteCspFor } from './site.js';
+import { publishSite, qaReports, overrideQa, qaTicket, qaShotPath } from './site-qa.js';
 import { CATALOG, EXTRAS, TRUST, LIBS, defaultConfig, validateTools, isToolError } from './tools.js';
 import { createSiteApi, liveSpec, ownerInbox, moderateEntry } from './tool-api.js';
 import { registerAppRoutes } from './app-api.js';
@@ -262,9 +263,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     if (Array.isArray(b.sections)) spec.sections = b.sections.slice(0, 5).map((s) => ({ heading: String(s.heading || '').replace(/[<>`]/g, '').slice(0, 60), body: String(s.body || '').replace(/[<>`]/g, '').slice(0, 700) }));
     try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
     const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
-    setLiveVersion(db, p, site.version, `wallet:${u.wallet}`);
-    db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', spec.name, spec.ticker, spec.description, now(), p.id);
-    return { version: site.version };
+    const pub = await publishSite(db, cfg, p, site.version, `wallet:${u.wallet}`);   // SUB-01's QA first (site-qa.js)
+    if (pub.live) db.run('UPDATE projects SET name = ?, ticker = ?, description = ?, submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', spec.name, spec.ticker, spec.description, now(), p.id);
+    return { version: site.version, live: pub.live, qa: pub.qa };
   });
   r.post('/api/projects/:slug/site/live', async (ctx) => {
     const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
@@ -277,6 +278,34 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     }
     return { ok: true };
   });
+  // --- SUB-01's QA of the site versions (site-qa.js, docs/SITE-QA.md): the room PC's Site tab ------------------------
+  const qaProject = (ctx) => { const v = visibleProject(ctx, ctx.params.slug); if (!v || !(v.owner || isStaff(ctx.user))) throw new HttpError(404, 'not_found'); return v; };
+  r.get('/api/projects/:slug/site/qa', (ctx) => {
+    const { p } = qaProject(ctx);
+    const fresh = projectBySlug(p.slug);
+    return { liveSiteVersion: fresh.live_site_version, reports: qaReports(db, fresh, 5) };
+  });
+  r.post('/api/projects/:slug/site/qa/:version/override', async (ctx) => {
+    const { p, idea, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    if (!['preview_ready', 'launched'].includes(idea.status)) throw new HttpError(409, 'locked', 'the live version can change while the preview is open, or after launch');
+    const qa = overrideQa(db, p, Number(ctx.params.version), `wallet:${u.wallet}`);
+    if (idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
+    return { ok: true, qa };
+  });
+  r.post('/api/projects/:slug/site/qa/recheck', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    if (!p.live_site_version) throw new HttpError(409, 'no_site', 'nothing is live yet');
+    return publishSite(db, cfg, p, p.live_site_version, `wallet:${u.wallet}`);   // the live version again: it stays live
+  });
+  r.get('/api/projects/:slug/site/qa/:version/:shot', (ctx) => {
+    const { p } = qaProject(ctx);
+    const file = qaShotPath(cfg, db, p, Number(ctx.params.version), String(ctx.params.shot));
+    if (!file) throw new HttpError(404, 'not_found');
+    return ctx.raw(200, readFileSync(file), { 'content-type': 'image/jpeg', 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+  });
+
   // --- the site kit's tools, the author's side (tools.js, tool-api.js; docs/SITE-KIT.md) -------------------------------
   // Editable while the preview is open and after launch (between approval and launch the site is frozen: review #5).
   const TOOL_STATES = ['preview_ready', 'launched'];
@@ -320,11 +349,11 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const spec = { ...cur, tools };
     try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
     const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
-    setLiveVersion(db, p, site.version, `wallet:${u.wallet}`);
-    if (idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
+    const pub = await publishSite(db, cfg, p, site.version, `wallet:${u.wallet}`);   // SUB-01's QA first (site-qa.js)
+    if (pub.live && idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
     audit(db, { actor: `wallet:${u.wallet}`, kind: 'tools', projectId: p.id, ideaId: idea.id, isPublic: true,
-      message: `Site tools set by the author: ${tools.map((t) => t.id).join(', ') || 'none'} (site v${site.version})` });
-    return { version: site.version, tools };
+      message: `Site tools set by the author: ${tools.map((t) => t.id).join(', ') || 'none'} (site v${site.version}${pub.live ? '' : ', held back by the QA'})` });
+    return { version: site.version, tools, live: pub.live, qa: pub.qa };
   });
   r.post('/api/projects/:slug/tools/entries/:id', async (ctx) => {
     const { p, u, owner } = toolsProject(ctx, ctx.params.slug, { staffToo: true });
@@ -942,7 +971,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   // the kit's files (public/_kit, built by kit/build.mjs and committed): on every project host, and on the launchpad
   // origin for the preview's stylesheet and fonts. Read once, kept in memory. Versioned vendor files never change.
   const KIT_DIR = join(PUBLIC, '_kit');
-  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|site-app\.v1\.js|site-launch\.v1\.js|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
+  const KIT_FILE = /^\/_kit\/(site-kit\.v1\.(?:js|css)|site-kit\.v2\.css|site-app\.v1\.js|site-launch\.v1\.js|LICENSES\.txt|fonts\/[a-z0-9-]+\.woff2|vendor\/[a-z0-9.-]+\.(?:js|css))$/;
   const KIT_TYPES = { '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
   const kitCache = new Map();
   function serveKit(req, res, path) {
@@ -1008,11 +1037,16 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const p = /^[a-z0-9-]{1,40}$/.test(slug) && projectBySlug(slug);
     const idea = p && db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id);
     const ctx = { raw: (status, body, headers) => { res.writeHead(status, headers); res.end(body); } };
-    if (!p || idea.visibility !== 'public' || !p.live_site_version) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+    // SUB-01's QA browser (site-qa.js) renders a candidate version before it goes live: a single-use ticket header,
+    // that one version only, reads only (no writes through /_api), nothing cached
+    const qa = p && req.headers['x-sub01-qa'] ? qaTicket(db, p, String(req.headers['x-sub01-qa'])) : null;
+    if (!p || (!qa && (idea.visibility !== 'public' || !p.live_site_version))) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
     if (path.startsWith('/_kit/')) return serveKit(req, res, path);
-    if (path.startsWith('/_api/')) return siteApiRoute(req, res, p, { host, origin: `${cfg.projectsScheme}://${host}` }, url);
+    if (qa && req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(403, { 'content-type': 'application/json' }); return res.end('{"error":"qa_read_only"}'); }
+    if (path.startsWith('/_api/')) return siteApiRoute(req, res, p, { host, origin: `${cfg.projectsScheme}://${host}`, ...(qa ? { version: qa.version } : {}) }, url);
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { 'content-type': 'text/plain', allow: 'GET, HEAD' }); return res.end('method not allowed'); }
-    try { serveSiteFile(ctx, p, p.live_site_version, path === '/' ? 'index.html' : path.slice(1), false); } catch { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); }
+    const qctx = qa ? { raw: (status, body, headers) => ctx.raw(status, body, { ...headers, 'cache-control': 'no-store' }) } : ctx;
+    try { serveSiteFile(qctx, p, qa ? qa.version : p.live_site_version, path === '/' ? 'index.html' : path.slice(1), false); } catch { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('not found'); }
   }
 
   // --- static files ---------------------------------------------------------------------------------------------------

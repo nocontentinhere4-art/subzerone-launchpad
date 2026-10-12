@@ -190,7 +190,8 @@ export async function childBuild(ctx) {
   const { templateGenerate, chooseTools, validateSpec, brainNote } = await import('./generator.js');
   const { composeRules, toolsBeside } = await import('./composer.js');
   const { bannerSvg } = await import('./art.js');
-  const { bannerCredit, buildSiteVersion, setLiveVersion } = await import('./site.js');
+  const { bannerCredit, buildSiteVersion } = await import('./site.js');
+  const { publishSite } = await import('./site-qa.js');
   const { uniqueSlug } = await import('./pipeline.js');
   const v = currentVersion(db, ideaId);
   const evaluation = db.get(`SELECT * FROM evaluations WHERE idea_id = ? AND decision = 'selected' ORDER BY created_at DESC LIMIT 1`, ideaId);
@@ -235,7 +236,7 @@ export async function childBuild(ctx) {
   });
   ctx.progress('building the website in the sandbox');
   const site = await buildSiteVersion(db, cfg, project, spec, 'system');
-  setLiveVersion(db, project, site.version, 'system');
+  await publishSite(db, cfg, project, site.version, 'system');   // the first version goes live; SUB-01's QA report rides along
   db.tx(() => {
     transition(db, ideaId, 'generating', 'preview_ready', { actor: 'system', note: 'site built; the creator approved the split when they signed' });
     const p = db.get('SELECT * FROM projects WHERE id = ?', project.id);

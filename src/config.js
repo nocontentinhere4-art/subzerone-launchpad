@@ -124,6 +124,10 @@ export function loadConfig(env = process.env) {
     onchain: { rpcUrl: e('ONCHAIN_RPC_URL'), dailyCalls: num('ONCHAIN_DAILY_CALLS', 15000), txPerPoll: num('ONCHAIN_TX_PER_POLL', 30),
       minGapMs: e('ONCHAIN_MIN_GAP_MS') ? num('ONCHAIN_MIN_GAP_MS', 110) : null },     // pacing between calls; default by endpoint
     backups: { keep: num('BACKUP_KEEP', 14), everyHours: num('BACKUP_EVERY_HOURS', 24) },
+    // SUB-01's QA gate for new site versions (site-qa.js, docs/SITE-QA.md). browser: 'auto' finds a Chromium (the image
+    // ships Debian's), 'off' runs the static checks only, or a path. Default: auto in production builds, off elsewhere.
+    siteQa: { gate: e('SITE_QA_GATE', '1') !== '0', browser: e('SITE_QA_BROWSER', e('NODE_ENV') === 'production' ? 'auto' : 'off'),
+      timeoutMs: num('SITE_QA_TIMEOUT_MS', 60000), keep: num('SITE_QA_KEEP', 3) },
     // the app composer's dev-only "reveal now" trigger (app-api.js); refused in production whatever the variable says
     appDevTrigger: e('APP_DEV_TRIGGER') === '1' && deployEnv !== 'production',
     // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it

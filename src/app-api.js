@@ -399,16 +399,16 @@ export function registerAppRoutes(r, deps) {
         throw new HttpError(409, 'launch_locked', 'only a launchpad idea gets the launch block');
       }
     }
-    const { buildSiteVersion, setLiveVersion } = await import('./site.js');
+    const { buildSiteVersion } = await import('./site.js');
     const { validateSpec } = await import('./generator.js');
     const cur = liveSpec(db, p), spec = { ...cur };
     spec.app = app;                                      // null = switched off by the author (the backfill leaves it alone)
     try { validateSpec(spec); } catch (e) { throw new HttpError(400, 'invalid', e.message.replace('generated spec invalid: ', '')); }
     const site = await buildSiteVersion(db, cfg, p, spec, `wallet:${u.wallet}`);
-    setLiveVersion(db, p, site.version, `wallet:${u.wallet}`);
-    if (idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
+    const pub = await (await import('./site-qa.js')).publishSite(db, cfg, p, site.version, `wallet:${u.wallet}`);   // SUB-01's QA first
+    if (pub.live && idea.status === 'preview_ready') db.run('UPDATE projects SET submitter_approved_at = NULL, admin_cleared_at = NULL, admin_cleared_by = NULL, updated_at = ? WHERE id = ?', now(), p.id);
     audit(db, { actor: `wallet:${u.wallet}`, kind: 'app', projectId: p.id, ideaId: idea.id, isPublic: true, message: app ? `App edited by the author: ${describeApp(app)} (site v${site.version})` : `App switched off by the author (site v${site.version})` });
-    return { version: site.version, app };
+    return { version: site.version, app, live: pub.live, qa: pub.qa };
   });
   r.post('/api/projects/:slug/app/items/:id', async (ctx) => {
     const { p, u, owner } = toolsProject(ctx, ctx.params.slug, { staffToo: true });
@@ -447,7 +447,7 @@ export function registerAppRoutes(r, deps) {
  * tools the app supersedes switched off, recorded publicly as "SUB-01 built the app". Idempotent: a spec with an `app`
  * key at all (even null, the author's "off") is left alone. */
 export async function backfillApps(db, cfg, { fetchImpl = fetch } = {}) {
-  const { buildSiteVersion, setLiveVersion } = await import('./site.js');
+  const { buildSiteVersion } = await import('./site.js');
   const { composeApp, toolsBeside } = await import('./composer.js');
   const { liveSpec } = await import('./tool-api.js');
   const out = { built: [], skipped: 0, failed: [] };
@@ -462,7 +462,7 @@ export async function backfillApps(db, cfg, { fetchImpl = fetch } = {}) {
       const c = await composeApp(idea, brain, { name: spec.name, ticker: spec.ticker, cfg, fetchImpl });
       const next = { ...spec, app: c.app, ...(Array.isArray(spec.tools) ? { tools: toolsBeside(spec.tools, c.app) } : {}) };
       const site = await buildSiteVersion(db, cfg, p, next, 'system:sub01-app');
-      setLiveVersion(db, p, site.version, 'system');
+      await (await import('./site-qa.js')).publishSite(db, cfg, p, site.version, 'system', { browser: false });   // boot: static QA
       const off = (spec.tools || []).map((x) => x.id).filter((x) => !(next.tools || []).some((y) => y.id === x));
       audit(db, { actor: 'system', kind: 'app', projectId: p.id, ideaId: p.idea_id, isPublic: true,
         message: `SUB-01 built the app: ${c.summary} (site v${site.version}${off.length ? `; replaces ${off.join(', ')}` : ''})`, data: { kind: c.app.kind, source: c.source, honest: c.honest } });
