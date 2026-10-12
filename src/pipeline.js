@@ -243,7 +243,7 @@ export const handlers = {
     if (!project) throw new Permanent('project not found');
     const last = db.get(`SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?`, project.id, project.live_site_version);
     const site = await buildSiteVersion(db, cfg, project, parseJson(last.spec_json), 'system');
-    const pub = await publishSite(db, cfg, project, site.version, 'system');
+    const pub = await publishSite(db, cfg, project, site.version, 'system', { mustPublish: ctx.payload?.reason === 'launched' });
     return { version: site.version, live: pub.live, qa: pub.qa?.line };
   },
 

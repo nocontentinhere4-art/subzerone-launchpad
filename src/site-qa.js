@@ -256,7 +256,7 @@ function pruneShots(cfg, db, project) {
  * setLiveVersion right after buildSiteVersion call this instead. opts.browser false: static checks only (boot backfills).
  * -> {live: boolean, qa: report view}
  */
-export async function publishSite(db, cfg, project, version, actor, { browser = true } = {}) {
+export async function publishSite(db, cfg, project, version, actor, { browser = true, mustPublish = false } = {}) {
   const row = db.get(`SELECT html, spec_json FROM site_versions WHERE project_id = ? AND version = ? AND build_status = 'ok'`, project.id, version);
   if (!row) throw new HttpError(404, 'no_such_version', 'that version did not build');
   const t0 = Date.now(), qaId = id('qa');
@@ -289,7 +289,10 @@ export async function publishSite(db, cfg, project, version, actor, { browser = 
   const warnings = [...st.warnings.map((x) => ({ viewport: 'html', ...x })), ...br.warnings];
   const prev = db.get('SELECT live_site_version v FROM projects WHERE id = ?', project.id)?.v ?? null;
   const gate = cfg.siteQa?.gate !== false;
-  const hold = gate && issues.length > 0 && prev != null && prev !== version;
+  // mustPublish: a rebuild that only brings the site up to date with the chain (the coin was launched): an older version
+  // saying "not launched" is worse than any QA issue, so it goes live and the issues stay in the report
+  const hold = gate && !mustPublish && issues.length > 0 && prev != null && prev !== version;
+  if (issues.length) log.warn('site-qa issues', { slug: project.slug, version, held: hold, issues: issues.slice(0, 5).map((x) => `${x.viewport || ''}: ${String(x.text || x.message || '').slice(0, 160)}`) });
   const report = { static: { passed: st.passed }, browser: { state: browserState, note: browserNote, viewports: br.viewports, ms: br.ms }, issues, warnings };
   db.run(`UPDATE site_qa SET status = ?, browser = ?, browser_note = ?, issues = ?, warnings = ?, report_json = ?, shots_json = ?, held = ?, ticket_hash = NULL,
             ticket_until = NULL, runtime_ms = ?, finished_at = ? WHERE id = ?`,
@@ -302,7 +305,7 @@ export async function publishSite(db, cfg, project, version, actor, { browser = 
   } else if (prev !== version) {                        // a recheck of the live version leaves it where it is
     setLiveVersion(db, project, version, actor);
     if (issues.length) audit(db, { actor: 'system', kind: 'site', projectId: project.id, ideaId: project.idea_id,
-      message: `Website version ${version} is live with QA issues (${summary}): ${prev == null ? 'the first version' : 'the gate is off'}`, data: issues.slice(0, 10) });
+      message: `Website version ${version} is live with QA issues (${summary}): ${prev == null ? 'the first version' : mustPublish ? 'it brings the site up to date with the launch' : 'the gate is off'}`, data: issues.slice(0, 10) });
   }
   try { pruneShots(cfg, db, { ...project, live_site_version: hold ? prev : version }); } catch (e) { log.warn('site-qa prune', { error: e.message }); }
   return { live: !hold, qa: qaView(db.get('SELECT * FROM site_qa WHERE id = ?', qaId)) };
