@@ -64,9 +64,9 @@
    "sha256": "c8defa0072dcfb7e2dffd406d119e56f739bde5c699a1d8427a5f44c49b08c10"
   },
   "site-kit.v2.css": {
-   "bytes": 33572,
-   "gzip": 7729,
-   "sha256": "ee1ce409c5a3769b2b3776348c15bbbe9de8e85acebfb717b3baf2c9a1ddf384"
+   "bytes": 33850,
+   "gzip": 7780,
+   "sha256": "94688a499b03eb5a0c25cc5d925f7643ec68b1e4faeff7b4109de4f467ef1da9"
   },
   "site-launch.v1.js": {
    "bytes": 16230,

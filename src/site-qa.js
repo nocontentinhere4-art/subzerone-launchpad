@@ -110,6 +110,12 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
         }, HYDRATE_MS);
         v.checks.hydrated = { sections: hyd.total, ms: hyd.ms, notLive: hyd.notLive.length };
         for (const s of hyd.notLive) fail('hydration', `${s.id} did not load${s.note ? `: ${s.note}` : ' within 8 s'}`);
+        // lazy images load now (a visitor scrolling would load them); then give every image up to 3 s
+        await page.evaluate(async () => {
+          for (const i of document.images) if (i.loading === 'lazy') i.loading = 'eager';
+          await Promise.race([Promise.all([...document.images].filter((i) => i.getAttribute('src') && !i.complete).map((i) => new Promise((r) => { i.addEventListener('load', r, { once: true }); i.addEventListener('error', r, { once: true }); }))),
+            new Promise((r) => setTimeout(r, 3000))]);
+        });
         await page.waitForTimeout(250);
         const r = await page.evaluate(() => {
           const W = innerWidth, H = innerHeight, out = {};
@@ -130,10 +136,31 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
             const ix = Math.min(a.x + a.w, c.x + c.w) - Math.max(a.x, c.x), iy = Math.min(a.y + a.h, c.y + c.h) - Math.max(a.y, c.y);
             if (ix > 2 && iy > 2) { out.overlaps.push(`${name(a.el)} × ${name(c.el)}`); if (out.overlaps.length >= 5) break; }
           }
+          // the hero's words must sit on the art's empty part: sample the banner under each text box (object-fit: cover,
+          // anchored right, as the stylesheet draws it); more than 2% light pixels under a box is text over the drawing
+          out.overArt = [];
+          const art = document.querySelector('.hero-art');
+          if (art && art.complete && art.naturalWidth && getComputedStyle(art).position === 'absolute') {
+            try {
+              const A = art.getBoundingClientRect(), iw = art.naturalWidth, ih = art.naturalHeight, sc = Math.max(A.width / iw, A.height / ih);
+              const ox = A.width - iw * sc, oy = (A.height - ih * sc) / 2;
+              const cv = document.createElement('canvas'); cv.width = Math.round(A.width); cv.height = Math.round(A.height);
+              const g = cv.getContext('2d', { willReadFrequently: true }); g.drawImage(art, ox, oy, iw * sc, ih * sc);
+              for (const el of document.querySelectorAll('.hero-in h1, .hero-pitch, .hero-cta .btn, .ca-chip, .hero-k')) {
+                if (!vis(el)) continue;
+                const r = el.getBoundingClientRect(), x = Math.max(0, Math.round(r.left - A.left)), y = Math.max(0, Math.round(r.top - A.top));
+                const w = Math.min(cv.width - x, Math.round(r.width)), hh = Math.min(cv.height - y, Math.round(r.height)); if (w < 2 || hh < 2) continue;
+                const d = g.getImageData(x, y, w, hh).data; let lit = 0;
+                for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 3 * 110) lit++;
+                if (lit / (d.length / 4) > 0.02) out.overArt.push(`${name(el)} (${Math.round(100 * lit / (d.length / 4))}% of it over the drawing)`);
+              }
+            } catch (e) { out.overArt.push(`could not read the banner (${e.message})`); }
+          }
           // images (map tiles are the map library's business)
           const imgs = [...document.images].filter((i) => !i.closest('.leaflet-container'));
           out.images = imgs.length;
-          out.broken = imgs.filter((i) => !i.complete || i.naturalWidth === 0).map((i) => i.getAttribute('src') || '(no src)').slice(0, 5);
+          // an <img> kept hidden until it has something to show (a file preview) is not broken
+          out.broken = imgs.filter((i) => (i.getAttribute('src') || vis(i)) && (!i.complete || i.naturalWidth === 0)).map((i) => i.getAttribute('src') || '(no src)').slice(0, 5);
           out.noAlt = imgs.filter((i) => !i.hasAttribute('alt')).map((i) => i.getAttribute('src') || '(no src)').slice(0, 5);
           // the one action: the hero's CTA above the fold, else the phone action bar
           const cta = document.querySelector('.hero-cta .btn-primary'), dock = document.querySelector('.dock .btn-primary');
@@ -163,6 +190,7 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
         if (r.scrollWidth > vp.width + 1) fail('overflow', `the page is ${r.scrollWidth}px wide at ${vp.width}px${r.overflow.length ? `: ${r.overflow.join('; ')}` : ''}`);
         for (const x of r.outside) fail('in-viewport', `${x} sticks out of the screen`);
         for (const x of r.overlaps) fail('overlap', `${x} overlap`);
+        for (const x of r.overArt) fail('text-over-art', `${x}`);
         for (const x of r.broken) fail('images', `image did not load: ${x}`);
         for (const x of r.noAlt) fail('alt', `image without alt: ${x}`);
         if (vp.isMobile && r.cta === 'below the fold') fail('cta-fold', 'the main action is below the fold on a phone');

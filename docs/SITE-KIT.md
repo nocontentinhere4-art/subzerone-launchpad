@@ -49,7 +49,7 @@ sandbox allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sand
 What makes it safe to run script at all:
 
 - **Only our script runs.** The generated HTML is still script-free: `validateHtml` allows exactly two strings, the
-  kit stylesheet `<link rel="stylesheet" href="/_kit/site-kit.v1.css">` once in the head and the kit script
+  kit stylesheet `<link rel="stylesheet" href="/_kit/site-kit.v2.css">` (v2 since the 2026-10-12 redesign, docs/DESIGN.md; pages built before keep linking v1, still served) once in the head and the kit script
   `<script src="/_kit/site-kit.v1.js" defer></script>` once, directly before `</body>`. Any other `<script>`, `<link>`,
   inline handler, `javascript:` URL, foreign `src`, a second copy of the kit, the kit with a body, or the kit anywhere
   else is refused, as before (tests: `validateHtml allows exactly the kit…`).
@@ -246,8 +246,9 @@ stylesheet and fonts. Nothing private is ever served under `/_kit`. An incompati
 | File | Raw | gzip | Loaded when |
 |---|---:|---:|---|
 | `site-kit.v1.js` (core + Motion mini) | 33.2 KB | 13.7 KB | every site with tools |
-| `site-kit.v1.css` | 10.7 KB | 3.2 KB | every site |
-| `fonts/*.woff2` (Archivo 400/700/800, JetBrains Mono 400/700) | 86.7 KB | — | every site (browser fetches the weights used) |
+| `site-kit.v2.css` (docs/DESIGN.md) | 33.9 KB | 7.8 KB | every site built since 2026-10-12 |
+| `fonts/inter-var.woff2` + `jetbrains-mono-400/700.woff2` (subset, kit/fonts/subset.sh) | 57.9 KB | — | every site |
+| `site-kit.v1.css` + `fonts/archivo-*.woff2` (frozen, kit/legacy) | 22.0 + 43.6 KB | 5.4 KB | pages built before the redesign |
 | `vendor/anime-4.5.0.js` | 40.0 KB | 15.9 KB | number tickers and poll bars (skipped with reduced motion) |
 | `vendor/qrcode-2.0.4.js` | 20.8 KB | 7.6 KB | on "QR" in the token panel |
 | `vendor/leaflet-1.9.4.js` + css | 150.4 + 14.8 KB | 43.4 + 3.5 KB | map sites |
@@ -274,14 +275,11 @@ Tone on a `clockSource: 'timeout'` context instead; `worker-src` stays closed on
 
 ## Motion and looks
 
-- **Motion** (`motion/mini`, WAAPI): hero entrance (staggered), cards revealing on scroll (`inView`), new wall notes
-  sliding in, sparkline fade. **anime.js**: number tickers in the token panel and the poll bars. CSS: the gradient
-  title, the ticker strip marquee, the shimmer on buttons, hover / press micro-interactions. `prefers-reduced-motion`
-  turns all of it off (anime.js is not even loaded; CSS animations and transitions stop).
-- **Looks** written from scratch in plain CSS (`kit/src/site-kit.css`): gradient hero text, bento grid for the
-  sections, glass cards, shimmer button, a ticker strip for the CA and the stats; dark, the city's orange `#fb752b`,
-  the coin's own palette (`--ac`, `--ac2`) from SUB-01's brain record. React and Tailwind do not ship to coin sites:
-  the same looks cost 3.2 KB of gzipped CSS instead of a framework. Fonts are vendored (no external font origin).
+Since 2026-10-12 the looks are the black-and-white Swiss system in **docs/DESIGN.md** (tokens, grid, type, the page
+template, the class contract). Motion (`motion/mini`, WAAPI): the hero lines rise and fade in, sections fade up on
+scroll (`inView`), new feed rows slide in, the sparkline fades in; anime.js runs the number tickers and the poll bars.
+`prefers-reduced-motion` turns all of it off (anime.js is not even loaded; CSS animations and transitions stop).
+Every new version is checked by SUB-01's QA before it goes live (docs/SITE-QA.md).
 
 ## CREDITS
 
@@ -297,12 +295,13 @@ only; the shipped artifact is `public/_kit/`), and its licence text is in `/_kit
 | KAPLAY (`kaplay`) | 3001.0.19 | MIT | mini-game | https://kaplayjs.com |
 | uPlot (`uplot`) | 1.6.32 | MIT | price chart | https://github.com/leeoniya/uPlot |
 | qrcode-generator | 2.0.4 | MIT (no LICENSE file in the package; the source header states MIT, © 2009 Kazuhiko Arase; LICENSES.txt quotes it with the MIT text) | CA QR code | https://github.com/kazuhikoarase/qrcode-generator |
-| Archivo (`@fontsource/archivo`) | 5.3.0 | SIL OFL 1.1 | headings and text | https://fontsource.org/fonts/archivo |
+| Inter (`@fontsource-variable/inter`) | 5.3.0 | SIL OFL 1.1 | all text (subset, opsz + wght 400–800) | https://rsms.me/inter · https://fontsource.org/fonts/inter |
+| Archivo (`@fontsource/archivo`) | 5.3.0 | SIL OFL 1.1 | the frozen v1 stylesheet only | https://fontsource.org/fonts/archivo |
 | JetBrains Mono (`@fontsource/jetbrains-mono`) | 5.3.0 | SIL OFL 1.1 | numbers, labels | https://fontsource.org/fonts/jetbrains-mono |
 | esbuild | 0.28.2 | MIT | build only, not shipped | https://esbuild.github.io |
 | OpenStreetMap tiles | — | data © OpenStreetMap contributors, ODbL; tile usage policy | map tiles (loaded from tile.openstreetmap.org, never copied) | https://www.openstreetmap.org/copyright |
 
-Design references (visual patterns only; **no code copied**, nothing from these ships):
+Design references of the v1 look (visual patterns only; **no code copied**; v2 uses none of them, docs/DESIGN.md):
 
 | Source | Component | Author | Licence |
 |---|---|---|---|

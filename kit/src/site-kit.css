@@ -24,7 +24,7 @@
  /* space: a 4 px scale */
  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:64px;--s9:96px;--s10:128px;
  /* grid */
- --maxw:1320px;--gut:16px;--gap:16px;--top:56px;--art-safe-l:20.5vw;--art-safe-w:42vw;
+ --maxw:1320px;--gut:16px;--gap:16px;--top:56px;--art-safe-l:20.5vw;--art-safe-w:34vw;
  --r:0px;--r-ctl:2px;--ease:cubic-bezier(.2,.7,.1,1);
  color-scheme:dark}
 @media(min-width:600px){:root{--gut:24px;--gap:24px}}
@@ -104,8 +104,11 @@ code,.mono{font-family:var(--mono);font-size:.92em;overflow-wrap:anywhere}
 .hero-name.len-l{font-size:clamp(42px,12.5vw,124px);letter-spacing:-.045em}
 .hero-name.len-xl{font-size:clamp(34px,9.6vw,96px);letter-spacing:-.04em;line-height:.92}
 .hero-name.len-xxl{font-size:clamp(28px,7.4vw,76px);letter-spacing:-.035em;line-height:.95}
-@media(min-width:900px){.hero-name{font-size:min(9.1vw,176px)}.hero-name.len-m{font-size:min(8vw,150px)}.hero-name.len-l{font-size:min(6.4vw,124px)}
- .hero-name.len-xl{font-size:min(4.9vw,96px)}.hero-name.len-xxl{font-size:min(3.7vw,76px)}}
+/* desktop: the B/W art's safe zone is 34vw wide (20.5vw–54.5vw: coinart.js and the owner's banners keep it empty) */
+@media(min-width:900px){.hero-name{font-size:min(7.3vw,150px)}.hero-name.len-m{font-size:min(6.4vw,132px)}.hero-name.len-l{font-size:min(5.1vw,108px)}
+ .hero-name.len-xl{font-size:min(3.9vw,84px)}.hero-name.len-xxl{font-size:min(3vw,64px)}
+ .art-classic .hero-name{font-size:min(9.1vw,176px)}.art-classic .hero-name.len-m{font-size:min(8vw,150px)}.art-classic .hero-name.len-l{font-size:min(6.4vw,124px)}
+ .art-classic .hero-name.len-xl{font-size:min(4.9vw,96px)}.art-classic .hero-name.len-xxl{font-size:min(3.7vw,76px)}}
 .hero-pitch{font-size:var(--t-lg);line-height:1.4;color:var(--fg-2);max-width:34ch;margin:0 0 var(--s6);text-wrap:pretty}
 .hero-cta{display:flex;flex-wrap:wrap;gap:var(--s3);margin:0 0 var(--s5)}
 .ca-chip{display:flex;flex-wrap:nowrap;align-items:stretch;gap:0;max-width:100%;border:1px solid var(--line-2)}

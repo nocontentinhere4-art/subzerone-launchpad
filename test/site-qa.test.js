@@ -43,7 +43,7 @@ async function konbini(h, { publish = true } = {}) {
 function brokenVersion(h, p) {
   const live = h.db.get('SELECT * FROM site_versions WHERE project_id = ? AND version = ?', p.id, p.live_site_version);
   const v = h.db.get('SELECT MAX(version) v FROM site_versions WHERE project_id = ?', p.id).v + 1;
-  const html = live.html.replace('<img class="hero-mark" src="./logo.png" alt=""', '<img class="hero-mark" src="./logo.png"');
+  const html = live.html.replace(/(<img class="hero-(?:art|mark)" src="[^"]+") alt=""/, '$1');
   assert.notEqual(html, live.html);
   h.db.run(`INSERT INTO site_versions (id, project_id, version, spec_json, build_status, html, sha256, build_report, created_by, created_at) VALUES (?, ?, ?, ?, 'ok', ?, ?, 'passed', 'test', ?)`,
     id('site'), p.id, v, live.spec_json, html, sha256(html), now());
@@ -65,7 +65,7 @@ test('the page: one h1, the app first, a CTA from the app, in-page links only to
     assert.ok(page.text.indexOf('id="app"') < page.text.indexOf('id="chain"') && page.text.indexOf('id="chain"') < page.text.indexOf('id="about"'), 'app, then the chain, then about');
     assert.ok(!/\sstyle=/.test(page.text) && !/<style/.test(page.text), 'no inline styles at all');
     assert.ok(!/class="figures"/.test(page.text), 'no market strip before a launch');
-    assert.match(page.text, /<body class="art-classic has-dock">/);
+    assert.match(page.text, /<body class="art-(bw|classic) has-dock">/, 'new coins get the B/W art (coinart.js)');
     // a launchpad app's action is "Launch a coin"; the B/W art fills the hero
     const spec = parseJson(h.db.get('SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?', k.project().id, k.project().live_site_version).spec_json);
     const html = await sandboxBuild({ spec: { ...spec, app: { ...spec.app, screens: [{ id: 'l', title: 'Launch', blocks: [{ type: 'launch', prompt: 'x', split: { creator: 7000, parent: 1000, sub01: 2000 } }] }] } },
@@ -170,7 +170,7 @@ test('QA ticket: the project host serves the candidate version to the QA browser
     const page = await k.site('GET', '/', undefined, { 'x-sub01-qa': ticket });
     assert.equal(page.status, 200);
     assert.equal(page.headers['cache-control'], 'no-store');
-    assert.ok(page.text.includes('<img class="hero-mark" src="./logo.png" width='), 'the candidate, not the live version');
+    assert.match(page.text, /<img class="hero-(art|mark)" src="[^"]+" width=/, 'the candidate, not the live version');
     assert.equal((await k.site('GET', '/_api/token', undefined, { 'x-sub01-qa': ticket })).status, 200, 'its tools answer');
     assert.equal((await k.site('POST', '/_api/app/submit', { fields: { text: 'x' } }, { 'x-sub01-qa': ticket })).status, 403, 'nothing is written through a ticket');
     assert.equal((await k.site('GET', '/', undefined, { 'x-sub01-qa': 'wrong' })).status, 404);

@@ -640,6 +640,14 @@ So the desk can frame:
 X itself cannot be framed (x.com forbids it): the X tab shows `x.handle`, `x.posts` and opens `x.url` in a new tab.
 Posting to X needs an X developer app and a **paid X API tier** (see STATUS.md); until then posts stay drafts.
 
+### SUB-01's QA of the site (owner, the Site tab)
+
+`GET /api/projects/:slug/site/qa` → `{liveSiteVersion, reports:[{version, status: running|passed|failed|overridden, line,
+held, browserNote, issues:[{viewport, check, detail}], warnings, shots:[{name, viewport, kind}]}]}` (newest first);
+`GET …/site/qa/:version/:name` the screenshot (JPEG); `POST …/site/qa/:version/override` publishes a held version;
+`POST …/site/qa/recheck` checks the live one again. The city shows the latest report above the framed site
+(desk.js `qaPane`, desk-flows.js `qaModel`). Details: docs/SITE-QA.md.
+
 ### PUT /api/rooms/me (auth)
 
 Request `{ "room": { … } }` → `200 { "room": { …as stored } }`. `409 no_resident` until `POST /api/residents`.
