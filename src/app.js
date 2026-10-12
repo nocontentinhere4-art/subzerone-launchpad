@@ -1031,16 +1031,17 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     sendJson(res, 200, out.body, { ...API_HEADERS, 'cache-control': 'no-store' });
   }
 
-  async function projectSite(req, res, host, url) {
+  async function projectSite(req, res, host, url, qaSlug = null) {
     const path = url.pathname;
-    const slug = host.slice(0, host.length - projectsHost.length - 1);
+    const slug = qaSlug ?? host.slice(0, host.length - projectsHost.length - 1);
     const p = /^[a-z0-9-]{1,40}$/.test(slug) && projectBySlug(slug);
     const idea = p && db.get('SELECT visibility FROM ideas WHERE id = ?', p.idea_id);
     const ctx = { raw: (status, body, headers) => { res.writeHead(status, headers); res.end(body); } };
     // SUB-01's QA browser (site-qa.js) renders a candidate version before it goes live: a single-use ticket header,
     // that one version only, reads only (no writes through /_api), nothing cached
     const qa = p && req.headers['x-sub01-qa'] ? qaTicket(db, p, String(req.headers['x-sub01-qa'])) : null;
-    if (!p || (!qa && (idea.visibility !== 'public' || !p.live_site_version))) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
+    // <slug>.qa.localhost exists for the QA browser only: a ticket or nothing
+    if (!p || (qaSlug && !qa) || (!qa && (idea.visibility !== 'public' || !p.live_site_version))) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('not found'); }
     if (path.startsWith('/_kit/')) return serveKit(req, res, path);
     if (qa && req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(403, { 'content-type': 'application/json' }); return res.end('{"error":"qa_read_only"}'); }
     if (path.startsWith('/_api/')) return siteApiRoute(req, res, p, { host, origin: `${cfg.projectsScheme}://${host}`, ...(qa ? { version: qa.version } : {}) }, url);
@@ -1108,6 +1109,10 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const host = String(req.headers.host || '').toLowerCase();
     try {
       if (host.endsWith(`.${projectsHost}`)) return await projectSite(req, res, host, url);
+      // SUB-01's QA browser (site-qa.js) reaches a coin's site as <slug>.qa.localhost:<port> on loopback: *.localhost is a
+      // secure context (crypto.subtle, the clipboard) as https is for visitors, and needs no DNS; ticket-only (projectSite)
+      const qaHost = /^([a-z0-9-]{1,40})\.qa\.localhost(?::\d+)?$/.exec(host);
+      if (qaHost) return await projectSite(req, res, host, url, qaHost[1]);
       if (url.pathname.startsWith('/_kit/')) return serveKit(req, res, url.pathname);
       securityHeaders(res, appCsp);
       const route = r.match(req.method, url.pathname);

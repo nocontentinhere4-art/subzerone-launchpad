@@ -127,7 +127,8 @@ export function loadConfig(env = process.env) {
     // SUB-01's QA gate for new site versions (site-qa.js, docs/SITE-QA.md). browser: 'auto' finds a Chromium (the image
     // ships Debian's), 'off' runs the static checks only, or a path. Default: auto in production builds, off elsewhere.
     siteQa: { gate: e('SITE_QA_GATE', '1') !== '0', browser: e('SITE_QA_BROWSER', e('NODE_ENV') === 'production' ? 'auto' : 'off'),
-      timeoutMs: num('SITE_QA_TIMEOUT_MS', 60000), keep: num('SITE_QA_KEEP', 3) },
+      timeoutMs: num('SITE_QA_TIMEOUT_MS', 60000), keep: num('SITE_QA_KEEP', 3),
+      cpuThrottle: Math.max(1, num('SITE_QA_CPU_THROTTLE', 1)) },   // >1 slows the page's CPU (a slow phone, or reproducing a slow host)
     // the app composer's dev-only "reveal now" trigger (app-api.js); refused in production whatever the variable says
     appDevTrigger: e('APP_DEV_TRIGGER') === '1' && deployEnv !== 'production',
     // GET /api/disclosure (trust.js): the datasets SUB-01's brain model was derived from, and who operates it

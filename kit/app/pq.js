@@ -6,6 +6,8 @@ export const WINTERNITZ = 'https://github.com/blueshift-gg/solana-winternitz-vau
 const HEADER = 'SUBZERONE post-quantum registry v1';
 const enc = new TextEncoder();
 async function sha256hex(s) {
+  // Web Crypto exists only in a secure context (https, localhost): say so instead of failing on "undefined"
+  if (!globalThis.crypto?.subtle) throw new Error('this page is not on a secure (https) connection, so the browser cannot hash here');
   const d = await crypto.subtle.digest('SHA-256', enc.encode(s));
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
@@ -16,10 +18,13 @@ const message = (e, slug, payloadHash, prev) => [HEADER, `project: ${slug}`, `se
 const KIND = { 'registry.key': 'Registry key created', 'fees.split': 'Fee split approved', 'launch.config': 'Launch configuration', 'launch.mint': 'Mint verified on chain',
   'site.version': 'Website version built', 'app.reveal': 'App reveal', 'owner.note': 'Note from the author', 'child.launch': 'Coin launched from this site' };
 
-/** Verify one page of entries (newest first). -> [{seq, sig, payload, link}] each true/false/null (null: cannot tell from this page). */
-export async function verifyEntries(ml, data, entries) {
+/** Verify one page of entries (newest first). -> [{seq, sig, payload, link}] each true/false/null (null: cannot tell from this page).
+ * One entry at a time, yielding to the page in between (an ML-DSA-65 check is pure JS: on a slow phone a page of them takes
+ * seconds); onProgress(done, total) after each. */
+export async function verifyEntries(ml, data, entries, onProgress = null) {
   const pub = fromB64(data.publicKey), out = [];
   for (let i = 0; i < entries.length; i++) {
+    if (i) await new Promise((r) => setTimeout(r, 0));
     const e = entries[i], older = entries[i + 1];
     const ph = await sha256hex(e.payload);
     const prevLine = /\nprev: (\S+)$/.exec(e.message)?.[1] || '';
@@ -28,13 +33,15 @@ export async function verifyEntries(ml, data, entries) {
     let sig = false;
     try { sig = ml.verify(fromB64(e.signature), enc.encode(e.message), pub); } catch { sig = false; }
     out.push({ seq: e.seq, sig, payload: rebuilt === e.message, link });
+    onProgress?.(i + 1, entries.length);
   }
   return out;
 }
 
 export function pqBlock(slot, b, K) {
   const { h, api, vendor, msg, say, busy } = K;
-  const put = (el, text, kind = '') => { el.textContent = text; el.className = `pq-sum${kind ? ` ${kind}` : ''}`; };
+  // the summary line is aria-busy while the verifier loads and runs (SUB-01's QA waits for it while it shows progress)
+  const put = (el, text, kind = '', working = false) => { el.textContent = text; el.className = `pq-sum${kind ? ` ${kind}` : ''}`; if (working) el.setAttribute('aria-busy', 'true'); else el.removeAttribute('aria-busy'); };
   const kids = [];
   let data = null, ml = null;
   const lib = () => (ml ? Promise.resolve(ml) : vendor('pq').then((m) => (ml = m.ml_dsa65)));
@@ -45,8 +52,10 @@ export function pqBlock(slot, b, K) {
     const all = [];
     const draw = async (page) => {
       all.push(...page.entries);
+      put(sum, 'Loading the verifier (@noble/post-quantum)…', '', true);
       const m = await lib();
-      const res = await verifyEntries(m, data, all);
+      put(sum, `Verifying 0 of ${all.length} entries in your browser…`, '', true);
+      const res = await verifyEntries(m, data, all, (n, t) => put(sum, `Verifying ${n} of ${t} entries in your browser…`, '', true));
       list.replaceChildren(...all.map((e, i) => {
         const r = res[i], ok = r.sig && r.payload && r.link !== false;
         let payload = {}; try { payload = JSON.parse(e.payload); } catch { /* shown raw */ }
@@ -62,16 +71,15 @@ export function pqBlock(slot, b, K) {
       }));
       const good = res.filter((r) => r.sig && r.payload && r.link !== false).length;
       put(sum, `${good} of ${res.length} entries verified in your browser (ML-DSA-65, FIPS 204, @noble/post-quantum).${data.total > all.length ? ` ${data.total - all.length} older ones on the next page.` : ''}`, good === res.length ? 'ok' : 'err');
-      more.hidden = !page.next; more.onclick = () => busy(more, async () => draw(await api(`/_api/app/pq?before=${page.next}`)));
+      more.hidden = !page.next; more.onclick = () => busy(more, async () => { try { await draw(await api(`/_api/app/pq?before=${page.next}`)); } catch (e) { put(sum, `Could not verify here: ${e.message}`, 'err'); } });
     };
     (async () => {
       try {
         data = await api('/_api/app/pq');
         keyBox.querySelector('code').textContent = data.publicKey;
         head.textContent = `${data.total} signed entr${data.total === 1 ? 'y' : 'ies'}. The server signs each one with this coin's own post-quantum key; your browser checks every signature, every payload hash and every link of the chain.`;
-        put(sum, 'Loading the verifier (@noble/post-quantum)…');
-        await draw(data);
-      } catch (e) { head.textContent = `The registry could not load (${e.message}).`; }
+      } catch (e) { head.textContent = `The registry could not load (${e.message}).`; put(sum, ''); return; }
+      try { await draw(data); } catch (e) { put(sum, `Could not verify here: ${e.message}.`, 'err'); }
     })();
     kids.push(head, sum, list, more, keyBox);
   }

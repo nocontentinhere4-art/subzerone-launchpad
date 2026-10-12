@@ -174,6 +174,14 @@ test('QA ticket: the project host serves the candidate version to the QA browser
     assert.equal((await k.site('GET', '/_api/token', undefined, { 'x-sub01-qa': ticket })).status, 200, 'its tools answer');
     assert.equal((await k.site('POST', '/_api/app/submit', { fields: { text: 'x' } }, { 'x-sub01-qa': ticket })).status, 403, 'nothing is written through a ticket');
     assert.equal((await k.site('GET', '/', undefined, { 'x-sub01-qa': 'wrong' })).status, 404);
+    // the QA browser's own secure origin, <slug>.qa.localhost:<port>: the same candidate with a ticket, nothing without
+    const qaHost = `${k.slug}.qa.localhost:8787`;
+    const viaQa = await hostCall(h.base, qaHost, 'GET', '/', undefined, { 'x-sub01-qa': ticket });
+    assert.equal(viaQa.status, 200);
+    assert.match(viaQa.text, /<img class="hero-(art|mark)" src="[^"]+" width=/);
+    assert.equal((await hostCall(h.base, qaHost, 'GET', '/_api/token', undefined, { 'x-sub01-qa': ticket })).status, 200);
+    assert.equal((await hostCall(h.base, qaHost, 'GET', '/')).status, 404, 'no ticket, no site on the QA host');
+    assert.equal((await hostCall(h.base, `nope.qa.localhost:8787`, 'GET', '/', undefined, { 'x-sub01-qa': ticket })).status, 404, 'the ticket is for one coin');
     h.db.run(`UPDATE site_qa SET ticket_until = ? WHERE project_id = ?`, now() - 1, p.id);
     assert.equal((await k.site('GET', '/', undefined, { 'x-sub01-qa': ticket })).status, 404, 'an expired ticket is nothing');
     // a finished QA clears its ticket

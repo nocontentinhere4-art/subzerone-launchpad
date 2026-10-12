@@ -102,6 +102,7 @@ Markup other code relies on, and what each is for:
 | `[data-ca-copy]` (hero CA chip) | core.js `chrome()` adds the Copy button |
 | `.hero-cta`, `.dock`, `.dock.is-away` | core.js hides the phone bar while the hero action or the app is on screen; site-qa.js CTA check |
 | `.hero-art`, `.hero-in` | site-qa.js text-over-art check |
+| `aria-busy="true"` with changing text on long client work (`.pq-sum` "Verifying n of m…") | site-qa.js waits for it up to 20 s while it progresses; anything still "Loading…" at 8 s fails |
 | `h2.sec` "Check the chain" | tests |
 | `body.art-bw` / `body.art-classic`, `body.has-dock` | the art modes; the dock padding |
 | `.btn` `.btn-primary` `.btn-line` `.btn-ghost` `.btn-sm` `.btn-lg`, `.row`, `.fine`, `.eyebrow`, `.chip(.ok)`, `.msg(.ok/.err)`, `.feed`, `.featured`, `.count`, `.stats/.stat/.stat-k/.stat-v`, `.picker` | every kit module |

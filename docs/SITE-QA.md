@@ -32,7 +32,8 @@ action to `#app` and the app section. Warnings: heading-level jumps, tools with 
 | images | a visible image (lazy ones are loaded first) did not load; any image without `alt` |
 | cta-fold | on the phone, neither the hero's action nor the action bar is on the first screen |
 | contrast | text at under 1.5:1 against its background (near-invisible); under WCAG AA is a warning with examples |
-| loading | something still says "Loading…" |
+| loading | something still says "Loading…" or is `aria-busy` 8 s after load; work that shows progress (an `aria-busy` element whose text keeps changing, e.g. "Verifying 4 of 9 entries…") gets 20 s (`HEAVY_MS`) |
+| gave-up | a block says on the page that it failed ("Could not …", "The registry could not load …") |
 
 Screenshots: the first screen and the whole page at both sizes, JPEG, on the volume at `DATA_DIR/qa/<slug>/v<N>-<desktop|mobile>-<fold|full>.jpg`;
 the last 3 checked versions and the live one are kept (`SITE_QA_KEEP`).
@@ -48,6 +49,8 @@ the last 3 checked versions and the live one are kept (`SITE_QA_KEEP`).
 - The owner: `POST /api/projects/:slug/site/qa/:version/override` publishes a held version (status `overridden`,
   public audit line); `POST …/site/qa/recheck` checks the live version again (it stays live).
 - A held version's edits are not carried into the next edit: edits start from what is live.
+- `SITE_QA_CPU_THROTTLE` (default 1) slows the rendered page's CPU (DevTools throttling), to rehearse a slow phone
+  or a slow host.
 - No browser (`SITE_QA_BROWSER=off`, no Chromium found, or the browser crashed): the static checks decide and the report
   says so, e.g. "passed (static checks only: no browser)". Default: `auto` when `NODE_ENV=production` (the image),
   `off` elsewhere (tests, local runs unless set).
@@ -56,8 +59,21 @@ the last 3 checked versions and the live one are kept (`SITE_QA_KEEP`).
 the run (≤ `SITE_QA_TIMEOUT_MS`). Chromium sends it as `x-sub01-qa` (only to the coin's own host, never to map tiles);
 the project host then serves that version's HTML and its `/_api` reads from that version's spec, refuses every write
 (403 `qa_read_only`), sends `no-store`, and also serves a private idea's page (the ticket is the capability). The
-ticket is cleared when the run ends. Requests go to the server on loopback: with a port in `PROJECTS_HOST` (local)
-directly, otherwise through Chromium's `--host-resolver-rules=MAP <slug>.<PROJECTS_HOST> 127.0.0.1:<PORT>`.
+ticket is cleared when the run ends. Chromium loads the page from this server on loopback as
+`http://<slug>.qa.localhost:<PORT>/`: Chromium resolves `*.localhost` itself and treats it as a **secure context**, as
+visitors' https is (Web Crypto, the clipboard). The server answers that host only with a valid ticket for that coin.
+
+**Incident 2026-10-12 (first production run, Q-wave):** "still loading after 8 s: Loading the verifier
+(@noble/post-quantum)…". The QA then fetched the page as plain `http://<slug>.projects.subzerone.live` mapped to
+loopback, which is not a secure context, so `crypto.subtle` was undefined, the registry's first SHA-256 threw, and the
+summary line was never replaced (and the old check sampled once right after hydration while saying "8 s"). Visitors
+on https were not affected. Fixed: the `*.qa.localhost` origin (Debian's headless shell ignores
+`--unsafely-treat-insecure-origin-as-secure`; checked: `isSecureContext` false there, true in Chrome), the loading
+check that really waits (above), the verifier says why it cannot run instead of staying on "Loading…", verifies one
+entry at a time with "Verifying n of m" (aria-busy), and the QA fails a page that says it gave up. Reproduced and
+verified locally with the production host layout (no port in `PROJECTS_HOST`) and Chromium headless shell, at
+`SITE_QA_CPU_THROTTLE` 1 / 6 / 20 / 50: settled after 0.3 / 0.9 / 4.7 / 17.7 s, all passed (50×: the progress
+allowance; the run took 56 s, so give such a slow host a larger `SITE_QA_TIMEOUT_MS`).
 
 ## Owner API (session; owner, or staff for reads)
 

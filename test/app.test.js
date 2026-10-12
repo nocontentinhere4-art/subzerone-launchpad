@@ -312,7 +312,9 @@ test('pq: the launchpad\'s record of a coin, ML-DSA-65 signed and chained; verif
     assert.equal(Buffer.from(r.json.entries[0].signature, 'base64').length, 3309);
     assert.deepEqual(verifyRegistry(h.db, k.project()), { ok: true, problems: [] });
     // the browser's check (kit/app/pq.js) with the same library: every entry verified, every link checked
-    const res = await verifyEntries(ml_dsa65, r.json, r.json.entries);
+    const seen = [];
+    const res = await verifyEntries(ml_dsa65, r.json, r.json.entries, (n, t) => seen.push(`${n}/${t}`));
+    assert.deepEqual(seen, r.json.entries.map((_, i) => `${i + 1}/${r.json.entries.length}`), 'progress after each entry (the page shows "Verifying n of m")');
     assert.ok(res.every((x) => x.sig && x.payload && x.link !== false), JSON.stringify(res));
     assert.equal(res.filter((x) => x.link === true).length, res.length, 'one page holds the whole chain');
     // an owner note is signed in; idempotent sync adds nothing twice

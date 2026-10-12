@@ -19,7 +19,9 @@ import { id, now, sha256, parseJson, HttpError } from './util.js';
 import { log } from './log.js';
 
 const VIEWPORTS = [{ name: 'desktop', width: 1440, height: 900 }, { name: 'mobile', width: 390, height: 844, isMobile: true, hasTouch: true }];
-const HYDRATE_MS = 8000;
+const HYDRATE_MS = 8000;          // every tool and the app must be live, and nothing may say "Loading…", this long after load
+const HEAVY_MS = 20000;           // …unless it shows progress (aria-busy with changing text: e.g. "Verifying 4 of 9 entries"):
+                                  // heavy client work (the post-quantum verifier on a slow CPU) gets this long in total
 
 // ---- static checks (on the HTML string) ----------------------------------------------------------------------------
 /** -> {issues: [{check, detail}], warnings: [...] , passed: [check names]} */
@@ -73,12 +75,13 @@ const serial = (fn) => { const run = chain.then(fn, fn); chain = run.catch(() =>
 /** Render one site version in Chromium and check it. -> {viewports: {desktop, mobile}, issues, warnings, shots, ms} */
 async function browserQa({ cfg, project, version, ticket, browser, dir }) {
   const t0 = Date.now();
-  const host = `${project.slug}.${cfg.projectsHost}`;
-  const hasPort = /:\d+$/.test(cfg.projectsHost);
-  // the page is fetched from this server on loopback whatever the public DNS says; the Host header is the project host
+  // the page is fetched from this server on loopback as <slug>.qa.localhost:<port>: Chromium resolves *.localhost to
+  // 127.0.0.1 itself and treats it as a secure context, as visitors' https is (crypto.subtle, the clipboard). Plain http
+  // on the public name mapped to loopback was not one: the post-quantum verifier failed only in the QA (2026-10-12),
+  // and the headless shell ignores --unsafely-treat-insecure-origin-as-secure.
+  const host = `${project.slug}.qa.localhost:${cfg.port}`;
   const url = `http://${host}/`;
-  const args = ['--disable-dev-shm-usage', '--hide-scrollbars', '--force-color-profile=srgb', '--disable-gpu',
-    ...(hasPort ? [] : [`--host-resolver-rules=MAP ${host} 127.0.0.1:${cfg.port}`])];
+  const args = ['--disable-dev-shm-usage', '--hide-scrollbars', '--force-color-profile=srgb', '--disable-gpu'];
   const b = await browser.pw.chromium.launch({ executablePath: browser.path, args, chromiumSandbox: !(process.getuid?.() === 0), timeout: 20_000 });
   const issues = [], warnings = [], shots = [], viewports = {};
   try {
@@ -86,6 +89,7 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
       const ctx = await b.newContext({ viewport: { width: vp.width, height: vp.height }, deviceScaleFactor: 1, isMobile: Boolean(vp.isMobile), hasTouch: Boolean(vp.hasTouch),
         reducedMotion: 'reduce', serviceWorkers: 'block', javaScriptEnabled: true });
       const page = await ctx.newPage();
+      if ((cfg.siteQa?.cpuThrottle || 1) > 1) { const cdp = await ctx.newCDPSession(page); await cdp.send('Emulation.setCPUThrottlingRate', { rate: cfg.siteQa.cpuThrottle }); }
       // the ticket rides only on requests to the coin's own host (never to the map tiles' host)
       await page.route((u) => u.host === host, (route) => route.continue({ headers: { ...route.request().headers(), 'x-sub01-qa': ticket } }));
       const consoleErrors = [], thirdParty = [];
@@ -116,6 +120,23 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
           await Promise.race([Promise.all([...document.images].filter((i) => i.getAttribute('src') && !i.complete).map((i) => new Promise((r) => { i.addEventListener('load', r, { once: true }); i.addEventListener('error', r, { once: true }); }))),
             new Promise((r) => setTimeout(r, 3000))]);
         });
+        // nothing may still say "Loading…" or be aria-busy: wait for it, 8 s from load; work that shows progress gets 20 s
+        const busy = await page.evaluate(async ({ quiet, heavy }) => {
+          const vis = (el) => { const cs = getComputedStyle(el); if (cs.display === 'none' || cs.visibility === 'hidden') return false; const b = el.getBoundingClientRect(); return b.width > 0 && b.height > 0 && !el.closest('[hidden]'); };
+          const name = (el) => `${el.tagName.toLowerCase()}${el.classList.length ? `.${[...el.classList].slice(0, 2).join('.')}` : ''} "${(el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60)}"`;
+          const now = () => [...new Set([...document.querySelectorAll('main [aria-busy="true"]'), ...[...document.querySelectorAll('main *')].filter((el) => el.childElementCount === 0 && /^Loading/.test((el.textContent || '').trim()))])].filter(vis);
+          let last = '', moved = Date.now();
+          for (;;) {
+            const list = now(), sig = list.map((el) => el.textContent).join('|'), t = Math.round(performance.now());   // since the navigation started
+            if (!list.length) return { left: [], ms: t };
+            if (sig !== last) { last = sig; moved = Date.now(); }
+            const progressing = list.every((el) => el.getAttribute('aria-busy') === 'true') && Date.now() - moved < 3000;
+            if (t > (progressing ? heavy : quiet)) return { left: list.slice(0, 3).map(name), ms: t };
+            await new Promise((r) => setTimeout(r, 200));
+          }
+        }, { quiet: HYDRATE_MS, heavy: HEAVY_MS });
+        v.checks.settledMs = busy.ms;
+        for (const x of busy.left) fail('loading', `still loading ${Math.round(busy.ms / 1000)} s after load: ${x}`);
         await page.waitForTimeout(250);
         const r = await page.evaluate(() => {
           const W = innerWidth, H = innerHeight, out = {};
@@ -182,8 +203,8 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
             else if (ratio < (large ? 3 : 4.5)) { low++; if (lowEx.length < 3) lowEx.push(`${name(el)} ${ratio.toFixed(2)}:1`); }
           }
           out.contrast = { zero: zero.slice(0, 5), low, lowEx };
-          // anything still saying it is loading
-          out.loading = [...document.querySelectorAll('main *')].filter((el) => el.childElementCount === 0 && vis(el) && /^Loading/.test((el.textContent || '').trim())).slice(0, 3).map(name);
+          // a block that gave up and says so on the page ("Could not verify here: …", "The registry could not load (…)")
+          out.gaveUp = [...document.querySelectorAll('main *')].filter((el) => el.childElementCount === 0 && vis(el) && /^(Could not|The [a-z ]+ could not)/.test((el.textContent || '').trim())).slice(0, 3).map(name);
           return out;
         });
         v.checks = { ...v.checks, scrollWidth: r.scrollWidth, images: r.images, cta: r.cta, contrastLow: r.contrast.low };
@@ -195,8 +216,8 @@ async function browserQa({ cfg, project, version, ticket, browser, dir }) {
         for (const x of r.noAlt) fail('alt', `image without alt: ${x}`);
         if (vp.isMobile && r.cta === 'below the fold') fail('cta-fold', 'the main action is below the fold on a phone');
         for (const x of r.contrast.zero) fail('contrast', `near-invisible text: ${x}`);
+        for (const x of r.gaveUp) fail('gave-up', `the page says it failed: ${x}`);
         if (r.contrast.low) warn('contrast-aa', `${r.contrast.low} text element(s) under WCAG AA (e.g. ${r.contrast.lowEx.join('; ')})`);
-        for (const x of r.loading) fail('loading', `still loading after 8 s: ${x}`);
         for (const x of [...new Set(consoleErrors)].slice(0, 5)) fail('console', x);
         if (thirdParty.length) warn('third-party', `${thirdParty.length} request(s) to other hosts failed (e.g. ${[...new Set(thirdParty)].slice(0, 2).join('; ')})`);
         // screenshots: the fold and the whole page, JPEG, on the volume
