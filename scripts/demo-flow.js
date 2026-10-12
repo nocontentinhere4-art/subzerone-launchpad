@@ -79,8 +79,9 @@ step('signed in (signed messages, no transactions)', { submitter: submitter.addr
 const title = process.env.DEMO_TITLE || `Night Ramen Map ${new Date().toISOString().slice(11, 16)}`;
 const { id } = await submitter.call('POST', '/api/ideas', {
   title, concept: process.env.DEMO_CONCEPT || 'A tiny community map of the best late-night ramen counters in Tokyo, drawn by hand, one bowl at a time. Sweet, warm, a little nostalgic.',
-  tickerSuggestion: 'RAMEN', links: ['https://en.wikipedia.org/wiki/Ramen'], contacts: { x: 'ramen_fan' },
-  receivingWallet: submitter.address, rightsConfirmed: true,
+  tickerSuggestion: process.env.DEMO_TICKER || 'RAMEN', links: ['https://en.wikipedia.org/wiki/Ramen'], contacts: { x: 'ramen_fan' },
+  // DEMO_RECEIVING_WALLET: another wallet receives the author's fee share (e.g. a launchpad parent whose author is not the visitor)
+  receivingWallet: process.env.DEMO_RECEIVING_WALLET || submitter.address, rightsConfirmed: true,
 });
 step('idea submitted (private)', { id });
 

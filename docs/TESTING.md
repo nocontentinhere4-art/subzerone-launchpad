@@ -117,3 +117,30 @@ Same setup, `docs/demo/flow-pumpfun-2026-10-10T21-41-22.json`:
   380,028 CU; estimate rows now sum (fee 10,000 + rent 13,807,440 + buy 10,000,000 = the simulated balance change);
   verification `dev buy landed: exactly the reviewed amount of tokens in the author wallet = 10493886257633 base units
   (reviewed 10493886257633)`; status note "verified on devnet · dev buy: 0.01 SOL for 10,493,886 tokens, in your wallet".
+
+## Child launch on devnet (2026-10-12): a coin launched from a launchpad coin's site
+
+Launchpad + worker on a local port with `LAUNCH_PROVIDER=pumpfun SOLANA_NETWORK=devnet LAUNCH_LOOKUP_TABLE=BLnaXF…YPY
+REQUIRE_ADMIN_CLEARANCE=0 COIN_STATS=0`, the live SUB-01 brain (`BRAIN_URL=https://subzerone.live`; the local one was in
+NREM), `APP_ENCRYPTION_KEY` set. Both devnet faucets refused (`Internal error` / 429), so the funded `demo-submitter`
+keypair signed both launches and `test-wallet` (0 SOL) is the parent author's receiving wallet: three distinct wallets in
+the child's split.
+
+1. Parent: `DEMO_TITLE="Q-wave" DEMO_TICKER=QWAVE DEMO_RECEIVING_WALLET=<test-wallet> DEMO_SKIP_DEV_BUY=1 npm run demo:flow`
+   (transcript `docs/demo/flow-pumpfun-2026-10-12T18-14-27.json`): SUB-01 build 91.3% (510k-neuron network on CPU); the
+   composer gave the launchpad app (launch block + ML-DSA-65 registry); mint `2JaWzbDuthmRBYqWE434NUwLf6xEthCQNfk7fsCToUYc`,
+   tx `CHKX4XMa…UaKxB3`, verified on devnet. (The template title-cases the name: the token is "Q-Wave".)
+2. Child, in a headless Chromium on `http://q-wave.projects.localhost:<port>/`, with an in-page Wallet Standard wallet
+   (signMessage + signTransaction) backed by the devnet keypair: name / ticker / description / a PNG / 0.01 SOL dev buy →
+   review card (70% creator `12MX…wx6n`, 10% the author `2nRU…4u3v`, 20% SUB-01 `4o16…jVAg`) → one signed message →
+   SUB-01 build 95% in 13.8 s → child built (site, the uploaded logo, the signed split approved) → launch configuration →
+   "Prepare the transaction" (997 bytes, 2 signers, pump + pump fees only, simulated 264,326 CU, rent 0.01143 SOL) →
+   signed in the page → launched: mint `BKDXVjWjWAdd17rRNzGA3LHdCApcNmDw9npxLwjTP3Qe`, tx `35of4GhfooHX…emcvTW`, 14 on-chain
+   checks ok, including `shareholders match the approved allocation` = creator 7000 / author 1000 / SUB-01 2000 bps and
+   `sharing admin revoked (allocation locked)`. Read back independently from devnet: sharing config
+   `3BxnvY6wQQePvupSzTTTVUTWivm27LxmzHsVey1TYitR` (owner pump fees, admin revoked, the three shareholders above), and the
+   curve creator is that config.
+3. Step 2 signed in the page: dev buy tx `2cN775Jt…F7STbgeZ`, 0.01 SOL for 10,493,886.257633 tokens, verified.
+4. The parent's registry: entry #7 `child.launch` (mint, network, tx, config sha256, the locked 70/10/20 split);
+   "7 of 7 entries verified in your browser (ML-DSA-65)". The parent's block lists the child with its logo; the child's
+   site says "Launched at Q-Wave ($QWAVE)"; `/api/world` gives its building (`shiba-1`) `parent: {slug: 'q-wave'}`.

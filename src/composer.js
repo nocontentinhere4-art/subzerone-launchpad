@@ -44,7 +44,7 @@ export const WORDS = {
 };
 // "a launchpad", "my own launch pad", "build a launchpad", "a launchpad where/for/that …", "un launchpad", "piattaforma di lancio"
 const LAUNCHPAD_RE = [/ (?:a|an|my|our|own|new|your|un|una|mio|mia|build|building|make|create|costruire|creare|crea) (?:[a-z]+ ){0,2}launch ?pads? /,
-  / launch ?pads? (?:where|for|that|which|to|dove|che|per|in cui) /];
+  / launch ?pads? (?:where|for|that|which|with|to|dove|che|per|con|in cui) /, / is (?:the|a|an) (?:[a-z]+ ){0,2}launch ?pads? /];
 const NOUNS = [
   ['confession', 'confessions', ['confess*', 'confession*', 'confessa*', 'confessione', 'confessioni', 'kokuhaku', 'zange']],
   ['secret', 'secrets', ['secret*', 'segret*', 'himitsu']],
@@ -136,14 +136,18 @@ function pqApp(idea, r, { name }) {
  * quantum-themed (every launch from the site is signed into it). */
 function launchpadApp(idea, r, { name }) {
   const quantum = r.quantum;
+  // quantum-themed: the signed record is the point, so it sits right under the launcher, with the plain Ed25519 note
+  // 2026-10-12 the owner (positioning A): the launchpad with a post-quantum registry of every launch. Nothing about
+  // quantum-safe fees: no quantum-resistant fee vault is available on Solana mainnet (the honesty box says so, once).
+  const lede = quantum
+    ? `A post-quantum registry of every launch: each coin launched from ${name} (its configuration, its locked fee split, its mint) is signed with ML-DSA-65 and verified in your browser. The coins themselves use Solana's Ed25519: not quantum-proof.`
+    : `Launch your own coin from ${name}: a real pump.fun coin, created by your wallet. SUB-01 reads every one first; the creator fees are split on-chain between you, ${name}'s author and SUB-01.`;
   return {
     v: APP_VERSION, kind: 'launchpad', flow: 'board', noun: { one: 'coin', many: 'coins' },
-    title: clip(`${name}: launch a coin here`, 60),
-    lede: clip(`Launch your own coin from ${name}: a real pump.fun coin, created by your wallet. SUB-01 reads every one first; the creator fees are split on-chain between you, ${name}'s author and SUB-01.${quantum ? ' Every launch is signed into a post-quantum (ML-DSA-65) registry your browser verifies.' : ''}`, 240),
-    screens: [
-      { id: 'launch', title: 'Launch', blocks: [{ type: 'launch', title: 'Launch a coin here', split: { ...LAUNCH_SPLIT }, devBuy: true, list: true }] },
-      ...(quantum ? [{ id: 'registry', title: 'Registry', blocks: [{ type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true }] }] : []),
-    ],
+    title: clip(quantum ? `${name}: every launch signed post-quantum` : `${name}: launch a coin here`, 60),
+    lede: clip(lede, 240),
+    screens: [{ id: 'launch', title: 'Launch', blocks: [{ type: 'launch', title: 'Launch a coin here', split: { ...LAUNCH_SPLIT }, devBuy: true, list: true },
+      ...(quantum ? [{ type: 'pq', title: 'Signed registry of every launch', registry: true, verify: true, honesty: true }] : [])] }],
   };
 }
 
@@ -268,7 +272,7 @@ function boardApp(idea, r, { name, ticker }) {
 
 const HONEST = {
   launchpad: 'The idea is a launchpad; SUB-01 built one that really launches coins: visitors create pump.fun coins from this site, each read by SUB-01 first, with the creator fees split on-chain (creator / author / SUB-01).',
-  launchpadPq: 'The idea is a quantum-proof launchpad; SUB-01 built a launchpad that really launches coins from this site, and signs every launch into a post-quantum (ML-DSA-65) registry the browser verifies. The coins themselves are Solana tokens (Ed25519 keys): no coin can be quantum-proof, and the page says so.',
+  launchpadPq: 'The idea is a quantum-themed launchpad; SUB-01 built a launchpad with a post-quantum registry of every launch: visitors really launch coins from this site, and each launch is signed with ML-DSA-65 and verified in the browser. The coins themselves are Solana tokens (Ed25519 keys): no coin can be quantum-proof, and the page says so.',
   ritual: 'The idea describes a product (people send something, one is chosen at a set time and printed); SUB-01 built that.',
   pq: 'The idea asks for quantum-proof management; SUB-01 built what can honestly be offered: a post-quantum signed record of the launchpad\'s actions, verified in the browser, and says plainly that the coin itself (Solana, Ed25519) is not quantum-proof.',
   places: 'The idea is about real places; SUB-01 built a community guide with votes and a map.',

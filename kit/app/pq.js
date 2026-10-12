@@ -96,9 +96,10 @@ export function pqBlock(slot, b, K) {
     kids.push(h('div', { cls: 'pq-honest' }, h('h4', { text: 'What is and is not quantum-safe here' }),
       h('p', { text: 'Solana accounts, this coin and every wallet that holds it use Ed25519 signatures. A large enough quantum computer could break Ed25519. This site does not change that: the coin itself is not quantum-proof, and nobody can make it so from a web page.' }),
       h('p', { text: 'What this page gives you is a quantum-safe, tamper-evident record of everything the launchpad did for this coin: each step is hashed, chained to the one before and signed with ML-DSA-65 (FIPS 204), a post-quantum signature, and your browser checks it.' }),
-      ...(K.launches ? [h('p', { text: 'The coins launched from this site are Solana tokens too: none of them is quantum-proof either. What is post-quantum is this record: every launch from here (its configuration hash, its locked fee split, its mint and its transaction) is signed into it, and your browser checks it.' })] : []),
-      h('p', {}, 'Further reading: quantum-resistant vaults on Solana use one-time Winternitz signatures, see the open-source ', h('a', { href: WINTERNITZ, target: '_blank', rel: 'noopener noreferrer nofollow', text: 'Solana Winternitz vault' }),
-        K.launches ? '. It could one day hold a creator\'s fee share, but that program is not deployed on mainnet (nor devnet) and has no audit, so this site does not send fees to it. Launches here ask your wallet for a transaction only after you have reviewed it; this registry never does.' : '. Read-only reading: this site never asks for a transaction.')));
+      // a launchpad (child-launch.js): the registry of every launch, the coins' Ed25519, and one line on fee vaults
+      ...(K.launches ? [h('p', { text: 'The coins launched from this site are Solana tokens too: none of them is quantum-proof either. What is post-quantum is this record: every launch from here (its configuration hash, its locked fee split, its mint and its transaction) is signed into it, and your browser checks it.' }),
+        h('p', { text: 'A quantum-resistant vault for creator fees is not available on Solana mainnet today.' })]
+        : [h('p', {}, 'Further reading: quantum-resistant vaults on Solana use one-time Winternitz signatures, see the open-source ', h('a', { href: WINTERNITZ, target: '_blank', rel: 'noopener noreferrer nofollow', text: 'Solana Winternitz vault' }), '. Read-only reading: this site never asks for a transaction.')])));
   }
   slot.replaceChildren(...kids);
 }

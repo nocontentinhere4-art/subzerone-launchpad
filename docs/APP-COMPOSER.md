@@ -154,12 +154,14 @@ broadcasts it), and signs the dev buy as step 2. Launches open only once the par
 launch block, default 70/10/20, written on-chain by the existing fee-sharing config and locked. Same wallet twice merges
 (the author launching on their own site keeps both shares). Re-validated when the configuration is prepared.
 
-**Post-quantum.** Every child launch (configuration sha256, the locked split, mint, transaction signature) is appended to
+**Post-quantum (positioning, the owner 2026-10-12): the launchpad with a post-quantum registry of every launch.** The
+composed copy leads with it and keeps the Ed25519 note; it never claims quantum-safe fees. Every child launch (configuration sha256, the locked split, mint, transaction signature) is appended to
 the parent's ML-DSA-65 registry as `child.launch` (at launch, and on every read) and verified in the browser. The coins
 themselves are Solana tokens (Ed25519): the page says no coin can be quantum-proof. The Winternitz vault
 (github.com/blueshift-gg/solana-winternitz-vault, program id `wntrRTssxbf1rz9RPJ4xNBbpXxfsidQJT177NN3MXhB`) is not deployed
 on mainnet, devnet or testnet (getAccountInfo null, no signatures, 2026-10-12) and has no audit, so fee shares are never
-routed to it; the honesty box says so.
+routed to it; on a launchpad the honesty box says only that a quantum-resistant vault for creator fees is not available on
+Solana mainnet today (no link).
 
 **City and parent.** `/api/world` gives a child `parent: {slug, name}` and a launchpad `childrenLaunched`; the child's site
 says "Launched at …" and links back; the parent's block shows coins launched here, in progress, 24 h volume and market

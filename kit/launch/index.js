@@ -81,7 +81,7 @@ export function launchBlock(slot, b, K) {
   function drawParent() {
     const c = parent.counts, net = parent.provider ? (parent.provider.mock ? 'MOCK provider: rehearsal, no blockchain' : `pump.fun · Solana ${parent.provider.network}`) : 'launching is off';
     head.replaceChildren(
-      h('div', { cls: 'app-tiles' }, ...[[c.launched, 'coins launched here'], [c.inProgress, 'on their way'], [usd(c.volume24hUsd), '24h volume'], [usd(c.marketCapUsd), 'market cap']]
+      h('div', { cls: 'app-tiles' }, ...[[c.launched, c.launched === 1 ? 'coin launched here' : 'coins launched here'], [c.inProgress, 'on their way'], [usd(c.volume24hUsd), '24h volume'], [usd(c.marketCapUsd), 'market cap']]
         .map(([v, l]) => h('div', { cls: 'app-tile' }, h('span', { cls: 'app-n', text: String(v) }), h('span', { cls: 'fine', text: l })))),
       h('p', { cls: 'fine', text: `${net}. Creator fees of every coin launched here, split on-chain and locked: ${pct(parent.split.creator)} to its creator, ${pct(parent.split.parent)} to this site's author, ${pct(parent.split.sub01)} to SUB-01.` }));
     if (b.list) {
@@ -224,7 +224,7 @@ export function launchBlock(slot, b, K) {
         h('div', { cls: 'row' }, s.project?.siteUrl ? h('a', { cls: 'btn btn-sm', href: s.project.siteUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Its site ↗' }) : null,
           s.launch.explorerToken ? h('a', { cls: 'btn btn-sm btn-ghost', href: s.launch.explorerToken, target: '_blank', rel: 'noopener noreferrer', text: 'Solscan ↗' }) : null,
           s.project?.cityUrl ? h('a', { cls: 'btn btn-sm btn-ghost', href: s.project.cityUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Its building in the city ↗' }) : null),
-        s.registry ? h('p', { cls: 'fine', text: `Signed into this site's post-quantum registry as entry #${s.registry.seq} (ML-DSA-65): check it in the Registry tab.` }) : null));
+        s.registry ? h('p', { cls: 'fine', text: `Signed into this site's post-quantum registry as entry #${s.registry.seq} (ML-DSA-65): your browser checks it in the registry on this page.` }) : null));
       const d = s.devBuy;
       if (d && key && ['pending', 'failed', 'awaiting_signature'].includes(d.status)) {
         kids.push(h('p', { cls: 'fine', text: `Step 2: your dev buy of ${sol(d.lamports)}, at the price now (capped at +${d.slippageBps / 100}%).${d.attempt?.error ? ` Last try: ${d.attempt.error}` : ''}` }),

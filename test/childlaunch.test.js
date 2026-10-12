@@ -73,6 +73,10 @@ async function start(k, w, extra = {}, { image = PNG } = {}) {
 test('composer: launchpad / token factory / create coins (en, it, ja romaji) get the launch block; a mention of "this launchpad" does not', () => {
   const kind = (concept, title = 'X') => composeRules({ title, concept }).app.kind;
   assert.equal(kind('a launchpad where everything is managed quantum-proof', 'Quantum launchpad'), 'launchpad');
+  assert.equal(kind('Q-wave is the launchpad with the first post-quantum registry of every launch', 'Q-wave'), 'launchpad', 'the owner\'s positioning line');
+  const qw = composeRules({ title: 'Q-wave', concept: 'Q-wave is the launchpad with the first post-quantum registry of every launch' }, { name: 'Q-wave', ticker: 'QWAVE' }).app;
+  assert.match(qw.lede, /^A post-quantum registry of every launch: .* ML-DSA-65 .* Ed25519: not quantum-proof\.$/);
+  assert.doesNotMatch(JSON.stringify(qw), /quantum-safe|winternitz|vault/i, 'no claim about quantum-safe fees');
   for (const c of ['A token factory for the ramen shops of Tokyo', 'Anyone can create coins here in one click', 'launch coins for your friends',
     'Una piattaforma di lancio dove tutti possono creare monete', 'crea il tuo token in un minuto', 'Shibuya no raunchipaddo: koin wo tsukuru basho', 'tokun hakkou no machi']) {
     assert.equal(kind(c), 'launchpad', c);
