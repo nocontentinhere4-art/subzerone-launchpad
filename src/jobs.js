@@ -17,8 +17,8 @@ const backoff = (base, cap) => (attempt) => Math.min(cap, base * 2 ** Math.max(0
 export const POLICIES = {
   evaluate: { maxAttempts: 60, timeoutMs: 45_000, backoff: backoff(60_000, 30 * 60_000) },
   generate: { maxAttempts: 3, timeoutMs: 180_000, backoff: backoff(30_000, 10 * 60_000) },
-  build_site: { maxAttempts: 3, timeoutMs: 120_000, backoff: backoff(10_000, 60_000) },   // the build + SUB-01's QA (site-qa.js)
-  child_build: { maxAttempts: 3, timeoutMs: 120_000, backoff: backoff(10_000, 5 * 60_000) },   // child-launch.js childBuild (+ SUB-01's QA)
+  build_site: { maxAttempts: 3, timeoutMs: 240_000, backoff: backoff(10_000, 60_000) },   // the build + SUB-01's QA (site-qa.js)
+  child_build: { maxAttempts: 3, timeoutMs: 240_000, backoff: backoff(10_000, 5 * 60_000) },   // child-launch.js childBuild (+ SUB-01's QA)
   site_qa: { maxAttempts: 2, timeoutMs: 120_000, backoff: backoff(60_000, 10 * 60_000) },
   prepare_launch: { maxAttempts: 3, timeoutMs: 30_000, backoff: backoff(10_000, 60_000) },
   confirm_launch: { maxAttempts: 40, timeoutMs: 30_000, backoff: backoff(5_000, 60_000) },
