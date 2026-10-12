@@ -130,7 +130,7 @@ export async function anthropicGenerate({ idea, brain, cfg, signal, fetchImpl = 
     `Ticker suggestion: ${idea.ticker_suggestion || '-'}\n</idea>\nBrain vote facts (true, cite at most briefly): ${brainNote(brain)}`;
   const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
     method: 'POST', signal,
-    headers: { 'content-type': 'application/json', 'x-api-key': g.anthropicKey, 'anthropic-version': '2023-06-01' },
+    headers: { 'content-type': 'application/json', 'x-api-key': g.anthropicKey, ...(g.anthropicWorkspace ? { 'anthropic-workspace-id': g.anthropicWorkspace } : {}), 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({ model: g.anthropicModel, max_tokens: 1500, system: SYSTEM, messages: [{ role: 'user', content: user }] }),
   });
   if (!res.ok) throw new Error(`generator HTTP ${res.status}`);

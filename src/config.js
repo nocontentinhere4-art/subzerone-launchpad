@@ -66,6 +66,7 @@ export function loadConfig(env = process.env) {
     generator: {
       provider: e('GENERATOR', 'template'),             // template | anthropic
       anthropicKey: e('ANTHROPIC_API_KEY'),
+      anthropicWorkspace: e('ANTHROPIC_WORKSPACE_ID'),        // needed with an organization-scoped key (sk-ant-usr-…)
       anthropicModel: e('ANTHROPIC_MODEL', 'claude-sonnet-5-5'),
       // USD per million tokens, from the provider's price page; used for the budget, set them when enabling a model
       priceIn: num('GENERATOR_PRICE_IN_PER_MTOK', 0),

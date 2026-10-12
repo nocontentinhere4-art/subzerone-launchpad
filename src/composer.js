@@ -319,7 +319,7 @@ export async function composeWithModel(idea, { name, ticker, draft, cfg, fetchIm
     `SUB-01's rule-based draft (improve it if the idea asks for more; keep it if it fits):\n${JSON.stringify(draft)}`;
   const res = await fetchImpl('https://api.anthropic.com/v1/messages', {
     method: 'POST', signal: signal || AbortSignal.timeout(60_000),
-    headers: { 'content-type': 'application/json', 'x-api-key': g.anthropicKey, 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+    headers: { 'content-type': 'application/json', 'x-api-key': g.anthropicKey, ...(g.anthropicWorkspace ? { 'anthropic-workspace-id': g.anthropicWorkspace } : {}), 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
     body: JSON.stringify({ model: 'claude-sonnet-5-5', max_tokens: 2000, thinking: { type: 'between_tools' }, fallbacks: 'default', system: SYSTEM, messages: [{ role: 'user', content: user }] }),
   });
   if (!res.ok) throw new Error(`composer HTTP ${res.status}`);
