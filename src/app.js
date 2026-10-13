@@ -107,7 +107,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   r.get('/api/rewards/me', async (ctx) => { const u=requireUser(ctx); limit('reward_read',ctx.ip); return rewards.personal(u.wallet); });
   r.get('/api/rewards/epochs/:epoch', ctx => rewards.manifest(Number(ctx.params.epoch)));
   r.post('/api/rewards/epochs', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);return rewards.registerManifest(await ctx.body(2000000),u.wallet);});
-  r.post('/api/rewards/claims/prepare', async ctx => {const u=requireUser(ctx);limit('reward_claim',ctx.ip);const b=await ctx.body();return rewards.prepare(u.wallet,Number(b.epochId));});
+  r.post('/api/rewards/claims/prepare', async ctx => {const u=requireUser(ctx);limit('reward_claim',ctx.ip);const b=await ctx.body();return rewards.prepare(u.wallet,Number(b.epochId),b.destination);});
   r.post('/api/rewards/claims/submit', async ctx => {const u=requireUser(ctx);limit('reward_claim',ctx.ip);const b=await ctx.body();return rewards.submit(u.wallet,b.intentId,b.signed);});
   r.get('/api/rewards/claims/:intent', async ctx => {const u=requireUser(ctx);limit('reward_read',ctx.ip);return rewards.status(u.wallet,ctx.params.intent);});
   // RFC 9116: who to contact and where the code lives (reputation scanners and wallets look for it; 2026-10-11)

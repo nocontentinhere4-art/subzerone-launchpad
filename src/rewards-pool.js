@@ -1,4 +1,4 @@
-import { PublicKey, Transaction } from '@solana/web3.js';
+import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
 import { HttpError, sha256, token, isSolanaAddress } from './util.js';
 import { REWARDS, buildRewardManifest, manifestTree, rewardAddresses, decodeEpoch, hasClaimed, claimInstruction, epochBounds } from './rewards-protocol.js';
 
@@ -47,7 +47,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     allocationTrust:'The publisher supplies finalized snapshot balances and attributable creator rewards. The contract enforces the published root, funded amounts and one claim per wallet per period; it does not independently verify snapshot completeness.',
     fundingWalletUrl:link('address',REWARDS.fundingWallet),programUrl:program?link('address',program):null});
   async function publicView() {
-    const out={policy:policy(),status:configured?'checking':'setup_required',poolBalanceLamports:null,epochs:[],note:configured?null:'Claim amounts are unavailable until the contract is deployed, the daily ledger is published and the escrow is funded.'};
+    const out={policy:policy(),status:configured?'checking':'setup_required',poolBalanceLamports:null,epochs:[],buybackContributions:[],note:configured?null:'Claim amounts are unavailable until the contract is deployed, the daily ledger is published and the escrow is funded.'};
     if(!configured)return out;
     try {
       const deployment=await deployed();out.upgradeAuthority=deployment.upgradeAuthority;
@@ -58,8 +58,14 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
         out.epochs.push({epochId:m.epochId,kind:m.kind,from:m.from,to:m.to,root:m.root,manifestHash:row.manifest_hash,
           creatorRewardsLamports:m.creatorRewardsLamports,holderPoolLamports:m.holderPoolLamports,paidLamports:v.state.claimed.toString(),remainingLamports:(v.state.total-v.state.claimed).toString(),
           escrow:v.addresses.epoch.toBase58(),escrowUrl:link('address',v.addresses.epoch.toBase58()),manifestUrl:`/api/rewards/epochs/${m.epochId}`,slot:v.slot});}
+      const contributions=db.all("SELECT amount_lamports,signature,epoch_id FROM sub01_reward_claim_intents WHERE destination='buyback' AND signature IS NOT NULL GROUP BY signature ORDER BY MAX(created_at) DESC LIMIT 30");
+      if(contributions.length){
+        const statuses=(await rpc('getSignatureStatuses',[contributions.map(r=>r.signature),{searchTransactionHistory:true}]))?.value;
+        if(!Array.isArray(statuses)||statuses.length!==contributions.length)throw new HttpError(503,'reward_contributions_unverified');
+        out.buybackContributions=contributions.filter((r,i)=>!statuses[i]?.err&&statuses[i]?.confirmationStatus==='finalized').map(r=>({epochId:r.epoch_id,amountLamports:r.amount_lamports,signature:r.signature,url:link('tx',r.signature),destination:REWARDS.fundingWallet,status:'contributed_not_burned'}));
+      }
       out.status='ready';out.note='The funding wallet balance is separate from funded daily escrows. Only published, funded periods can be claimed.'+(out.upgradeAuthority?' The contract is upgradeable by '+out.upgradeAuthority+'.':' The contract has no upgrade authority.');
-    } catch(e) {out.status='unavailable';out.note=e instanceof HttpError?e.message:'Could not verify the reward pool. No live amounts are shown.';out.poolBalanceLamports=null;out.epochs=[];}
+    } catch(e) {out.status='unavailable';out.note=e instanceof HttpError?e.message:'Could not verify the reward pool. No live amounts are shown.';out.poolBalanceLamports=null;out.epochs=[];out.buybackContributions=[];}
     return out;
   }
   async function personal(wallet) {
@@ -83,12 +89,14 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     db.run('INSERT INTO sub01_reward_epochs (epoch_id,root,manifest_json,manifest_hash,published_by,published_at) VALUES (?,?,?,?,?,?)',m.epochId,m.root,json,hash,wallet,Date.now());
     return {ok:true,epochId:m.epochId,manifestHash:hash};
   }
-  async function prepare(wallet,id) {
+  async function prepare(wallet,id,destination='wallet') {
+    if(!['wallet','buyback'].includes(destination))throw new HttpError(400,'bad_reward_destination');
     await deployed();const m=manifestFor(id),e=m.entries.find(e=>e.wallet===wallet);if(!e||BigInt(e.lamports)===0n)throw new HttpError(409,'no_reward','No reward is allocated to this wallet in that period.');
     const v=await verified(m,wallet);if(v.claimed)throw new HttpError(409,'already_claimed','This daily reward was already claimed.');
     const block=(await rpc('getLatestBlockhash',[{commitment:'finalized'}]))?.value;
     if(!block?.blockhash||!Number.isSafeInteger(block.lastValidBlockHeight))throw new HttpError(503,'reward_blockhash_unavailable');
     const tx=new Transaction({feePayer:new PublicKey(wallet),recentBlockhash:block.blockhash}).add(claimInstruction(m,wallet));
+    if(destination==='buyback')tx.add(SystemProgram.transfer({fromPubkey:new PublicKey(wallet),toPubkey:new PublicKey(REWARDS.fundingWallet),lamports:BigInt(e.lamports)}));
     const raw=tx.serialize({requireAllSignatures:false,verifySignatures:false}).toString('base64');
     const fee=(await rpc('getFeeForMessage',[tx.serializeMessage().toString('base64'),{commitment:'finalized'}]))?.value;
     const needsBitmap=!v.bitmap||v.bitmap.owner==='11111111111111111111111111111111';
@@ -99,12 +107,13 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     const sim=(await rpc('simulateTransaction',[raw,{encoding:'base64',sigVerify:false,replaceRecentBlockhash:true,commitment:'finalized'}]))?.value;
     if(!sim||sim.err)throw new HttpError(409,'reward_simulation_failed','The claim could not be simulated successfully. Nothing was sent.');
     const intent=token(16),expires=Date.now()+90000;
-    db.run('INSERT INTO sub01_reward_claim_intents (id,wallet,epoch_id,amount_lamports,message_hash,expires_at,last_valid_block_height,created_at) VALUES (?,?,?,?,?,?,?,?)',
-      intent,wallet,id,e.lamports,sha256(tx.serializeMessage()),expires,block.lastValidBlockHeight,Date.now());
+    db.run('INSERT INTO sub01_reward_claim_intents (id,wallet,epoch_id,amount_lamports,message_hash,expires_at,last_valid_block_height,created_at,destination) VALUES (?,?,?,?,?,?,?,?,?)',
+      intent,wallet,id,e.lamports,sha256(tx.serializeMessage()),expires,block.lastValidBlockHeight,Date.now(),destination);
     return {intentId:intent,transaction:raw,wallet,program,network,chain:network==='devnet'?'solana:devnet':'solana:mainnet',
-      amountLamports:e.lamports,networkFeeLamports:String(fee),claimRecordDepositLamports:String(rent),netLamports:(BigInt(e.lamports)-BigInt(fee)-BigInt(rent)).toString(),
+      destination,buybackWallet:destination==='buyback'?REWARDS.fundingWallet:null,contributionLamports:destination==='buyback'?e.lamports:'0',
+      amountLamports:e.lamports,networkFeeLamports:String(fee),claimRecordDepositLamports:String(rent),netLamports:((destination==='wallet'?BigInt(e.lamports):0n)-BigInt(fee)-BigInt(rent)).toString(),
       escrow:v.addresses.epoch.toBase58(),claimRecord:v.addresses.claims.toBase58(),escrowUrl:link('address',v.addresses.epoch.toBase58()),epochId:id,expiresAt:expires,
-      actions:['Receive your allocated SOL from the funded daily escrow.','Pay the network fee.','Create a claim bitmap if needed; its deposit is not refundable by this version.'],
+      actions:[destination==='buyback'?'Claim and atomically transfer your entire allocation to the project wallet for SUB-01 buyback and burn. This contributes SOL; it does not execute a token burn.':'Receive your allocated SOL from the funded daily escrow.','Pay the network fee.','Create a claim bitmap if needed; its deposit is not refundable by this version.'],
       doesNot:['No SUB-01 tokens are transferred or burned.','No token-spending approval or private key is requested.']};
   }
   async function submit(wallet,intentId,signed) {

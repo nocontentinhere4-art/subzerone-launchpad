@@ -70,6 +70,13 @@ test('backend verifies on-chain funding; accepts only the reviewed signed claim'
   await assert.rejects(pool.registerManifest(input(),alice.publicKey.toBase58()),e=>e.status===403);
   await pool.registerManifest(input(),REWARDS.fundingWallet);
   const personal=await pool.personal(alice.publicKey.toBase58());assert.equal(personal.claimableLamports,m.entries.find(e=>e.wallet===alice.publicKey.toBase58()).lamports);
+  await assert.rejects(pool.prepare(alice.publicKey.toBase58(),0,'unknown'),e=>e.status===400);
+  const donated=await pool.prepare(alice.publicKey.toBase58(),0,'buyback'),donationTx=Transaction.from(Buffer.from(donated.transaction,'base64'));
+  assert.equal(donated.destination,'buyback');assert.equal(donated.contributionLamports,donated.amountLamports);assert.equal(donated.netLamports,'-1452680');
+  assert.equal(donationTx.instructions.length,2);
+  const transfer=SystemProgram.programId;assert(donationTx.instructions[1].programId.equals(transfer));
+  assert.equal(donationTx.instructions[1].keys[1].pubkey.toBase58(),REWARDS.fundingWallet);
+  assert.equal(donationTx.instructions[1].data.readBigUInt64LE(4),BigInt(donated.amountLamports));
   const prepared=await pool.prepare(alice.publicKey.toBase58(),0),tx=Transaction.from(Buffer.from(prepared.transaction,'base64'));
   assert.equal(tx.instructions.length,1);assert.equal(tx.instructions[0].programId.toBase58(),program);tx.sign(alice);
   await assert.rejects(pool.submit(bob.publicKey.toBase58(),prepared.intentId,tx.serialize().toString('base64')),e=>e.status===404);
