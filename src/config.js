@@ -2,6 +2,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve, isAbsolute } from 'node:path';
 import { isSolanaAddress } from './util.js';
+import { rewardsSettings } from './rewards-pool.js';
 
 export const ROOT = resolve(import.meta.dirname, '..');
 
@@ -60,6 +61,7 @@ export function loadConfig(env = process.env) {
     encryptionKey: e('APP_ENCRYPTION_KEY'),           // 32 bytes, base64; protects X tokens and launch mint keys
     // SUB-01's own wallet: the fixed 20% creator-fee row of every project (launch.js). Without it nothing launches.
     sub01FeeWallet: e('SUB01_FEE_WALLET'),
+    rewards: rewardsSettings(env),
     // the city client's Vite build output; when set it is served at / and the launchpad home moves to /launchpad
     cityDist: e('CITY_DIST'),
     adminWallets: e('ADMIN_WALLETS').split(',').map((s) => s.trim()).filter(Boolean),

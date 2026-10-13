@@ -97,3 +97,7 @@ Development still worth doing:
   indexers.
 - Shared rate-limit store (Redis) before running more than one web instance.
 - Wallets that only implement `signAndSendTransaction` (not `signTransaction`) are not supported yet.
+
+## SUB-01 holder claim pool (2026-10-14)
+
+The public/private rewards API, funding manifest builder and native Solana Merkle escrow are implemented and locally tested. The initial budget is one SOL, split 20/30/50. The client shows wallet-specific allocations and reviews exact SOL claim costs; on-chain bitmaps prevent repeat claims. **Not deployed, not funded, no live claims and no buyback/burn execution.** A complete historical balance/fee indexer, reviewed deployment and owner funding signature are required. See [SUB01-REWARDS-POOL.md](SUB01-REWARDS-POOL.md).

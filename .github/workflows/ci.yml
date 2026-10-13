@@ -23,3 +23,19 @@ jobs:
       # --ignore-scripts, like the Dockerfile: the pump SDK's optional native bigint binding falls back to pure JS
       - run: npm ci --ignore-scripts
       - run: npm test
+  rewards-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup default stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            programs/sub01-rewards/target
+          key: rewards-rust-${{ runner.os }}-${{ hashFiles('programs/sub01-rewards/Cargo.lock') }}
+      # Offline bank tests only. The separate SBF smoke test requires a reviewed
+      # compiled artifact and is intentionally ignored in this native job.
+      - run: cargo test --locked --manifest-path programs/sub01-rewards/Cargo.toml

@@ -1325,3 +1325,7 @@ allow-downloads"`: it is another origin, and its kit needs scripts and its own o
 Set `CITY_DIST` to the absolute path of the city's `dist/`. Then `/` is the city, `/assets/*` its files (immutable
 cache), and the launchpad's home page is `/launchpad` (all other launchpad pages keep their paths). Details and the CSP
 check: DEPLOY.md, "City client on the same origin".
+
+## SUB-01 reward claim pool
+
+The existing SUB-01 mint has a separate funded Merkle claim pool. See [SUB01-REWARDS-POOL.md](SUB01-REWARDS-POOL.md) for the policy, trust model, activation and endpoint contract. The public `GET /api/rewards/pool` endpoint returns the funding address, reviewed claim program, live verification status and funded epoch records. Authenticated `GET /api/rewards/me` returns the session wallet's claimable/paid/published totals as integer lamport strings and its proofs. Null monetary fields mean unavailable, never zero. Claim preparation, signing, submission and finalization are separate steps; no treasury key is held by the backend. Current/unpublished holding time is not presented as claimable.
