@@ -8,7 +8,7 @@ export const REWARDS = Object.freeze({
   startsAt: '2026-10-13T22:00:00Z', daySeconds: 86400,
   holderBps: 2000, buybackBps: 3000, projectBps: 5000,
   bootstrapEpochId: 100000, initialBudgetLamports: '1000000000',
-  weighting: 'time-weighted-balance', epochBytes: 120, claimsBytes: 80,
+  weighting: 'snapshot-balance', epochBytes: 120, claimsBytes: 80,
 });
 const UINT64 = (1n << 64n) - 1n;
 export function uint(value) {
@@ -47,20 +47,22 @@ export function rewardAddresses(program,id,wallet=null) {
 
 // Canonical weights are declared by the publisher; this reproducible allocation
 // proves the arithmetic. The on-chain root cannot independently verify the indexer.
-export function buildRewardManifest({program,epochId,creatorRewardsLamports,entries,excludedWallets,sourceDigest,snapshotEnd},t=Date.now()) {
+export function buildRewardManifest({program,epochId,creatorRewardsLamports,entries,excludedWallets,sourceDigest,snapshotEnd,snapshotSlot,snapshotAt},t=Date.now()) {
   new PublicKey(program);
   const bootstrap=epochId===REWARDS.bootstrapEpochId;
   const period=bootstrap?{from:Date.parse(REWARDS.startsAt),to:snapshotEnd}:epochBounds(epochId);
   const creator=uint(creatorRewardsLamports),pool=creator/5n;
   if(bootstrap&&(!Number.isSafeInteger(snapshotEnd)||snapshotEnd%1000!==0||snapshotEnd<=period.from||creator.toString()!==REWARDS.initialBudgetLamports))throw new HttpError(400,'bad_bootstrap_snapshot');
   if(period.to>t || pool===0n)throw new HttpError(400,'period_not_ready','Only closed, nonempty periods can be funded.');
-  if(!/^[a-f0-9]{64}$/.test(sourceDigest||''))throw new HttpError(400,'missing_reward_evidence','Supply the SHA-256 digest of the complete balance and fee evidence.');
+  // One complete finalized snapshot, taken after close and before publication.
+  if(!Number.isSafeInteger(snapshotSlot)||snapshotSlot<=0||!Number.isSafeInteger(snapshotAt)||snapshotAt<period.to||snapshotAt>t)throw new HttpError(400,'bad_reward_snapshot');
+  if(!/^[a-f0-9]{64}$/.test(sourceDigest||''))throw new HttpError(400,'missing_reward_evidence','Supply the SHA-256 digest of the complete finalized snapshot and fee evidence.');
   if(!Array.isArray(excludedWallets)||excludedWallets.length>1000)throw new HttpError(400,'bad_exclusions');
   const excluded=[...new Set([REWARDS.fundingWallet,...excludedWallets])].sort();excluded.forEach(w=>new PublicKey(w));
   if(!Array.isArray(entries)||entries.length===0||entries.length>10000)throw new HttpError(400,'bad_reward_entries');
   const seen=new Set();const weights=entries.map(e=>{
     new PublicKey(e.wallet);if(seen.has(e.wallet)||excluded.includes(e.wallet))throw new HttpError(400,'duplicate_or_excluded_wallet');seen.add(e.wallet);
-    if(typeof e.weight!=='string'||!/^[1-9]\d{0,38}$/.test(e.weight)||BigInt(e.weight)>=(1n<<128n))throw new HttpError(400,'bad_reward_weight');
+    if(typeof e.weight!=='string'||!/^[1-9]\d{0,38}$/.test(e.weight)||BigInt(e.weight)>UINT64)throw new HttpError(400,'bad_reward_weight');
     const weight=BigInt(e.weight);return {wallet:e.wallet,weight};
   }).sort((a,b)=>(a.wallet<b.wallet?-1:a.wallet>b.wallet?1:0));
   const totalWeight=weights.reduce((sum,e)=>sum+e.weight,0n);
@@ -73,7 +75,7 @@ export function buildRewardManifest({program,epochId,creatorRewardsLamports,entr
   const tree=merkle(leaves);
   return {version:1,program,mint:REWARDS.mint,fundingWallet:REWARDS.fundingWallet,epochId,kind:bootstrap?'bootstrap':'daily',from:period.from,to:period.to,
     creatorRewardsLamports:creator.toString(),holderPoolLamports:pool.toString(),totalWeight:totalWeight.toString(),
-    excludedWallets:excluded,sourceDigest,root:tree.root,entries:final};
+    weighting:REWARDS.weighting,snapshotSlot,snapshotAt,excludedWallets:excluded,sourceDigest,root:tree.root,entries:final};
 }
 export function manifestTree(m) {return merkle(m.entries.map(e=>rewardLeaf(m.program,m.epochId,e.wallet,BigInt(e.lamports))));}
 export function claimInstruction(m,wallet) {

@@ -44,7 +44,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   }
   const policy=()=>({...REWARDS,program,network,period:'24h',claimMode:'funded-merkle-escrow',
     exclusions:'Liquidity pools and project wallets are excluded. Each manifest lists the exact excluded addresses.',
-    allocationTrust:'The publisher supplies indexed balance weights and attributable creator rewards. The contract enforces the published root, funded amounts and one claim per wallet per period; it does not verify historical indexing.',
+    allocationTrust:'The publisher supplies finalized snapshot balances and attributable creator rewards. The contract enforces the published root, funded amounts and one claim per wallet per period; it does not independently verify snapshot completeness.',
     fundingWalletUrl:link('address',REWARDS.fundingWallet),programUrl:program?link('address',program):null});
   async function publicView() {
     const out={policy:policy(),status:configured?'checking':'setup_required',poolBalanceLamports:null,epochs:[],note:configured?null:'Claim amounts are unavailable until the contract is deployed, the daily ledger is published and the escrow is funded.'};

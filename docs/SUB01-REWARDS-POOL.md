@@ -8,10 +8,10 @@ Status: implemented and locally tested; **not deployed or funded**. No mainnet t
 - Effective October 14, 2026 in Europe/Rome; cutoff is `2026-10-13T22:00:00Z`.
 - Funding/publishing wallet: `HMPUiULXumamWDhuoKap6ty2hQ7V7GQwi8PZ7pGx6STQ`.
 - Daily periods are fixed 24-hour intervals anchored at the cutoff. They do not change length at daylight-saving transitions; the UI displays dates in Europe/Rome.
-- Eligible holders receive 20% by time-weighted eligible balance. Liquidity pools and project wallets are excluded. The funding wallet is always excluded; all other exclusions must be declared in each public manifest.
+- Eligible holders receive 20% proportionally to eligible token balances at one fixed finalized snapshot. Liquidity pools and project wallets are excluded. The funding wallet is always excluded; all other exclusions must be declared in each public manifest.
 - 30% is a buyback-and-burn SOL budget; 50% funds the project. Buying or burning is a separate owner treasury action, not performed by this contract or API.
 - The owner approved a **one-SOL initial budget**, overriding the earlier proposed 0.2972-SOL seed. It provides 0.2 SOL to the bootstrap holder escrow, earmarks 0.3 SOL for buyback/burn, and leaves 0.5 SOL for the project. The rest of the wallet is outside that allocation. The seed is a discretionary initial contribution, not a claim that one SOL of new creator rewards was generated today.
-- A separate bootstrap epoch, ID `100000`, permits an initial allocation before the first daily close. Its snapshot covers only time since the cutoff; funding must be exactly the holder portion of the approved one-SOL initial budget. Daily epoch 0 is the first full 24-hour period.
+- A separate bootstrap epoch, ID `100000`, permits an initial allocation before the first daily close. Its snapshot is a complete current holder snapshot taken after the cutoff; funding must be exactly the holder portion of the approved one-SOL initial budget. Daily epoch 0 is the first full 24-hour period.
 
 ## On-chain enforcement
 
@@ -27,7 +27,7 @@ An upgrade authority can change program code, including these guarantees. The pu
 
 On-chain state establishes the funded amount, immutable root under the current code, and claimed status. Public manifests allow anyone to reproduce the allocation, rounding and Merkle tree. The contract does **not** independently verify historical holdings or fee attribution. Those come from the publisher's indexer.
 
-Before funding, obtain a complete verified baseline at the cutoff and finalized balance changes covering the interval, including transfers, burns, mint changes and closed token accounts. A current balance snapshot or only the largest holders is insufficient for the adopted time-weighted rule. Supply the complete evidence's SHA-256 digest and make that evidence independently available; `sourceDigest` alone is not evidence of correct indexing. Do not label missing history as a zero balance or invent claimable amounts.
+Before funding, obtain a complete finalized holder snapshot, aggregate every token account by owner, and verify liquidity/project exclusions. A largest-holder list is insufficient. Supply `snapshotSlot` (positive safe integer), `snapshotAt` (integer milliseconds at or after the period close, no later than publication), and the complete snapshot/fee evidence SHA-256 digest. Entries’ `weight` values are raw token balance units (unsigned 64-bit), not holding time. Make evidence independently available: a digest alone does not prove completeness. Freeze each allocation; transfers after the snapshot do not alter rewards or permit repeat claims. Published allocations remain claimable on later days. Daily accounting, snapshot collection, publication and funding are still operator steps, not an active scheduler.
 
 Only new creator rewards attributable to this mint are eligible in daily periods. Do not count old unclaimed fees as new income when collected, or count seed funding again as daily income. A shared creator vault may include several mints, so vault balance alone does not prove SUB-01 revenue.
 
@@ -57,7 +57,7 @@ SUB01_REWARDS_PROGRAM_BYTES=<exact binary byte length>
 
 1. Build the reviewed binary with Solana's SBF tools; test it on the local bank and then devnet. Retain the program account keypair privately; it is not a treasury wallet.
 2. Deploy through an owner-authorized signing flow, verify program ID and bytecode hash, and decide the upgrade-authority policy. Reserve deployment rent and network costs separately from holder/buyback funds; temporary deployment buffers may require additional peak liquidity.
-3. Connect the complete historical indexer and verify exclusions. Produce the bootstrap input with `snapshotEnd` in integer milliseconds, `creatorRewardsLamports: "1000000000"`, and `epochId: 100000`. This field is the funding basis for bootstrap, not new fee income.
+3. Connect the complete finalized holder snapshot source and verify exclusions. Produce the bootstrap input with `snapshotSlot`, `snapshotAt` at or after its end, `snapshotEnd` in integer milliseconds, `creatorRewardsLamports: "1000000000"`, and `epochId: 100000`. This field is the funding basis for bootstrap, not new fee income.
 4. `node scripts/rewards-prepare.js --input verified-weights.json --output funding-plan.json` prepares the manifest and instruction offline. Optional `--rpc <devnet HTTPS endpoint>` adds an unsigned, simulated funding transaction. This helper checks arithmetic, not the truth of the indexer history. Nothing is signed or sent.
 5. Review the exact escrow, root, period, funding basis and 0.2-SOL deposit; sign funding with the specified wallet. Wait for finalization, then register the same input using its authenticated session.
 6. Configure the production API, deploy the client/backend together, and verify a small eligible claim. New daily allocations require complete finalized evidence and fresh funding; there is no scheduler/indexer falsely claiming to do this automatically.

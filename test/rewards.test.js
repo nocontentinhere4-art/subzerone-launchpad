@@ -8,8 +8,8 @@ import { sha256 } from '../src/util.js';
 
 const program=Keypair.generate().publicKey.toBase58();
 const alice=Keypair.generate(),bob=Keypair.generate();
-const input=(epochId=0)=>({program,epochId,creatorRewardsLamports:'1000000000',sourceDigest:'a'.repeat(64),excludedWallets:[],
-  entries:[{wallet:alice.publicKey.toBase58(),weight:'86400000000000000000000'},{wallet:bob.publicKey.toBase58(),weight:'172800000000000000000000'}]});
+const input=(epochId=0)=>({program,epochId,creatorRewardsLamports:'1000000000',sourceDigest:'a'.repeat(64),snapshotSlot:456606960,snapshotAt:Date.parse(REWARDS.startsAt)+86400000,excludedWallets:[],
+  entries:[{wallet:alice.publicKey.toBase58(),weight:'100000000000'},{wallet:bob.publicKey.toBase58(),weight:'200000000000'}]});
 const after=Date.parse(REWARDS.startsAt)+3*86400000;
 const account=(data,owner=program,lamports=200000000+1726080,executable=false)=>({data:[data.toString('base64'),'base64'],owner,lamports,executable});
 function epochAccount(m) {const b=Buffer.alloc(120);b.write('S01EPOCH');new PublicKey(REWARDS.fundingWallet).toBuffer().copy(b,8);Buffer.from(m.root,'hex').copy(b,40);
@@ -17,6 +17,10 @@ function epochAccount(m) {const b=Buffer.alloc(120);b.write('S01EPOCH');new Publ
 
 test('allocation is reproducible, preserves lamports and binds every proof',()=>{
   const m=buildRewardManifest(input(),after),tree=manifestTree(m);
+  assert.equal(m.weighting,'snapshot-balance');
+  assert.throws(()=>buildRewardManifest({...input(),snapshotSlot:undefined},after));
+  assert.throws(()=>buildRewardManifest({...input(),snapshotAt:after+1},after));
+  assert.throws(()=>buildRewardManifest({...input(),snapshotAt:Date.parse(REWARDS.startsAt)},after));
   assert.equal(m.entries.reduce((s,e)=>s+BigInt(e.lamports),0n),200000000n);
   assert.equal(buildRewardManifest({...input(),entries:[...input().entries].reverse()},after).root,m.root);
   for(let i=0;i<m.entries.length;i++){const e=m.entries[i],proof=tree.proof(i);assert(verifyRewardProof(program,0,e.wallet,BigInt(e.lamports),proof,m.root));
