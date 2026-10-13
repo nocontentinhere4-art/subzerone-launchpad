@@ -1,6 +1,6 @@
 # SUB-01 funded claim pool
 
-Status: implemented and locally tested; **not deployed or funded**. No mainnet transaction has been sent. Historical holder indexing is a required external input, not implemented by this change. The API refuses claims without the reviewed program, a published allocation and a fully funded escrow.
+Status: implemented and locally tested; **not deployed or funded**. No mainnet transaction has been sent. Complete finalized holder snapshots and verified fee attribution are required before funding. The API refuses claims without the reviewed program, a published allocation and a fully funded escrow.
 
 ## Adopted policy
 
@@ -25,7 +25,7 @@ An upgrade authority can change program code, including these guarantees. The pu
 
 ## What the public proof does and does not establish
 
-On-chain state establishes the funded amount, immutable root under the current code, and claimed status. Public manifests allow anyone to reproduce the allocation, rounding and Merkle tree. The contract does **not** independently verify historical holdings or fee attribution. Those come from the publisher's indexer.
+On-chain state establishes the funded amount, immutable root under the current code, and claimed status. Public manifests allow anyone to reproduce the allocation, rounding and Merkle tree. The contract does **not** independently verify snapshot completeness or fee attribution. Those come from the publisher’s independently auditable snapshot and fee evidence.
 
 Before funding, obtain a complete finalized holder snapshot, aggregate every token account by owner, and verify liquidity/project exclusions. A largest-holder list is insufficient. Supply `snapshotSlot` (positive safe integer), `snapshotAt` (integer milliseconds at or after the period close, no later than publication), and the complete snapshot/fee evidence SHA-256 digest. Entries’ `weight` values are raw token balance units (unsigned 64-bit), not holding time. Make evidence independently available: a digest alone does not prove completeness. Freeze each allocation; transfers after the snapshot do not alter rewards or permit repeat claims. Published allocations remain claimable on later days. Daily accounting, snapshot collection, publication and funding are still operator steps, not an active scheduler.
 
@@ -71,3 +71,7 @@ No mainnet deploy, funding, buyback, burn, fee collection or authority change is
 - Native bank tests exercise publication, funding, claims, unauthorized recipients, root replacement and replay; bootstrap shares the original bitmap without another rent deposit.
 - `cargo test ... deployed_binary_claim_smoke -- --ignored` with `BPF_OUT_DIR` checks the compiled SBF bytecode's payout and double-claim rejection in Solana's local bank.
 - Client tests independently verify proofs and actual unsigned transaction bytes, rejecting hidden transfers, altered amounts and unsafe explorer links. Browser checks exercise the review screen with isolated fixtures; fixture funds are never production data.
+
+## Offline snapshot review
+
+`node scripts/rewards-snapshot.js --input finalized-rpc-export.json --exclusions exclusion-reasons.json --output snapshot-review.json` validates token account mint/program/state, aggregates balances by owner and records the evidence digest and finalized slot/block time. Input contains `mint`, `tokenProgram`, `commitment: "finalized"`, `snapshotAt` from the snapshot slot’s block time, and the full `getProgramAccounts` RPC `response` with context. Exclusions contain public `{wallet, reason}` objects. Unknown program-derived owners are reported as unresolved instead of silently being allocated or excluded. Do not fund until these custody accounts and project-wallet exclusions are resolved. This offline helper never signs or sends transactions. A provider response must still be complete; the local parser cannot prove completeness from account data alone.
