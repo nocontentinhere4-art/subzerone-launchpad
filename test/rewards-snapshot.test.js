@@ -28,3 +28,12 @@ test('snapshot rejects partial/error, mixed mint, duplicate accounts and unfinal
   const wrong = evidence(), b = Buffer.from(wrong.response.result.value[0].account.data[0], 'base64'); Keypair.generate().publicKey.toBuffer().copy(b); wrong.response.result.value[0].account.data[0] = b.toString('base64'); assert.throws(() => normalizeRewardSnapshot(wrong));
   assert.throws(() => normalizeRewardSnapshot(evidence(), [{ wallet: pda.toBase58(), reason: '' }]));
 });
+
+test('finalized system-owned PDA custody remains eligible; incomplete evidence cannot resolve it', () => {
+  const e = evidence();
+  e.custody = { commitment: 'finalized', addresses: [pda.toBase58()], response: { result: { context: { slot: 124 }, value: [{ owner: '11111111111111111111111111111111', executable: false, data: ['', 'base64'] }] } } };
+  const s = normalizeRewardSnapshot(e);
+  assert.equal(s.readyForAllocation, true); assert.equal(s.eligibleRawBalance, '9'); assert.equal(s.eligibleCustody.length, 1);
+  e.custody.response.result.context.slot = 122; assert.throws(() => normalizeRewardSnapshot(e));
+  e.custody.response.result.context.slot = 124; e.custody.response.result.value = []; assert.throws(() => normalizeRewardSnapshot(e));
+});
