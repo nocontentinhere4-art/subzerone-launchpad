@@ -7,6 +7,8 @@ test('sign-in: valid signature creates a session', () => {
   const { cfg, db } = makeEnv();
   const w = wallet();
   const n = issueNonce(db, cfg, w.address);
+  assert.match(n.nonce, /^[a-zA-Z0-9]{32}$/);
+  assert.ok(n.message.includes(`Nonce: ${n.nonce}\n`));
   assert.match(n.message, /not a transaction/);
   const cookie = verifySignIn(db, cfg, { wallet: w.address, nonce: n.nonce, signature: w.signText(n.message) });
   assert.equal(sessionUser(db, cookie).wallet, w.address);
