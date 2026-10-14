@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { reviewWalletAdjustedReward } from './rewards-wallet-review.js';
 import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
 import { HttpError, sha256, token, isSolanaAddress } from './util.js';
 import { REWARDS, buildRewardManifest, manifestTree, rewardAddresses, decodeEpoch, hasClaimed, claimInstruction, publishInstruction, epochBounds } from './rewards-protocol.js';
@@ -121,14 +122,16 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     if(!Number.isSafeInteger(fee)||fee<0||!Number.isSafeInteger(rent)||rent<0)throw new HttpError(503,'reward_cost_unknown');
     const rentTopUp=Math.max(0,rent-(existing?.owner==='11111111111111111111111111111111'?existing.lamports:0));
     const total=BigInt(m.holderPoolLamports)+BigInt(rentTopUp)+BigInt(fee);
+    const feeCap=Math.max(fee,100000),maximumTotal=BigInt(m.holderPoolLamports)+BigInt(rentTopUp)+BigInt(feeCap);
     const balance=(await rpc('getBalance',[wallet,{commitment:'finalized'}]))?.value;
-    if(!Number.isSafeInteger(balance)||BigInt(balance)<total)throw new HttpError(409,'funding_cost_balance','The funding wallet needs the holder deposit, escrow rent and network fee.');
+    if(!Number.isSafeInteger(balance)||BigInt(balance)<maximumTotal)throw new HttpError(409,'funding_cost_balance','The funding wallet needs the holder deposit, escrow rent and maximum network fee.');
     const sim=(await rpc('simulateTransaction',[raw,{encoding:'base64',sigVerify:false,replaceRecentBlockhash:true,commitment:'finalized'}]))?.value;
     if(!sim||sim.err)throw new HttpError(409,'reward_simulation_failed','Initial funding simulation failed. Nothing was sent.');
     const intent=token(16),expires=Date.now()+90000;
     db.run('INSERT INTO sub01_reward_funding_intents (id,wallet,epoch_id,input_json,message_hash,expires_at,last_valid_block_height,created_at) VALUES (?,?,?,?,?,?,?,?)',intent,wallet,m.epochId,JSON.stringify(input),sha256(tx.serializeMessage()),expires,block.lastValidBlockHeight,Date.now());
+    db.run('UPDATE sub01_reward_funding_intents SET transaction_b64=?,base_network_fee_lamports=?,max_network_fee_lamports=? WHERE id=?',raw,String(fee),String(feeCap),intent);
     return {status:'awaiting_signature',intentId:intent,transaction:raw,wallet,program,network,chain:network==='devnet'?'solana:devnet':'solana:mainnet',manifest:m,epochId:m.epochId,root:m.root,snapshotEnd:m.to,creatorRewardsLamports:m.creatorRewardsLamports,
-      holderDepositLamports:m.holderPoolLamports,escrowRentLamports:String(rentTopUp),networkFeeLamports:String(fee),totalCostLamports:total.toString(),escrow,escrowUrl:link('address',escrow),expiresAt:expires};
+      holderDepositLamports:m.holderPoolLamports,escrowRentLamports:String(rentTopUp),networkFeeLamports:String(fee),maxNetworkFeeLamports:String(feeCap),totalCostLamports:total.toString(),maximumTotalCostLamports:maximumTotal.toString(),escrow,escrowUrl:link('address',escrow),expiresAt:expires};
   }
   async function prepare(wallet,id,destination='wallet') {
     if(!['wallet','buyback'].includes(destination))throw new HttpError(400,'bad_reward_destination');
@@ -143,16 +146,18 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     const needsBitmap=!v.bitmap||v.bitmap.owner==='11111111111111111111111111111111';
     const rent=needsBitmap?await rpc('getMinimumBalanceForRentExemption',[REWARDS.claimsBytes,{commitment:'finalized'}]):0;
     if(!Number.isSafeInteger(fee)||fee<0||!Number.isSafeInteger(rent)||rent<0)throw new HttpError(503,'reward_cost_unknown');
+    const feeCap=Math.max(fee,100000);
     const balance=(await rpc('getBalance',[wallet,{commitment:'finalized'}]))?.value;
-    if(!Number.isSafeInteger(balance)||BigInt(balance)<BigInt(fee)+BigInt(rent))throw new HttpError(409,'claim_cost_balance','Your wallet needs enough SOL for the network fee and claim-record deposit before claiming.');
+    if(!Number.isSafeInteger(balance)||BigInt(balance)<BigInt(feeCap)+BigInt(rent))throw new HttpError(409,'claim_cost_balance','Your wallet needs enough SOL for the maximum network fee and claim-record deposit before claiming.');
     const sim=(await rpc('simulateTransaction',[raw,{encoding:'base64',sigVerify:false,replaceRecentBlockhash:true,commitment:'finalized'}]))?.value;
     if(!sim||sim.err)throw new HttpError(409,'reward_simulation_failed','The claim could not be simulated successfully. Nothing was sent.');
     const intent=token(16),expires=Date.now()+90000;
     db.run('INSERT INTO sub01_reward_claim_intents (id,wallet,epoch_id,amount_lamports,message_hash,expires_at,last_valid_block_height,created_at,destination) VALUES (?,?,?,?,?,?,?,?,?)',
       intent,wallet,id,e.lamports,sha256(tx.serializeMessage()),expires,block.lastValidBlockHeight,Date.now(),destination);
+    db.run('UPDATE sub01_reward_claim_intents SET transaction_b64=?,base_network_fee_lamports=?,max_network_fee_lamports=? WHERE id=?',raw,String(fee),String(feeCap),intent);
     return {intentId:intent,transaction:raw,wallet,program,network,chain:network==='devnet'?'solana:devnet':'solana:mainnet',
       destination,buybackWallet:destination==='buyback'?REWARDS.fundingWallet:null,contributionLamports:destination==='buyback'?e.lamports:'0',
-      amountLamports:e.lamports,networkFeeLamports:String(fee),claimRecordDepositLamports:String(rent),netLamports:((destination==='wallet'?BigInt(e.lamports):0n)-BigInt(fee)-BigInt(rent)).toString(),
+      amountLamports:e.lamports,networkFeeLamports:String(fee),maxNetworkFeeLamports:String(feeCap),claimRecordDepositLamports:String(rent),netLamports:((destination==='wallet'?BigInt(e.lamports):0n)-BigInt(feeCap)-BigInt(rent)).toString(),
       escrow:v.addresses.epoch.toBase58(),claimRecord:v.addresses.claims.toBase58(),escrowUrl:link('address',v.addresses.epoch.toBase58()),epochId:id,expiresAt:expires,
       actions:[destination==='buyback'?'Claim and atomically transfer your entire allocation to the project wallet for SUB-01 buyback and burn. This contributes SOL; it does not execute a token burn.':'Receive your allocated SOL from the funded daily escrow.','Pay the network fee.','Create a claim bitmap if needed; its deposit is not refundable by this version.'],
       doesNot:['No SUB-01 tokens are transferred or burned.','No token-spending approval or private key is requested.']};
@@ -164,7 +169,15 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     if(Date.now()>intent.expires_at)throw new HttpError(409,'reward_intent_expired');
     if(typeof signed!=='string'||signed.length>6000||!/^[A-Za-z0-9+/]+={0,2}$/.test(signed))throw new HttpError(400,'invalid_reward_transaction');
     let tx;try{tx=Transaction.from(Buffer.from(signed,'base64'));}catch{throw new HttpError(400,'invalid_reward_transaction');}
-    if(tx.feePayer?.toBase58()!==wallet||sha256(tx.serializeMessage())!==intent.message_hash||!tx.verifySignatures())throw new HttpError(400,'reward_transaction_mismatch','The signed transaction differs from the reviewed claim.');
+    const exact=sha256(tx.serializeMessage())===intent.message_hash;
+    const bounded=intent.transaction_b64&&reviewWalletAdjustedReward(intent.transaction_b64,signed,{baseNetworkFeeLamports:intent.base_network_fee_lamports,maxNetworkFeeLamports:intent.max_network_fee_lamports});
+    if(tx.feePayer?.toBase58()!==wallet||(!exact&&!bounded)||!tx.verifySignatures())throw new HttpError(400,'reward_transaction_mismatch','The wallet changed the reviewed actions or exceeded the approved network fee. Nothing was sent.');
+    if(!exact){
+      const fee=(await rpc('getFeeForMessage',[tx.serializeMessage().toString('base64'),{commitment:'confirmed'}]))?.value;
+      if(!Number.isSafeInteger(fee)||fee<0||BigInt(fee)>BigInt(intent.max_network_fee_lamports))throw new HttpError(400,'reward_transaction_mismatch','The network fee exceeds the reviewed maximum. Nothing was sent.');
+      const sim=(await rpc('simulateTransaction',[signed,{encoding:'base64',sigVerify:true,commitment:'confirmed'}]))?.value;
+      if(!sim||sim.err)throw new HttpError(409,'reward_simulation_failed','The signed reward transaction failed simulation. Nothing was sent.');
+    }
     const height=await rpc('getBlockHeight',[{commitment:'finalized'}]);if(!Number.isSafeInteger(height)||height>intent.last_valid_block_height)throw new HttpError(409,'reward_intent_expired');
     const signature=await rpc('sendTransaction',[signed,{encoding:'base64',skipPreflight:false,preflightCommitment:'confirmed',maxRetries:3}]);
     if(typeof signature!=='string'||!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(signature))throw new HttpError(503,'reward_submit_unknown');

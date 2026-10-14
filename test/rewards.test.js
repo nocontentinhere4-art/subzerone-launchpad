@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { Keypair, PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
+import { Keypair, PublicKey, Transaction, SystemProgram, ComputeBudgetProgram } from '@solana/web3.js';
 import { makeEnv, harness, user } from './helpers.js';
 import { REWARDS, buildRewardManifest, manifestTree, verifyRewardProof, rewardAddresses, hasClaimed, publishInstruction, epochBounds, u64 } from '../src/rewards-protocol.js';
 import { createRewardsPool } from '../src/rewards-pool.js';
@@ -72,7 +72,7 @@ test('backend verifies on-chain funding; accepts only the reviewed signed claim'
   const personal=await pool.personal(alice.publicKey.toBase58());assert.equal(personal.claimableLamports,m.entries.find(e=>e.wallet===alice.publicKey.toBase58()).lamports);
   await assert.rejects(pool.prepare(alice.publicKey.toBase58(),0,'unknown'),e=>e.status===400);
   const donated=await pool.prepare(alice.publicKey.toBase58(),0,'buyback'),donationTx=Transaction.from(Buffer.from(donated.transaction,'base64'));
-  assert.equal(donated.destination,'buyback');assert.equal(donated.contributionLamports,donated.amountLamports);assert.equal(donated.netLamports,'-1452680');
+  assert.equal(donated.destination,'buyback');assert.equal(donated.contributionLamports,donated.amountLamports);assert.equal(donated.netLamports,'-1547680');
   assert.equal(donationTx.instructions.length,2);
   const transfer=SystemProgram.programId;assert(donationTx.instructions[1].programId.equals(transfer));
   assert.equal(donationTx.instructions[1].keys[1].pubkey.toBase58(),REWARDS.fundingWallet);
@@ -85,6 +85,9 @@ test('backend verifies on-chain funding; accepts only the reviewed signed claim'
   const out=await pool.submit(alice.publicKey.toBase58(),prepared.intentId,tx.serialize().toString('base64'));assert.equal(out.status,'submitted');
   await pool.submit(alice.publicKey.toBase58(),prepared.intentId,tx.serialize().toString('base64'));assert.equal(state.sends,1);
   assert.equal((await pool.status(alice.publicKey.toBase58(),prepared.intentId)).status,'finalized');
+  const prioritized=await pool.prepare(alice.publicKey.toBase58(),0),priorityTx=Transaction.from(Buffer.from(prioritized.transaction,'base64'));
+  priorityTx.add(ComputeBudgetProgram.setComputeUnitLimit({units:80000}),ComputeBudgetProgram.setComputeUnitPrice({microLamports:900000}));priorityTx.sign(alice);
+  assert.equal((await pool.submit(alice.publicKey.toBase58(),prioritized.intentId,priorityTx.serialize().toString('base64'))).status,'submitted');assert.equal(state.sends,2);
   state.epoch.lamports=1;assert.equal((await pool.publicView()).status,'unavailable');
   await assert.rejects(pool.prepare(alice.publicKey.toBase58(),0));db.close();
 });
