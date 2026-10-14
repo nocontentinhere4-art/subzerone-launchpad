@@ -104,6 +104,10 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   // SUB-01 only: funded daily escrows, authenticated private entitlements and
   // immutable public manifests. No private wallet key is held by this service.
   r.get('/api/rewards/pool', async (ctx) => { limit('reward_read',ctx.ip); return rewards.publicView(); });
+  r.get('/api/rewards/bootstrap', async ctx => {limit('reward_read',ctx.ip);return rewards.bootstrapView();});
+  r.post('/api/rewards/funding/prepare', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);return rewards.prepareFunding(u.wallet);});
+  r.post('/api/rewards/funding/submit', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);const b=await ctx.body();return rewards.submitFunding(u.wallet,b.intentId,b.signed);});
+  r.get('/api/rewards/funding/:intent', async ctx => {const u=requireUser(ctx);limit('reward_read',ctx.ip);return rewards.fundingStatus(u.wallet,ctx.params.intent);});
   r.get('/api/rewards/me', async (ctx) => { const u=requireUser(ctx); limit('reward_read',ctx.ip); return rewards.personal(u.wallet); });
   r.get('/api/rewards/epochs/:epoch', ctx => rewards.manifest(Number(ctx.params.epoch)));
   r.post('/api/rewards/epochs', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);return rewards.registerManifest(await ctx.body(2000000),u.wallet);});

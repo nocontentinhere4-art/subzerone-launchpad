@@ -92,9 +92,50 @@ test('backend verifies on-chain funding; accepts only the reviewed signed claim'
 test('public pool is readable without sign-in; claim APIs require the session wallet',async()=>{
   const h=await harness();try{const w=user(h.db),client=h.client(w);
     assert.equal((await client.call('GET','/api/rewards/pool')).json.status,'setup_required');
+    assert.equal((await client.call('GET','/api/rewards/bootstrap')).json.status,'setup_required');
+    assert.equal((await client.call('POST','/api/rewards/funding/prepare',{})).status,401);
     assert.equal((await client.call('GET','/api/rewards/me')).status,401);
     assert.equal((await client.call('POST','/api/rewards/claims/prepare',{epochId:0})).status,401);
-    await client.signIn();const me=await client.call('GET','/api/rewards/me');assert.equal(me.json.wallet,w.address);assert.equal(me.json.claimableLamports,null);
+    await client.signIn();assert.equal((await client.call('POST','/api/rewards/funding/prepare',{})).status,403);const me=await client.call('GET','/api/rewards/me');assert.equal(me.json.wallet,w.address);assert.equal(me.json.claimableLamports,null);
     assert.equal((await client.call('POST','/api/rewards/claims/prepare',{epochId:0})).status,503);
   }finally{h.close();}
+});
+
+test('initial funding is funder-only, exactly reviewed and registers only after finalized funding',async()=>{
+  const {cfg,db}=makeEnv(),snapshotEnd=Date.parse(REWARDS.startsAt)+100000;
+  const bootstrap={...input(REWARDS.bootstrapEpochId),snapshotEnd};
+  cfg.rewards={program,network:'devnet',rpcUrl:'https://rpc.test',programHash:sha256(Buffer.from([1,2,3])),programBytes:3,bootstrapInput:bootstrap};
+  const dataAddress=Keypair.generate().publicKey,manifest=buildRewardManifest(bootstrap,after);let funded=false;
+  const fetchImpl=async(url,init)=>{const {method,params}=JSON.parse(init.body);let result;
+    if(method==='getAccountInfo'){
+      if(params[0]===program){const b=Buffer.alloc(36);b.writeUInt32LE(2);dataAddress.toBuffer().copy(b,4);result={value:account(b,'BPFLoaderUpgradeab1e11111111111111111111111',1,true)};}
+      else if(params[0]===dataAddress.toBase58()){const b=Buffer.alloc(48);b.writeUInt32LE(3);Buffer.from([1,2,3]).copy(b,45);result={value:account(b,'BPFLoaderUpgradeab1e11111111111111111111111',1)};}
+      else result={value:funded?epochAccount(manifest):null};
+    }else if(method==='getMultipleAccounts')result={context:{slot:44},value:[funded?epochAccount(manifest):null]};
+    else if(method==='getLatestBlockhash')result={value:{blockhash:Keypair.generate().publicKey.toBase58(),lastValidBlockHeight:100}};
+    else if(method==='getFeeForMessage')result={value:5000};
+    else if(method==='getMinimumBalanceForRentExemption')result=1726080;
+    else if(method==='getBalance')result={value:1000000000};
+    else if(method==='simulateTransaction')result={value:{err:null}};
+    else if(method==='getSignatureStatuses')result={value:[{err:null,confirmationStatus:'finalized'}]};
+    else throw Error(method);
+    return new Response(JSON.stringify({result}));
+  };
+  const pool=createRewardsPool({cfg,db,fetchImpl,now:()=>after});
+  assert.equal((await pool.bootstrapView()).status,'ready_to_fund');
+  await assert.rejects(pool.prepareFunding(alice.publicKey.toBase58()),e=>e.status===403);
+  const quote=await pool.prepareFunding(REWARDS.fundingWallet),tx=Transaction.from(Buffer.from(quote.transaction,'base64'));
+  assert.equal(quote.holderDepositLamports,'200000000');assert.equal(quote.totalCostLamports,'201731080');
+  assert.equal(tx.instructions.length,1);assert.deepEqual(tx.instructions[0].data,publishInstruction(manifest).data);
+  assert.equal(tx.feePayer.toBase58(),REWARDS.fundingWallet);assert.equal(quote.root,manifest.root);
+  await assert.rejects(pool.submitFunding(alice.publicKey.toBase58(),quote.intentId,quote.transaction),e=>e.status===404);
+  await assert.rejects(pool.submitFunding(REWARDS.fundingWallet,quote.intentId,quote.transaction),e=>e.code==='reward_transaction_mismatch');
+  // Simulate a submitted signature; this test never possesses the production funder key.
+  db.run('UPDATE sub01_reward_funding_intents SET signature=? WHERE id=?','2'.repeat(88),quote.intentId);
+  await assert.rejects(pool.fundingStatus(REWARDS.fundingWallet,quote.intentId));
+  assert.equal(db.all('SELECT * FROM sub01_reward_epochs').length,0);
+  funded=true;assert.equal((await pool.fundingStatus(REWARDS.fundingWallet,quote.intentId)).status,'finalized');
+  assert.equal(db.all('SELECT * FROM sub01_reward_epochs').length,1);
+  assert.equal((await pool.prepareFunding(REWARDS.fundingWallet)).status,'already_funded');
+  assert.equal(db.all('SELECT * FROM sub01_reward_funding_intents').length,1);db.close();
 });

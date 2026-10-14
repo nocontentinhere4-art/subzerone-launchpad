@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
 import { HttpError, sha256, token, isSolanaAddress } from './util.js';
-import { REWARDS, buildRewardManifest, manifestTree, rewardAddresses, decodeEpoch, hasClaimed, claimInstruction, epochBounds } from './rewards-protocol.js';
+import { REWARDS, buildRewardManifest, manifestTree, rewardAddresses, decodeEpoch, hasClaimed, claimInstruction, publishInstruction, epochBounds } from './rewards-protocol.js';
 
 export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   const settings=cfg.rewards||{};
@@ -70,7 +71,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   }
   async function personal(wallet) {
     if(!configured)return {wallet,status:'setup_required',claimableLamports:null,paidLamports:null,earnedLamports:null,epochs:[]};
-    await deployed();
+    try{await deployed();}catch(e){return {wallet,status:'unavailable',claimableLamports:null,paidLamports:null,earnedLamports:null,epochs:[],note:e instanceof HttpError?e.message:'Contract verification unavailable.'};}
     const rows=db.all('SELECT * FROM sub01_reward_epochs ORDER BY epoch_id DESC');
     let earned=0n,paid=0n;const epochs=[];
     for(const row of rows) {const m=JSON.parse(row.manifest_json),index=m.entries.findIndex(e=>e.wallet===wallet);if(index<0)continue;
@@ -88,6 +89,46 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     if(old){if(old.manifest_hash!==hash)throw new HttpError(409,'reward_manifest_immutable');return {ok:true,epochId:m.epochId,manifestHash:hash};}
     db.run('INSERT INTO sub01_reward_epochs (epoch_id,root,manifest_json,manifest_hash,published_by,published_at) VALUES (?,?,?,?,?,?)',m.epochId,m.root,json,hash,wallet,Date.now());
     return {ok:true,epochId:m.epochId,manifestHash:hash};
+  }
+  function bootstrapInput() {
+    const input=settings.bootstrapInput||JSON.parse(readFileSync(new URL('../public/rewards/bootstrap-input.json',import.meta.url),'utf8'));
+    if(input.epochId!==REWARDS.bootstrapEpochId||input.program!==program)throw new HttpError(409,'bootstrap_program_mismatch','The prepared initial allocation must match the configured contract.');
+    return input;
+  }
+  async function bootstrapView() {
+    if(!configured)return {status:'setup_required',manifest:null,note:'The claim contract must be configured before funding.'};
+    let base={manifest:null};
+    try {
+      const input=bootstrapInput(),m=buildRewardManifest(input,now());
+      base={manifest:m,evidenceUrl:'/rewards/bootstrap-evidence.json',escrow:rewardAddresses(program,m.epochId).epoch.toBase58(),network,chain:network==='devnet'?'solana:devnet':'solana:mainnet'};
+      await deployed();
+      const existing=await account(base.escrow);
+      if(existing?.owner===program){await verified(m);return {...base,status:'already_funded',note:'This allocation is already funded. Its registration can be recovered without another deposit.'};}
+      return {...base,status:'ready_to_fund',note:'Prepared initial allocation. No SOL has moved.'};
+    }catch(e){return {...base,status:'unavailable',note:e instanceof HttpError?e.message:'The initial allocation could not be verified.'};}
+  }
+  async function prepareFunding(wallet) {
+    if(wallet!==REWARDS.fundingWallet)throw new HttpError(403,'reward_funder_only');
+    await deployed();const input=bootstrapInput(),m=buildRewardManifest(input,now()),addresses=rewardAddresses(program,m.epochId);
+    const escrow=addresses.epoch.toBase58(),existing=await account(escrow);
+    if(existing?.owner===program){await registerManifest(input,wallet);return {status:'already_funded',epochId:m.epochId};}
+    const block=(await rpc('getLatestBlockhash',[{commitment:'finalized'}]))?.value;
+    if(!block?.blockhash||!Number.isSafeInteger(block.lastValidBlockHeight))throw new HttpError(503,'reward_blockhash_unavailable');
+    const tx=new Transaction({feePayer:new PublicKey(wallet),recentBlockhash:block.blockhash}).add(publishInstruction(m));
+    const raw=tx.serialize({requireAllSignatures:false,verifySignatures:false}).toString('base64');
+    const fee=(await rpc('getFeeForMessage',[tx.serializeMessage().toString('base64'),{commitment:'finalized'}]))?.value;
+    const rent=await rpc('getMinimumBalanceForRentExemption',[REWARDS.epochBytes,{commitment:'finalized'}]);
+    if(!Number.isSafeInteger(fee)||fee<0||!Number.isSafeInteger(rent)||rent<0)throw new HttpError(503,'reward_cost_unknown');
+    const rentTopUp=Math.max(0,rent-(existing?.owner==='11111111111111111111111111111111'?existing.lamports:0));
+    const total=BigInt(m.holderPoolLamports)+BigInt(rentTopUp)+BigInt(fee);
+    const balance=(await rpc('getBalance',[wallet,{commitment:'finalized'}]))?.value;
+    if(!Number.isSafeInteger(balance)||BigInt(balance)<total)throw new HttpError(409,'funding_cost_balance','The funding wallet needs the holder deposit, escrow rent and network fee.');
+    const sim=(await rpc('simulateTransaction',[raw,{encoding:'base64',sigVerify:false,replaceRecentBlockhash:true,commitment:'finalized'}]))?.value;
+    if(!sim||sim.err)throw new HttpError(409,'reward_simulation_failed','Initial funding simulation failed. Nothing was sent.');
+    const intent=token(16),expires=Date.now()+90000;
+    db.run('INSERT INTO sub01_reward_funding_intents (id,wallet,epoch_id,input_json,message_hash,expires_at,last_valid_block_height,created_at) VALUES (?,?,?,?,?,?,?,?)',intent,wallet,m.epochId,JSON.stringify(input),sha256(tx.serializeMessage()),expires,block.lastValidBlockHeight,Date.now());
+    return {status:'awaiting_signature',intentId:intent,transaction:raw,wallet,program,network,chain:network==='devnet'?'solana:devnet':'solana:mainnet',manifest:m,epochId:m.epochId,root:m.root,snapshotEnd:m.to,creatorRewardsLamports:m.creatorRewardsLamports,
+      holderDepositLamports:m.holderPoolLamports,escrowRentLamports:String(rentTopUp),networkFeeLamports:String(fee),totalCostLamports:total.toString(),escrow,escrowUrl:link('address',escrow),expiresAt:expires};
   }
   async function prepare(wallet,id,destination='wallet') {
     if(!['wallet','buyback'].includes(destination))throw new HttpError(400,'bad_reward_destination');
@@ -116,8 +157,9 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
       actions:[destination==='buyback'?'Claim and atomically transfer your entire allocation to the project wallet for SUB-01 buyback and burn. This contributes SOL; it does not execute a token burn.':'Receive your allocated SOL from the funded daily escrow.','Pay the network fee.','Create a claim bitmap if needed; its deposit is not refundable by this version.'],
       doesNot:['No SUB-01 tokens are transferred or burned.','No token-spending approval or private key is requested.']};
   }
-  async function submit(wallet,intentId,signed) {
-    const intent=db.get('SELECT * FROM sub01_reward_claim_intents WHERE id=? AND wallet=?',intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
+  async function submit(wallet,intentId,signed,kind='claim') {
+    const table=kind==='funding'?'sub01_reward_funding_intents':'sub01_reward_claim_intents';
+    const intent=db.get(`SELECT * FROM ${table} WHERE id=? AND wallet=?`,intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
     if(intent.signature)return {signature:intent.signature,url:link('tx',intent.signature),status:'submitted'};
     if(Date.now()>intent.expires_at)throw new HttpError(409,'reward_intent_expired');
     if(typeof signed!=='string'||signed.length>6000||!/^[A-Za-z0-9+/]+={0,2}$/.test(signed))throw new HttpError(400,'invalid_reward_transaction');
@@ -126,16 +168,18 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     const height=await rpc('getBlockHeight',[{commitment:'finalized'}]);if(!Number.isSafeInteger(height)||height>intent.last_valid_block_height)throw new HttpError(409,'reward_intent_expired');
     const signature=await rpc('sendTransaction',[signed,{encoding:'base64',skipPreflight:false,preflightCommitment:'confirmed',maxRetries:3}]);
     if(typeof signature!=='string'||!/^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(signature))throw new HttpError(503,'reward_submit_unknown');
-    db.run('UPDATE sub01_reward_claim_intents SET signature=? WHERE id=?',signature,intentId);
+    db.run(`UPDATE ${table} SET signature=? WHERE id=?`,signature,intentId);
     return {signature,url:link('tx',signature),status:'submitted'};
   }
-  async function status(wallet,intentId) {
-    const intent=db.get('SELECT * FROM sub01_reward_claim_intents WHERE id=? AND wallet=?',intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
+  async function status(wallet,intentId,kind='claim') {
+    const table=kind==='funding'?'sub01_reward_funding_intents':'sub01_reward_claim_intents';
+    const intent=db.get(`SELECT * FROM ${table} WHERE id=? AND wallet=?`,intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
     if(!intent.signature)return {status:Date.now()>intent.expires_at?'expired':'awaiting_signature'};
     const chain=(await rpc('getSignatureStatuses',[[intent.signature],{searchTransactionHistory:true}]))?.value?.[0];
+    if(kind==='funding'&&!chain?.err&&chain?.confirmationStatus==='finalized')await registerManifest(JSON.parse(intent.input_json),wallet);
     return {signature:intent.signature,url:link('tx',intent.signature),status:chain?.err?'failed':chain?.confirmationStatus==='finalized'?'finalized':'confirming'};
   }
-  return {publicView,personal,registerManifest,prepare,submit,status,manifest(id){const m=manifestFor(id);return {manifest:m,sha256:rowFor(id).manifest_hash};}};
+  return {publicView,personal,registerManifest,prepare,submit,status,bootstrapView,prepareFunding,submitFunding:(wallet,id,signed)=>submit(wallet,id,signed,'funding'),fundingStatus:(wallet,id)=>status(wallet,id,'funding'),manifest(id){const m=manifestFor(id);return {manifest:m,sha256:rowFor(id).manifest_hash};}};
 }
 
 export function rewardsSettings(env) {
