@@ -30,3 +30,12 @@ test('wallet fee review rejects excessive compute limits, excessive fees, duplic
  assert.equal(reviewWalletAdjustedReward(original,wire(priority(tx())),{...options,maxNetworkFeeLamports:'100001'}),false);
  assert.equal(reviewWalletAdjustedReward(original,'AAAA',options),false);
 });
+
+test('the exact captured Phantom transaction permits immutable Lighthouse assertions but rejects its write opcodes',async()=>{
+ const {readFileSync}=await import('node:fs');const f=JSON.parse(readFileSync(new URL('./fixtures/rewards-phantom-observed.json',import.meta.url)));
+ assert.equal(reviewWalletAdjustedReward(f.original,f.observed,options),true);
+ assert.equal(reviewWalletAdjustedReward(f.original,f.memoryWrite,options),false);
+ const t=Transaction.from(Buffer.from(f.observed,'base64'));
+ const guard=t.instructions.find(ix=>ix.programId.toBase58()==='L2TExMFKdjpN9kozasaurPirfHy9P8sbXoAN1qA3S95');
+ guard.data=Buffer.from([6,4,1,8]);assert.equal(reviewWalletAdjustedReward(f.original,wire(t),options),false);
+});

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { reviewWalletAdjustedReward } from './rewards-wallet-review.js';
+import { reviewWalletAdjustedReward,LIGHTHOUSE_ID,LIGHTHOUSE_SHA256,LIGHTHOUSE_BYTES } from './rewards-wallet-review.js';
 import { PublicKey, Transaction, SystemProgram } from '@solana/web3.js';
 import { HttpError, sha256, token, isSolanaAddress } from './util.js';
 import { REWARDS, buildRewardManifest, manifestTree, rewardAddresses, decodeEpoch, hasClaimed, claimInstruction, publishInstruction, epochBounds } from './rewards-protocol.js';
@@ -18,6 +18,16 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     return body.result;
   }
   const account=async address=>(await rpc('getAccountInfo',[address,{encoding:'base64',commitment:'finalized'}]))?.value;
+  let immutableWalletGuardVerified=false;
+  async function verifyWalletGuard(){
+    if(immutableWalletGuardVerified)return;
+    const info=await account(LIGHTHOUSE_ID),loader='BPFLoaderUpgradeab1e11111111111111111111111';
+    const data=info?Buffer.from(info.data[0],'base64'):Buffer.alloc(0);
+    if(!info?.executable||info.owner!==loader||data.length!==36||data.readUInt32LE(0)!==2)throw new HttpError(503,'wallet_guard_unverified','The wallet safety program could not be verified. Nothing was sent.');
+    const state=await account(new PublicKey(data.subarray(4,36)).toBase58()),binary=state?Buffer.from(state.data[0],'base64'):Buffer.alloc(0);
+    if(state?.owner!==loader||binary.length!==45+LIGHTHOUSE_BYTES||binary.readUInt32LE(0)!==3||binary[12]!==0||sha256(binary.subarray(45))!==LIGHTHOUSE_SHA256)throw new HttpError(503,'wallet_guard_unverified','The wallet safety program does not match the reviewed immutable bytecode. Nothing was sent.');
+    immutableWalletGuardVerified=true;
+  }
   const rowFor=id=>db.get('SELECT * FROM sub01_reward_epochs WHERE epoch_id = ?',id);
   const manifestFor=id=>{const row=rowFor(id);if(!row)throw new HttpError(404,'reward_period_missing');return JSON.parse(row.manifest_json);};
   function requireConfigured() {if(!configured)throw new HttpError(503,'reward_setup_required','The claim contract has not been configured yet.');}
@@ -110,6 +120,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   }
   async function prepareFunding(wallet) {
     if(wallet!==REWARDS.fundingWallet)throw new HttpError(403,'reward_funder_only');
+    if(network==='mainnet-beta')await verifyWalletGuard();
     await deployed();const input=bootstrapInput(),m=buildRewardManifest(input,now()),addresses=rewardAddresses(program,m.epochId);
     const escrow=addresses.epoch.toBase58(),existing=await account(escrow);
     if(existing?.owner===program){await registerManifest(input,wallet);return {status:'already_funded',epochId:m.epochId};}
@@ -173,6 +184,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
     const bounded=intent.transaction_b64&&reviewWalletAdjustedReward(intent.transaction_b64,signed,{baseNetworkFeeLamports:intent.base_network_fee_lamports,maxNetworkFeeLamports:intent.max_network_fee_lamports});
     if(tx.feePayer?.toBase58()!==wallet||(!exact&&!bounded)||!tx.verifySignatures())throw new HttpError(400,'reward_transaction_mismatch','The wallet changed the reviewed actions or exceeded the approved network fee. Nothing was sent.');
     if(!exact){
+      if(tx.instructions.some(ix=>ix.programId.toBase58()===LIGHTHOUSE_ID))await verifyWalletGuard();
       const fee=(await rpc('getFeeForMessage',[tx.serializeMessage().toString('base64'),{commitment:'confirmed'}]))?.value;
       if(!Number.isSafeInteger(fee)||fee<0||BigInt(fee)>BigInt(intent.max_network_fee_lamports))throw new HttpError(400,'reward_transaction_mismatch','The network fee exceeds the reviewed maximum. Nothing was sent.');
       const sim=(await rpc('simulateTransaction',[signed,{encoding:'base64',sigVerify:true,commitment:'confirmed'}]))?.value;
