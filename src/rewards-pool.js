@@ -114,7 +114,7 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
       base={manifest:m,evidenceUrl:'/rewards/bootstrap-evidence.json',escrow:rewardAddresses(program,m.epochId).epoch.toBase58(),network,chain:network==='devnet'?'solana:devnet':'solana:mainnet'};
       await deployed();
       const existing=await account(base.escrow);
-      if(existing?.owner===program){await verified(m);return {...base,status:'already_funded',note:'This allocation is already funded. Its registration can be recovered without another deposit.'};}
+      if(existing?.owner===program){await verified(m);const registered=!!rowFor(m.epochId);return {...base,status:'already_funded',registered,note:registered?'Initial pool funded and allocation registered. Eligible holders can claim.':'This allocation is already funded. Its registration can be recovered without another deposit.'};}
       return {...base,status:'ready_to_fund',note:'Prepared initial allocation. No SOL has moved.'};
     }catch(e){return {...base,status:'unavailable',note:e instanceof HttpError?e.message:'The initial allocation could not be verified.'};}
   }
@@ -176,6 +176,9 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   async function submit(wallet,intentId,signed,kind='claim') {
     const table=kind==='funding'?'sub01_reward_funding_intents':'sub01_reward_claim_intents';
     const intent=db.get(`SELECT * FROM ${table} WHERE id=? AND wallet=?`,intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
+    if(kind==='funding'){
+      const recovered=await recoverFundedIntent(intent);if(recovered)return recovered;
+    }
     if(intent.signature)return {signature:intent.signature,url:link('tx',intent.signature),status:'submitted'};
     if(Date.now()>intent.expires_at)throw new HttpError(409,'reward_intent_expired');
     if(typeof signed!=='string'||signed.length>6000||!/^[A-Za-z0-9+/]+={0,2}$/.test(signed))throw new HttpError(400,'invalid_reward_transaction');
@@ -199,10 +202,19 @@ export function createRewardsPool({db,cfg,fetchImpl=fetch,now=Date.now}) {
   async function status(wallet,intentId,kind='claim') {
     const table=kind==='funding'?'sub01_reward_funding_intents':'sub01_reward_claim_intents';
     const intent=db.get(`SELECT * FROM ${table} WHERE id=? AND wallet=?`,intentId,wallet);if(!intent)throw new HttpError(404,'reward_intent_missing');
+    if(kind==='funding'){
+      const recovered=await recoverFundedIntent(intent);if(recovered)return recovered;
+    }
     if(!intent.signature)return {status:Date.now()>intent.expires_at?'expired':'awaiting_signature'};
     const chain=(await rpc('getSignatureStatuses',[[intent.signature],{searchTransactionHistory:true}]))?.value?.[0];
     if(kind==='funding'&&!chain?.err&&chain?.confirmationStatus==='finalized')await registerManifest(JSON.parse(intent.input_json),wallet);
     return {signature:intent.signature,url:link('tx',intent.signature),status:chain?.err?'failed':chain?.confirmationStatus==='finalized'?'finalized':'confirming'};
+  }
+  async function recoverFundedIntent(intent){
+    const input=JSON.parse(intent.input_json),m=buildRewardManifest(input,now()),escrow=rewardAddresses(program,m.epochId).epoch.toBase58();
+    const existing=await account(escrow);if(existing?.owner!==program)return null;
+    await registerManifest(input,intent.wallet);
+    return {status:'finalized',alreadyFunded:true,epochId:m.epochId,url:link('address',escrow)};
   }
   return {publicView,personal,registerManifest,prepare,submit,status,bootstrapView,prepareFunding,submitFunding:(wallet,id,signed)=>submit(wallet,id,signed,'funding'),fundingStatus:(wallet,id)=>status(wallet,id,'funding'),manifest(id){const m=manifestFor(id);return {manifest:m,sha256:rowFor(id).manifest_hash};}};
 }

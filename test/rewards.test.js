@@ -139,6 +139,12 @@ test('initial funding is funder-only, exactly reviewed and registers only after 
   assert.equal(db.all('SELECT * FROM sub01_reward_epochs').length,0);
   funded=true;assert.equal((await pool.fundingStatus(REWARDS.fundingWallet,quote.intentId)).status,'finalized');
   assert.equal(db.all('SELECT * FROM sub01_reward_epochs').length,1);
+  assert.equal((await pool.bootstrapView()).registered,true);
+  // A stale second approval recovers the matching finalized escrow, without broadcasting again.
+  db.run('UPDATE sub01_reward_funding_intents SET signature=NULL,expires_at=0 WHERE id=?',quote.intentId);
+  const recovered=await pool.submitFunding(REWARDS.fundingWallet,quote.intentId,quote.transaction);
+  assert.equal(recovered.status,'finalized');assert.equal(recovered.alreadyFunded,true);
+  assert.equal((await pool.fundingStatus(REWARDS.fundingWallet,quote.intentId)).status,'finalized');
   assert.equal((await pool.prepareFunding(REWARDS.fundingWallet)).status,'already_funded');
   assert.equal(db.all('SELECT * FROM sub01_reward_funding_intents').length,1);db.close();
 });
