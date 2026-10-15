@@ -3,6 +3,7 @@
 // signature, that the nonce is unused and unexpired, and that the message is exactly the one it issued.
 import { now, token, sha256, isSolanaAddress, verifyWalletSignature, b58decode, HttpError } from './util.js';
 import { audit } from './db.js';
+import { randomBytes } from 'node:crypto';
 
 export function signInMessage({ domain, origin, wallet, nonce, issuedAt, expiresAt }) {
   return [
@@ -22,7 +23,8 @@ export function signInMessage({ domain, origin, wallet, nonce, issuedAt, expires
 export function issueNonce(db, cfg, wallet, t = now()) {
   if (!isSolanaAddress(wallet)) throw new HttpError(400, 'bad_wallet', 'not a Solana address');
   db.run('DELETE FROM auth_nonces WHERE expires_at < ?', t - 86_400_000);
-  const nonce = token(16);
+  // SIWS requires an alphanumeric nonce; base64url can contain '-' and '_'.
+  const nonce = randomBytes(16).toString('hex');
   const origin = cfg.publicOrigin;
   const domain = new URL(origin).host;
   const expiresAt = t + cfg.nonceTtlS * 1000;

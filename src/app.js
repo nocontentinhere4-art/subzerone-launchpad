@@ -50,6 +50,7 @@ import { createTicket, myTickets, listTickets, getTicket, replyTicket, setTicket
 import { HttpError, parseJson, now, token, escapeHtml } from './util.js';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { log } from './log.js';
+import { createRewardsPool } from './rewards-pool.js';
 
 const PUBLIC = join(ROOT, 'public');
 const PAGES = [/^\/$/, /^\/launchpad$/, /^\/submit$/, /^\/ideas\/[^/]+$/, /^\/projects\/[^/]+(\/review)?$/, /^\/token$/, /^\/me$/, /^\/admin$/, /^\/fees$/, /^\/how$/];
@@ -66,6 +67,7 @@ const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_re
 export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true, buildWatchMs = 1000, phantomTest: phantomTestOpts = {} }) {
   const r = router();
   const limit = rateLimiter();
+  const rewards = createRewardsPool({db,cfg,fetchImpl});
   const origin = new URL(cfg.publicOrigin);
   const roomOrigin = new URL(cfg.brain.publicRoomUrl).origin;
   const projectsHost = cfg.projectsHost.toLowerCase();
@@ -101,6 +103,19 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
 
   // --- public config & health --------------------------------------------------------------------------------------
   r.get('/healthz', () => ({ ok: true }));
+  // SUB-01 only: funded daily escrows, authenticated private entitlements and
+  // immutable public manifests. No private wallet key is held by this service.
+  r.get('/api/rewards/pool', async (ctx) => { limit('reward_read',ctx.ip); return rewards.publicView(); });
+  r.get('/api/rewards/bootstrap', async ctx => {limit('reward_read',ctx.ip);return rewards.bootstrapView();});
+  r.post('/api/rewards/funding/prepare', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);return rewards.prepareFunding(u.wallet);});
+  r.post('/api/rewards/funding/submit', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);const b=await ctx.body();return rewards.submitFunding(u.wallet,b.intentId,b.signed);});
+  r.get('/api/rewards/funding/:intent', async ctx => {const u=requireUser(ctx);limit('reward_read',ctx.ip);return rewards.fundingStatus(u.wallet,ctx.params.intent);});
+  r.get('/api/rewards/me', async (ctx) => { const u=requireUser(ctx); limit('reward_read',ctx.ip); return rewards.personal(u.wallet); });
+  r.get('/api/rewards/epochs/:epoch', ctx => rewards.manifest(Number(ctx.params.epoch)));
+  r.post('/api/rewards/epochs', async ctx => {const u=requireUser(ctx);limit('reward_publish',ctx.ip);return rewards.registerManifest(await ctx.body(2000000),u.wallet);});
+  r.post('/api/rewards/claims/prepare', async ctx => {const u=requireUser(ctx);limit('reward_claim',ctx.ip);const b=await ctx.body();return rewards.prepare(u.wallet,Number(b.epochId),b.destination);});
+  r.post('/api/rewards/claims/submit', async ctx => {const u=requireUser(ctx);limit('reward_claim',ctx.ip);const b=await ctx.body();return rewards.submit(u.wallet,b.intentId,b.signed);});
+  r.get('/api/rewards/claims/:intent', async ctx => {const u=requireUser(ctx);limit('reward_read',ctx.ip);return rewards.status(u.wallet,ctx.params.intent);});
   // RFC 9116: who to contact and where the code lives (reputation scanners and wallets look for it; 2026-10-11)
   r.get('/.well-known/security.txt', (ctx) => ctx.raw(200, Buffer.from([
     'Contact: https://github.com/nocontentinhere4-art/subzerone-launchpad/security/advisories/new',

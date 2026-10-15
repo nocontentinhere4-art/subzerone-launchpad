@@ -62,7 +62,7 @@ export function rateLimiter() {
     // coin sites' tools (tool-api.js), per IP; signed writes also per wallet
     siteRead: [300, 60_000], siteWrite: [12, 60_000], siteSign: [12, 60_000], siteWallet: [10, 60_000],
     // a launch from a coin site (child-launch.js): quote, start, then the transaction steps (each one also signed by the wallet)
-    siteLaunch: [30, 60_000] };
+    siteLaunch: [30, 60_000], reward_read: [60,60_000], reward_publish: [4,60_000], reward_claim: [12,60_000] };
   setInterval(() => { const t = Date.now(); for (const [k, b] of buckets) if (t - b.t > 3_600_000) buckets.delete(k); }, 600_000).unref();
   return (rule, key) => {
     const [cap, per] = RULES[rule];

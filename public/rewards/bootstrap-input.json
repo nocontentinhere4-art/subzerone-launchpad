@@ -1,0 +1,1513 @@
+{
+  "program": "GgUXf7u2DLAik4zanjB7DixATjajYPE6rK9hmkZR9WHa",
+  "epochId": 100000,
+  "creatorRewardsLamports": "1000000000",
+  "snapshotEnd": 1791933949000,
+  "snapshotAt": 1791933949000,
+  "snapshotSlot": 456622436,
+  "sourceDigest": "3f80501ce47640a399d5d119ca52bd81438dc10769f1465ddbd94e148d75e70e",
+  "excludedWallets": [
+    "4gAj3MmDM2yk41frM7twYTUazwVsUzhjH9ZNdW81qSpp",
+    "8ejpj6URno8LSQWNZjx4DG948Q8xgYbBXTyLV7qjX6FZ",
+    "HMPUiULXumamWDhuoKap6ty2hQ7V7GQwi8PZ7pGx6STQ",
+    "HWGoJ1HaMFUiDgfD7FVxMaYJAE2A5JjF7si6CgWSvRFQ"
+  ],
+  "entries": [
+    {
+      "wallet": "127uH41TFFQjdmzGBQNLXUsksGL1BxzKFArneyLqPu6Z",
+      "weight": "29968005947"
+    },
+    {
+      "wallet": "21V8jqbVzc3jocVFp1RkJJNw4yrqLnh2UfNnri6js5oB",
+      "weight": "23469239522192"
+    },
+    {
+      "wallet": "21W6Vipotb74cd6zt1ACw8iXPX4y9UPgdiFHwaAirArN",
+      "weight": "1"
+    },
+    {
+      "wallet": "23MmBgUdradwRKxPGat1QPjpumyz1VGbnJcSDaW7ujmu",
+      "weight": "3924476830"
+    },
+    {
+      "wallet": "26H6MQFwgGDQFvfG2oHuExFyZr2SgqaELEcxMDFqs95Y",
+      "weight": "1693560087920"
+    },
+    {
+      "wallet": "27HFmP7ccLadGswvQfvea4o3juLw75cPF4V6jWpHM3MX",
+      "weight": "50608938"
+    },
+    {
+      "wallet": "28AvDuZiZ4g8C3gCawtvK7dQpHXGRQ4Lgk5YQHLgfbMp",
+      "weight": "16009774896670"
+    },
+    {
+      "wallet": "29DZiZku1qdwg6cXNUsBAKsNtK8gaYUeCfpS34MKvETX",
+      "weight": "70634516361"
+    },
+    {
+      "wallet": "2AZryYqqujqWxJznEpnuSMB58Ab9nPD6KC9Q3M4PvU8e",
+      "weight": "3944078732"
+    },
+    {
+      "wallet": "2HsBU2sSnyJeidB9jFHf8YKHSf8Bf8zPztwysrySo7BS",
+      "weight": "1143948052363"
+    },
+    {
+      "wallet": "2NVms47vZ8S3cmqxsPSs2dEK834tA3qXp1nq7NBu74MU",
+      "weight": "34498414"
+    },
+    {
+      "wallet": "2QUfGV4R3bDmKEDenmfCquumP5bWtRhyC94DBVQyzRuR",
+      "weight": "19454746841951"
+    },
+    {
+      "wallet": "2QfBNK2WDwSLoUQRb1zAnp3KM12N9hQ8q6ApwUMnWW2T",
+      "weight": "16754038"
+    },
+    {
+      "wallet": "2Rfaxo4BF5pu7e6LDEkvAbgnvJoB2sUECdmB442GeDGq",
+      "weight": "6172272812358"
+    },
+    {
+      "wallet": "2SSQCxnMWnwrewpVNDirpxfJh5hrSkJhCG8mtosnHVSf",
+      "weight": "129237042165"
+    },
+    {
+      "wallet": "2k28zSYgMAVyFaSv2DMWiQVk5YNv1tQVdpQrgEcG4gkb",
+      "weight": "24836349662"
+    },
+    {
+      "wallet": "2r2ZNLiFRcd4BLidPgFPiCgGcuzn6HbvTsv77HPsfLyv",
+      "weight": "12220411"
+    },
+    {
+      "wallet": "2y5S699mCSd5x3Ado6vmvg7FXLFeYCdqbCgmErJiRo8w",
+      "weight": "982949642126"
+    },
+    {
+      "wallet": "34FKjAdVcTax2DHqV2XnbXa9J3zmyKcFuFKWbcmgxjgm",
+      "weight": "6406483"
+    },
+    {
+      "wallet": "35aq7i7pC8EFEUJX8u84Qw4YTACs1qgb3HemMmQi42Pr",
+      "weight": "1428903491"
+    },
+    {
+      "wallet": "3BZzET2r1A8HAgpoRJ65dJBQUEtBhunzfvhhLhNAWM7S",
+      "weight": "223961659361"
+    },
+    {
+      "wallet": "3F6HEHX4yu5qsqUjTcrRvtdU29yQjNJzcSW9EERuSPfg",
+      "weight": "1194574327202"
+    },
+    {
+      "wallet": "3GuFM8t8B2w4zRvYYga2zE7zJd9r6oxe63hXfV9YaL4R",
+      "weight": "13347396994869"
+    },
+    {
+      "wallet": "3HWn9KBHv4kwXYW7x1oZEuhEJMdmizvQmVz6cjtHjLRx",
+      "weight": "381851845259"
+    },
+    {
+      "wallet": "3JHmSzN3KgEaj1pzYicVZavEwtQF4JWXPfLLFpC1W2hr",
+      "weight": "16105996244"
+    },
+    {
+      "wallet": "3LSsazsPPjFaw2yeMSw4W6T7zWcbJ2hEgU9LJfN9gwUW",
+      "weight": "327035"
+    },
+    {
+      "wallet": "3LoAYHuSd7Gh8d7RTFnhvYtiTiefdZ5ByamU42vkzd76",
+      "weight": "1488656561"
+    },
+    {
+      "wallet": "3NsBkB1s6cShTBZcoacwLHbK3hHjBAhE9XzE91Jb7iGd",
+      "weight": "71684476309"
+    },
+    {
+      "wallet": "3R4KNJng6PUBoVFcjUtxozFRSXBcQPEH6vRvoZEougE1",
+      "weight": "660713125516"
+    },
+    {
+      "wallet": "3T6gxwpMjdT7h4N8i6ucynpe8xXiWj8B1aLKNTS1d3dC",
+      "weight": "142596054"
+    },
+    {
+      "wallet": "3TjhSttfp3GjVpKSRTSPob4uNEJ2oeiZwNhtm7Sn1Z5z",
+      "weight": "1"
+    },
+    {
+      "wallet": "3UDSh5zfJMbyTDcFnHsFzFUJCKtr2Y63JADsRMknBQoC",
+      "weight": "15900498002422"
+    },
+    {
+      "wallet": "3Vsx9RN9jvnKwdMkHxn6Z2cehtffgghk4Kd4MStHT1P6",
+      "weight": "3814072307354"
+    },
+    {
+      "wallet": "3WooNomNBikJFY8KbAeL1sSVbLTnjt3qVZggQfMcbK6R",
+      "weight": "30066568984"
+    },
+    {
+      "wallet": "3bqa4PbAWU37kDZHHukCaAYkNFXMeQD6yAY91GnePZvv",
+      "weight": "498093000235"
+    },
+    {
+      "wallet": "3bxyXWWjHVSzTcT5KsmEqMrBE5WR2yXfpSEz5b6AMMGd",
+      "weight": "3222541696693"
+    },
+    {
+      "wallet": "3cJHaGVsah3wdXR7mPSGzMhNWbph2TXPnsRvsQpcrH9M",
+      "weight": "23914206443847"
+    },
+    {
+      "wallet": "3hK39MrpEPNBmLz3VXH3rxZz9f8JoEfRHzDxcgMci973",
+      "weight": "322104206267"
+    },
+    {
+      "wallet": "3nLh14fRyZr1EBpp7jJqwBqKt8uLBFZ1rTmVTfLvnkfj",
+      "weight": "12241359374503"
+    },
+    {
+      "wallet": "3xEgQCqNhJGHqavQzEFpmet8Vtc6o1L43snhRFeVLE1w",
+      "weight": "18813257297306"
+    },
+    {
+      "wallet": "3zwxck7NNuwFNPfHwxoT52yTuhQAZiLPN1U7bWrsB4Dx",
+      "weight": "116494947214"
+    },
+    {
+      "wallet": "44QhqW7btPQ8o1jFNdG8vSTwjuhUhvRmfpxejKoTbzBm",
+      "weight": "572863958"
+    },
+    {
+      "wallet": "48BAuGmP4HZ6yn6jsXfwNNVqfd2oox7H2YSNvS2jjkk4",
+      "weight": "19684200251956"
+    },
+    {
+      "wallet": "49QkgNVL2ptKfuKqq5psNug8A8D3SNhXmjYcTPex7CoX",
+      "weight": "48802971887"
+    },
+    {
+      "wallet": "4K5BWQNL9L5UeE8AbUeN4gXxdfTB7FPoyE5WgxtkhCiz",
+      "weight": "267626349"
+    },
+    {
+      "wallet": "4P1NV8W44Yhh1z1XCkG7umATttxSpMYuAkuwXSBntPRD",
+      "weight": "4112623489108"
+    },
+    {
+      "wallet": "4PimBRHe9aTuiRb7sUcbu4RugUnEqKhvgq5Pe2sfCCv3",
+      "weight": "1728612361"
+    },
+    {
+      "wallet": "4RTcKFK5mw79EdgziwT7jx74C6JWHhx1NRyutiGQuenp",
+      "weight": "25292397725"
+    },
+    {
+      "wallet": "4TJrF1KNAnFNic1wwHEaVgQVeSAeiynJ3LngfjQ7FwJ5",
+      "weight": "1073611580816"
+    },
+    {
+      "wallet": "4XBqViD1XYF1qHrErrsXBzDrCapvP9fEFX4LPjXZi9YU",
+      "weight": "68550339"
+    },
+    {
+      "wallet": "4XSRYjEV1FgMDpPKEu88KoPH3TF8gHfRRejbD8cKXZaJ",
+      "weight": "5483540"
+    },
+    {
+      "wallet": "4Xv2Zfjswzs9onirt2mA4FgMqFxi8XJHvuRMre1hMLrL",
+      "weight": "400455104036"
+    },
+    {
+      "wallet": "4XwV2zvzzRY1ebTFTyJ3ErkScqdfS6CiFF2s9mBRApi7",
+      "weight": "13914646396"
+    },
+    {
+      "wallet": "4asn7bBMQxg7JCCmsM83jwZLCdunVPtrUXsYvP4nWJKk",
+      "weight": "6956399689716"
+    },
+    {
+      "wallet": "4bX45bFT938btDosNwhrMRs5nxmthFZfNkmiycwAjxnE",
+      "weight": "17740533760"
+    },
+    {
+      "wallet": "4cUbmNtGuCPAMkH7MJK1RTfzmVCz8D84XAPN2SMmuFJC",
+      "weight": "128773091089"
+    },
+    {
+      "wallet": "4eRktVrDSnFpoMhosx8RGikEmBX2R5Uu5JvhjxwBoicR",
+      "weight": "481746375591"
+    },
+    {
+      "wallet": "4guhXLbbLG13mn36DmCWbiHGyfFHaEQ4TYAA6T3amHY2",
+      "weight": "10201845102"
+    },
+    {
+      "wallet": "4mEdbRWwsKBwct2UKaSAFLqD9WhoYKzrmmXy4ofhndUQ",
+      "weight": "246684858505"
+    },
+    {
+      "wallet": "4mZo2S5ZAoch1jHDHL85FEKm3sqNgg6Jmb4Xug1okAeW",
+      "weight": "27749493883"
+    },
+    {
+      "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+      "weight": "16439495116691"
+    },
+    {
+      "wallet": "4sB4n2EjzKH91TsrRwRmrjXkpg1tcrakAZm1Triu5FTi",
+      "weight": "4946104033"
+    },
+    {
+      "wallet": "4u5rkW6UowA21bZYtyrZvitLEoXUqP1DkCMe9DXMydex",
+      "weight": "12469181059774"
+    },
+    {
+      "wallet": "4wv7gGnyGai8ayKSEfpcd5tqqL9oa8S16cHzk4bxSyB",
+      "weight": "988571277944"
+    },
+    {
+      "wallet": "4zEzCmEFcU3ZzQDVvzZrMF7dJsVcEMRbBdoF9zueThMA",
+      "weight": "17204118329"
+    },
+    {
+      "wallet": "4zFEFU8gtZ2uQVn3pkWLaD829a7gdxTsexGY89KePW3j",
+      "weight": "155246258071"
+    },
+    {
+      "wallet": "4zHdTtZYxR7bAowpHY8u9ZWa9pd6mtWXtREkFD7df1Fk",
+      "weight": "452368587693"
+    },
+    {
+      "wallet": "57YsQ9BqmcUR1m7tgmMf3ibDK3ENppr2A8dBmo8cdjtY",
+      "weight": "87637383"
+    },
+    {
+      "wallet": "5ATVpUk5H3fgkzhRhahe43dgRkNYdBU8FoAG3ofRqwsJ",
+      "weight": "498702663"
+    },
+    {
+      "wallet": "5BBZqjpDzk5CCrTq28NRiTDcY3SePC2tTsBWieTxePos",
+      "weight": "3034524312"
+    },
+    {
+      "wallet": "5GYXHVv7WCAyr1pMWwiZXwh8ZacAmZbypReTxsztemib",
+      "weight": "788917273"
+    },
+    {
+      "wallet": "5Gbcw4J6HU5vfETcNNn2MboPjpUDLRYmS2Kakx9Dfz3S",
+      "weight": "251477012587"
+    },
+    {
+      "wallet": "5PtRouesfgXXZJF99w46MLonMMe6tf4QodC6BRW2wWX2",
+      "weight": "427603306565"
+    },
+    {
+      "wallet": "5Qh9qhEL2EkRwjQ3azWENJ62dh25LQgwZ9mjh2oA1pGR",
+      "weight": "51440366087"
+    },
+    {
+      "wallet": "5QoZMcjb8XbZMZS4EELUQboTG5mdghyYRMSE4b1bVGaM",
+      "weight": "5178683797892"
+    },
+    {
+      "wallet": "5TRDceAYWwNmd8Wz2RgcXe9yBU4f5bRJC2onWtUimgtj",
+      "weight": "6510166574"
+    },
+    {
+      "wallet": "5UaLfCdK4D78TqQz5EeFxSxbQbGJWyYT2M5Hvh4KDXov",
+      "weight": "52667495870"
+    },
+    {
+      "wallet": "5ZKYAQLYxQ4gyEZ4jTiA4mjaZycx9ugiZRa7PZUrypxf",
+      "weight": "143548376523"
+    },
+    {
+      "wallet": "5cwsPCLgECkxEd1nLihpHmTmevCYdBtTWWBxA6yLU3hr",
+      "weight": "140357191"
+    },
+    {
+      "wallet": "5e7yF1F4JjJQeWN6dc58HDGpcy1CFSraiAX1NLK3scYK",
+      "weight": "5944539749"
+    },
+    {
+      "wallet": "5iagj8F2dTUdb7FnSpj7V9g9aPZ1kZiWxNX1jqZenYJB",
+      "weight": "811533695817"
+    },
+    {
+      "wallet": "5kJAK2D7GeDcmfdfPPBh8dpS8VNeLhf3QzsS8zHx73af",
+      "weight": "33474944696"
+    },
+    {
+      "wallet": "5mPNTR7YWChg1vrGsjiKWj9cFDF6BkysZHSgNCg6fM2Z",
+      "weight": "9666828123"
+    },
+    {
+      "wallet": "5n5o6LY1voN7ZzxehJfngWCGWTQnuqKaSSxFbDoUXGaP",
+      "weight": "3660"
+    },
+    {
+      "wallet": "5nBYxcvtGxYyYgrKrWsw8ggnoiPuK9gFEyenJhjt1cRt",
+      "weight": "282055275344"
+    },
+    {
+      "wallet": "5w5ZCAqcz9JKm4viqTpGf6G6UDsQ6FUCLph3aR78pmZP",
+      "weight": "17297529805"
+    },
+    {
+      "wallet": "5wCBBUMoKdactuTpWSwsGqVCSxVih3BWSYuFd3PztgCU",
+      "weight": "11170178675"
+    },
+    {
+      "wallet": "64cTcMxHXfYnh5kHXuXwpKUuey5usCJG8kJa4uCkmh4f",
+      "weight": "527788254770"
+    },
+    {
+      "wallet": "64kH9jwiFMexqU1QBE8R3FzpDxQg6LUYJBDmXrRxNZC8",
+      "weight": "313210706672"
+    },
+    {
+      "wallet": "6Dgw6ftCEyh6dG8LanS96qayLFJGtipsTKGpHtU7kP5R",
+      "weight": "118557259129"
+    },
+    {
+      "wallet": "6ErWA3CjjFpgwcbM4zmMDAshZFtsE1yt4ZUxUnRcLemw",
+      "weight": "23560811230"
+    },
+    {
+      "wallet": "6GDVmJZ7eCFyUVTUiv9mZnxYm2H9FCex35r5ywMk46h6",
+      "weight": "154482052160"
+    },
+    {
+      "wallet": "6GUVR2HPWJLNpznAVpmVYHaZbJg32K653y1UmhBZBGGp",
+      "weight": "8343918503"
+    },
+    {
+      "wallet": "6Gfahmxqn1VfJE1rZ3JsDZdztUKMc4F8bjR9pfu1XhWZ",
+      "weight": "8259075956"
+    },
+    {
+      "wallet": "6HLAgqGZ8cZ3pbrxKftpX5KVTgR8PmHHTrTyUBujCd9E",
+      "weight": "1041920873248"
+    },
+    {
+      "wallet": "6KohBsRL4K9XN88btPAUxZsD7AwmH8dhebVZ9z51oS5C",
+      "weight": "333725428526"
+    },
+    {
+      "wallet": "6M6FbfAe1bXtn7ara4RhxQ8RYLQZDiew75qEMUuWhYpD",
+      "weight": "2352979573"
+    },
+    {
+      "wallet": "6RXosvNzDAGtickDcy35XwRYpvbw9y4JZBpQ7BirmJ1u",
+      "weight": "3190662490"
+    },
+    {
+      "wallet": "6YYMH2u5fKPjX4gH8WW2GMd9d4SkvbrCP2nC8YUZvW2h",
+      "weight": "10214109331857"
+    },
+    {
+      "wallet": "6bJv3MZQfB15JZp15YxFiaEboPWA7YHAs4DD45vzH6r4",
+      "weight": "203981706126"
+    },
+    {
+      "wallet": "6gyTHqKoMNBsxazqJzEce5GFpwhXCkVpiR9NcFmgB7pN",
+      "weight": "514437375076"
+    },
+    {
+      "wallet": "6hHfDSagPQv4ouhr7x17jp9tQNfqUhdJWFHY5mEHnLp2",
+      "weight": "18178783639503"
+    },
+    {
+      "wallet": "6kRfXZpX7jt4WUUx2W2AyS5MK4eQieWbnFDzf5YDijTT",
+      "weight": "614607765"
+    },
+    {
+      "wallet": "6khjbNmhssY4SwLtJKwbTqG73pvurbbnjSJBAYFhDorW",
+      "weight": "273752857923"
+    },
+    {
+      "wallet": "6kpYZAc7m7Wrz86mTacNPH8vZH6FiSQa4aUfjiST6edv",
+      "weight": "9185850276674"
+    },
+    {
+      "wallet": "6nnRMzC6ar8srJnHu7GrqwpBpw6zgymg2bzpQNiwX6SS",
+      "weight": "9354085139"
+    },
+    {
+      "wallet": "6ooVBXhnqAXaF91cu49YmWhoFuE6WLdZWTwNYvTuhyBd",
+      "weight": "121723194"
+    },
+    {
+      "wallet": "6r7hzTBYAWqn58tubm5hMk3P8R1nBng1E7PMgzx2zhJs",
+      "weight": "154321584900"
+    },
+    {
+      "wallet": "74HbEXN3TQiFWdbvtB4e6vVookL8WfsTWnQx565uMF7j",
+      "weight": "58317715"
+    },
+    {
+      "wallet": "77UVdqK5SHz3rQpkrswQxSXq6wWfEYEnCKzUZD62NfDX",
+      "weight": "5825856235460"
+    },
+    {
+      "wallet": "77m2rBMAqg6Fjximny71ThGTnjkRReWnV7vBPxPq6sb4",
+      "weight": "400931808635"
+    },
+    {
+      "wallet": "78MetTYMCSS4QMDgQBNjMtBWpeHBygaxx6wwuBzFcYF5",
+      "weight": "1872334565258"
+    },
+    {
+      "wallet": "78qCkoKspNfBcsaVda1idqRPDzP3bhVmBra6yMmtzB6T",
+      "weight": "2388362225"
+    },
+    {
+      "wallet": "7CgXVSDAxtxFckXDUnQECneCr4Unk3NyKFpSo2LwTT4F",
+      "weight": "375186809"
+    },
+    {
+      "wallet": "7FDktCzSey4nZjHpgkGh65vxeDX2wUKbcUnBeuXMyYua",
+      "weight": "13448077732"
+    },
+    {
+      "wallet": "7HiCCSKTzPrQx2bvkjC97bp3iUppeexCQe6PAKDSxjQs",
+      "weight": "16661564381789"
+    },
+    {
+      "wallet": "7Np1DWZJcLoL1gmGTxMFCHD4ir5v8Qn2oj13BXNwA7za",
+      "weight": "5896385563"
+    },
+    {
+      "wallet": "7QFANQRVTSUJL3NPQt6zwjeptEiU6hkgB1bXSZhjwYq1",
+      "weight": "224924598913"
+    },
+    {
+      "wallet": "7QoTjc15WNqZnRqBnR6ie81XSbfUDHz4bRbcqKxuuAGu",
+      "weight": "777979481"
+    },
+    {
+      "wallet": "7SAUPAU88mrZrEEXVczGh9aaB8G9Aw5vKk3GEtvKchX5",
+      "weight": "20690812287164"
+    },
+    {
+      "wallet": "7TDkuPBmy4aetau8SxinmEuMouzXELEAfYYgtNHjwmSJ",
+      "weight": "7224981558"
+    },
+    {
+      "wallet": "7TPmE4TRF7ZVbgh5dKTJ5PefSbhDnZPemE7uYTEHtM7v",
+      "weight": "9355770908"
+    },
+    {
+      "wallet": "7UBjMaYsE3tKcanfgGrtso6aHAMhVNSVHkkX5j3t7f5y",
+      "weight": "35212671739255"
+    },
+    {
+      "wallet": "7W66zJPbxRgAMeg26AKtAVpaQbjZA4qRVEfwn6W4nr9S",
+      "weight": "2900630247"
+    },
+    {
+      "wallet": "7XvfJz26Qqwtvr8RchBwnXnKKeF3SBKjaDxD81N22tWj",
+      "weight": "36524437081"
+    },
+    {
+      "wallet": "7Y5xKqe3odCXiUtsp6qnF1r7LJXSYn62DXqpBZjQxs86",
+      "weight": "28658070560"
+    },
+    {
+      "wallet": "7Y7tJzggHmW3k86fNxr9LQRyAayjid4UKGPMjNmsic5m",
+      "weight": "2448454493087"
+    },
+    {
+      "wallet": "7Z3GTcQve5wjByT228XPNiPCGoeGBWFjJDTrgVA5K8qb",
+      "weight": "131236508844"
+    },
+    {
+      "wallet": "7fnq9wNj5WoMxasNcWNWS88peQjdWb1m5k8qS7grxGt2",
+      "weight": "18859564216144"
+    },
+    {
+      "wallet": "7i56ovtdx4oHK3h3Z35hpmSgGeXbjcEvEsypHEertq4P",
+      "weight": "5355803934196"
+    },
+    {
+      "wallet": "7iWnBRRhBCiNXXPhqiGzvvBkKrvFSWqqmxRyu9VyYBxE",
+      "weight": "134001801"
+    },
+    {
+      "wallet": "7kRfYgbpichh83KfYGubHrNrzNukesSzgD4xvf6CcB5D",
+      "weight": "1415011952"
+    },
+    {
+      "wallet": "7nPdMegYjev4KzSAkHpDnnTgWePU5qkvGLQgMkCuiLLA",
+      "weight": "664569010"
+    },
+    {
+      "wallet": "7pF26rfhjDrcZt4vdQ5Z1n3eLkyss4hMxMpriwHpbGj6",
+      "weight": "42406632"
+    },
+    {
+      "wallet": "7sA3BtRmSWqdAefjY6nCDzagFJZN1WTJxLniiSppWkp8",
+      "weight": "21674142268"
+    },
+    {
+      "wallet": "7wjYrK8n2xSYRjqfHEVNNpNc6jpBhBvWzQG6ktqLsxix",
+      "weight": "140143725"
+    },
+    {
+      "wallet": "7zSMt8KKEAtE72YRLH4fczjqtMvKFfno3oiHmzGxsW2e",
+      "weight": "33274207091"
+    },
+    {
+      "wallet": "81pLP89Uwjy2ZaH3y3b8s3eFvsUsnmHn98fdZynPF5YC",
+      "weight": "10387453643"
+    },
+    {
+      "wallet": "82rH9neVDycN9KgVNUnQ3Po11ME35p5VyDTBEnEkwFMe",
+      "weight": "5889317082"
+    },
+    {
+      "wallet": "82v9549JdopESnXiuz6BZTDDGtbkvHNHpD6mqrAr5XSf",
+      "weight": "27532049771"
+    },
+    {
+      "wallet": "85jzu5QbfNdPeF1HFbkyWhFTDTX5iu5G2QoZuZSxrPzt",
+      "weight": "18451228199"
+    },
+    {
+      "wallet": "8Anf9u1oeGPFGy4FkjJyRVDrfVKaNbq2CqAAgztrzBJx",
+      "weight": "3766290608"
+    },
+    {
+      "wallet": "8CSqCUg4b2mPuBvZTABETadydKioVTQ653hTYeFnVdL4",
+      "weight": "2123704931714"
+    },
+    {
+      "wallet": "8DB8ugPpq4wkGwK4Wj7WntTzxf7mxJZg3FYTCNVQEPs4",
+      "weight": "9424253381"
+    },
+    {
+      "wallet": "8Fp5pE5eXzeYdpDRVbG9DTfXwwxysVntAFmzMbUJcUAs",
+      "weight": "859897771969"
+    },
+    {
+      "wallet": "8HusHSQxJ6kiBfS1vsfacCJzQedFyj4N6GHzSoVHMLxE",
+      "weight": "43624108676"
+    },
+    {
+      "wallet": "8JC2UbKiKgXf89MnfC5K9FjcGvX3TJkd3iMSog9ev9m8",
+      "weight": "14028102540"
+    },
+    {
+      "wallet": "8JfnDeLij2hmZhWjcKtXtQsPkrXq22N9eajDGnbtEyJF",
+      "weight": "2165496477982"
+    },
+    {
+      "wallet": "8PvmxkmZoMjn6qLPhRfkAPfJYSUAadexRho3yWr1L148",
+      "weight": "1076634952"
+    },
+    {
+      "wallet": "8QbHAcz17cnrGhBrCzKxejpephGVP5mJe8H7Ci3ubM6q",
+      "weight": "45526659385"
+    },
+    {
+      "wallet": "8UWMkKMwBPLMx1J4bhjFnX5tfovSqKejdMkyyHjFx9Cd",
+      "weight": "1570165654837"
+    },
+    {
+      "wallet": "8VUe51wu8uMwnW2P873ur9jCbKUZVKG2dwJZDU8aVRf5",
+      "weight": "60500022"
+    },
+    {
+      "wallet": "8Xfaa6sZei6aJyePvbyeFk27mMJmp27cxdJQqCYhiYVD",
+      "weight": "9814030204"
+    },
+    {
+      "wallet": "8gp4k5N2xq8coCnqTzjx1r8hEMmSQoLs6K2w97zM19eD",
+      "weight": "646739992"
+    },
+    {
+      "wallet": "8hdMs5nBoNYdFK4xz4UuubCEaJ2Ytum5rX4BkYsmYpao",
+      "weight": "3663082442"
+    },
+    {
+      "wallet": "8jNiuExeJVDBZLJ4ZC7j9bLtivrutbHDnfrzjTT693rH",
+      "weight": "1421801598127"
+    },
+    {
+      "wallet": "8mWfeFiyEUD3uzNHWEvbHFqqDVJHddqjPJHwDkFzwbgv",
+      "weight": "15178243963"
+    },
+    {
+      "wallet": "8oBMmJ5oMxQXmzrvSmGFBu114EGbEKZeUYbhoJRExEeS",
+      "weight": "123893749"
+    },
+    {
+      "wallet": "8oUHVy7996iFLkpJDs2F4ywiDL6ynKqb11PC2W6NBWvm",
+      "weight": "50445022771"
+    },
+    {
+      "wallet": "8psNvWTrdNTiVRNzAgsou9kETXNJm2SXZyaKuJraVRtf",
+      "weight": "15407488891"
+    },
+    {
+      "wallet": "8rbgxynYCmAYEUEfeeNorWEMj57vskXhg7FVLUqWGRWf",
+      "weight": "96213891346"
+    },
+    {
+      "wallet": "8vbn59vTRJHuZcQuJGgJfDrfmGCCu9umkKRpn2t7Xs2x",
+      "weight": "68744544088"
+    },
+    {
+      "wallet": "8yP168S8KvEbQvfYDu5kVh9xRw9YRBTTHCjTu3pWk1qP",
+      "weight": "10569596480891"
+    },
+    {
+      "wallet": "95fX7bRN4qd5L5vYCeXNsYUhzaExgpRSnDPKyNeVy2iY",
+      "weight": "49039185354"
+    },
+    {
+      "wallet": "97qpzJ64HgKcC9XLtN4ZFCgdfsz6HGWkwKL9Vcwx4mxi",
+      "weight": "23564450690673"
+    },
+    {
+      "wallet": "9CpCLrLiW8eJXA5ZELRAvxKSqhWN3b59WH63rKjABXfL",
+      "weight": "667445955648"
+    },
+    {
+      "wallet": "9G7Vq23iCSq2GmY94exbpzckbS4UDSPt3nTn98b72bxM",
+      "weight": "7674652428865"
+    },
+    {
+      "wallet": "9GZXAASXDqYpq3TPy2zabi6HPkcTUkcTDkUPUyPiY7Mm",
+      "weight": "555646496077"
+    },
+    {
+      "wallet": "9HhcokWoEduELc4GCyJ4iNCP2oQJDUCTPbBUv68qZTLH",
+      "weight": "2932350812605"
+    },
+    {
+      "wallet": "9NTQiysWTLFYMdQHR2dA1UCkwwCohrwUfAJ4QrTkp2Fi",
+      "weight": "68369968072"
+    },
+    {
+      "wallet": "9XPyVi5UxiM3Dx9JhBYBR68qStxiS84Et2tGZjzxjMYn",
+      "weight": "17163558519"
+    },
+    {
+      "wallet": "9Yxo9JQ4Jdb14AKKK7DRxyEFkYxkEU9qJpdQTkQBhC7g",
+      "weight": "198167126"
+    },
+    {
+      "wallet": "9gUe3PsHXdTEW5ekjGe4GQexQtwZ2FAM3hFMQ7NzujCJ",
+      "weight": "5461750865"
+    },
+    {
+      "wallet": "9gaw8iZvo69vje6KADeqgveMgTE1aqjTfRJhqPfPQKEu",
+      "weight": "7993054299"
+    },
+    {
+      "wallet": "9hvcJV9tUxaGkXwemct8RqepZxn2zDkXUtkN3Cn1HPk9",
+      "weight": "507979777535"
+    },
+    {
+      "wallet": "9ixS9Lwaic41intq1BqS6nAzKdCJRi7GNKVbdP11NPQ",
+      "weight": "17987595539182"
+    },
+    {
+      "wallet": "9kJWjfH4ThTU5rDSzp8dw8fjUfNfT4Ykrik5vrH8WWT7",
+      "weight": "4779700270"
+    },
+    {
+      "wallet": "9kff7bt86i5XwpcQosyfwYY1TQ3n6ThS1HnSPLS5xZV5",
+      "weight": "83577119102"
+    },
+    {
+      "wallet": "9nkb46UTNKhZPvNZ3yosdn8yNb1BdKHaWrM8s684UtWL",
+      "weight": "425929335"
+    },
+    {
+      "wallet": "9rpKmQgQGbSJHBnHuiwmwojcekxdwbmydBQfRaeWRrbB",
+      "weight": "4273270394"
+    },
+    {
+      "wallet": "9srTtsfRtWqWmz2UUfwAeg7VCVdPhN4sKMSxoGP5kg7K",
+      "weight": "110723354064"
+    },
+    {
+      "wallet": "9u9eRr6vw8Y8jFxrABfohnQw2RZYiY2zuw2QN9RNFimB",
+      "weight": "1220722613484"
+    },
+    {
+      "wallet": "9y5yaaxMXnJ7kj7PHDEZ5oHzYyDGzReCx6VSoH2VmQn1",
+      "weight": "868511358554"
+    },
+    {
+      "wallet": "A4cU7DKYcGtieJYkNa5Vo1AGmaXupWQSJTDkTckD7a5Q",
+      "weight": "10000000000000"
+    },
+    {
+      "wallet": "A7DwWLZMAo4FDPmTM5XuV7fqLr74AGKBkCJnsvdE793U",
+      "weight": "609099228"
+    },
+    {
+      "wallet": "ABwupfZsMrSUbDyECs5EegxHWizr4km9mkL56d4UocSM",
+      "weight": "20062215548"
+    },
+    {
+      "wallet": "AHyRvHLugE5cNPJxfp96jskR3v5SPR9C1rq44m55oNA4",
+      "weight": "511910971"
+    },
+    {
+      "wallet": "AMp8GRoe7F8QkVrJ7jJQuEizunY36XuuzkqKRpWPTtFn",
+      "weight": "47747031484"
+    },
+    {
+      "wallet": "ASLmagQjvz4GkiEeapCQLoQoFS7mpjFNgsfaqQc79k6",
+      "weight": "170658593935"
+    },
+    {
+      "wallet": "ASbsM91BVvDsiZiUXkNetnvoPrDmqrZMugh6bmDWBpoV",
+      "weight": "6081960545"
+    },
+    {
+      "wallet": "ASwPzLVGqc9frJqnr8b8UJKz9bP9xVpf19oamwhECDXp",
+      "weight": "16522557249"
+    },
+    {
+      "wallet": "Ac5KjKkyZ3d7GPvVVsj316fu6df7gJ5hJ7Ed88EoqR5P",
+      "weight": "1493397908172"
+    },
+    {
+      "wallet": "AcpnoiRWUGtv3Cw516gTnnZCmapJ8R9FHCKC7U3uRaun",
+      "weight": "2444872411864"
+    },
+    {
+      "wallet": "AexnUCDxRJFSPZardkHSwjpPcDEe3kzK7e1AEtie6psU",
+      "weight": "17408420903"
+    },
+    {
+      "wallet": "AgatsuC3PAazEz18dsWperLcjoSidPFGiMbwqvAsZdT5",
+      "weight": "16381824170837"
+    },
+    {
+      "wallet": "AkdVBfN35Yhp7XLcKsAycG78o83eWRCxuQ1mLayBuZKB",
+      "weight": "7260483434"
+    },
+    {
+      "wallet": "AnAfyBCRBXSuWrecLV29XEBy3ohHHYA3CnSC9v8QRb8M",
+      "weight": "121524114908"
+    },
+    {
+      "wallet": "ApFm6vRgXSS1k7MnG7hQG7SmHvk57feDgWX4yYSMDf9z",
+      "weight": "6012728323289"
+    },
+    {
+      "wallet": "ArSXst3cEjMupBucL2BRzX1BSrZyqnEdzif95bKp5XGf",
+      "weight": "61856482218"
+    },
+    {
+      "wallet": "AtxC4mZWLGhTXRk6hCJLpBaJcY8i3Qg16QDVqgjaexSG",
+      "weight": "981856824920"
+    },
+    {
+      "wallet": "AvTJyAaJA3LMme3Bsc23P4KgZ4zRDPmbwbUBvMARQjvE",
+      "weight": "3007416455192"
+    },
+    {
+      "wallet": "Aw44iBuyQtvsnTMJPwbja7Nsw4YYMGw5j59hPYZ6ya8G",
+      "weight": "872365882580"
+    },
+    {
+      "wallet": "AyEVwbFhzFZcPKkNZxNa41xJX9Lx6RCMxfjKQRCoQRVC",
+      "weight": "1842894736616"
+    },
+    {
+      "wallet": "B65meC39NPh15GwEtStXyDn5zW9ZdBb9DDcbYXRnuFxd",
+      "weight": "257501258788"
+    },
+    {
+      "wallet": "BCW9Xw84TpXxmrvtDgVXpyo8b1oYfyvS8MbvGM47Nj6u",
+      "weight": "18362600423"
+    },
+    {
+      "wallet": "BF428E5RWYxZJJri4whGdTTE6GiWb33qkrm7TLchS2fL",
+      "weight": "126366196736"
+    },
+    {
+      "wallet": "BGWrbBPezfYakR91JmStYv8P13RAz4eN4c2awQE3qdsZ",
+      "weight": "1221048415747"
+    },
+    {
+      "wallet": "BJCoM7AJc8u9tTjBy4PSbn65qKQn7vBQroJdxf6RMHhq",
+      "weight": "26729706910"
+    },
+    {
+      "wallet": "BPAQ7wj2ChfQ566URoR4mJC5oWkdgJJh5ShuWqjF9wUM",
+      "weight": "13079138"
+    },
+    {
+      "wallet": "BRLWqYcGdMHTUgtp9SGo3Leb6iMzAja19hXLciFbJwY4",
+      "weight": "120448313212"
+    },
+    {
+      "wallet": "BUS7JVzdRF75K1TfTsWvu35fdwVkiPkjHnzDMxU6Z1zg",
+      "weight": "26879520812"
+    },
+    {
+      "wallet": "BboTccXvJW5D9PnCMkURJLa34DtbUvkg4HK9MGuCzNG2",
+      "weight": "20857331032"
+    },
+    {
+      "wallet": "BgpPdfLFzmHnUxtWexiDdPeLBefe47Ygsb8eS2CZQoXY",
+      "weight": "442067715042"
+    },
+    {
+      "wallet": "BitSBjiaw8Uep7huBNBdBiHPAwP3PJkaHHyM67LH7Up7",
+      "weight": "51261654"
+    },
+    {
+      "wallet": "BohkYCmGEqTqYRB5NfaQQsZLjD6ET5PGAGJChRgbKQgx",
+      "weight": "452600671446"
+    },
+    {
+      "wallet": "BsFZRX11wgpUo6SVAnqaQsWZNm7hxAQnB6iew7fxZ3C6",
+      "weight": "24741561126"
+    },
+    {
+      "wallet": "C1ah54mpXZH4B3ntCmFrfm22nbbvGK8iwp4oEsaLvVSX",
+      "weight": "545266190614"
+    },
+    {
+      "wallet": "C9Tj7W14EQpzscncyBoFe9ADhW5YQ5C2Y2W6wT9jVmx4",
+      "weight": "50073338145"
+    },
+    {
+      "wallet": "CBcz4B4R2nozJsxtjJ1tvVHFYC62nPQPzhmxVkbbGh86",
+      "weight": "537239427540"
+    },
+    {
+      "wallet": "CCUefYreEu9ZTee3RDodfFVxk7QgDumYWN7zyxkgo1Kb",
+      "weight": "8165053341"
+    },
+    {
+      "wallet": "CCwUB1W6Wmzq7f3zKiQgWxdSrgSKqzSkiPRUJoqLHXja",
+      "weight": "205623411499"
+    },
+    {
+      "wallet": "CDyY351PuuhLw43mMhLsELYW3SGX7NJQ36nYMSEY1Wbo",
+      "weight": "754333873"
+    },
+    {
+      "wallet": "CFcZgxpUbJ7oAy5nHtt5MSBJFsMJBPiht5yHKHYJcEwp",
+      "weight": "2350683875976"
+    },
+    {
+      "wallet": "CFyjjLmLyEsUAfW86ui7YduQB5wnQRRTgY3uvSEAQCze",
+      "weight": "2587661002841"
+    },
+    {
+      "wallet": "CHM8HS9Wqyo1aY7kXDcNt1ZRmvad3RRFkb8ywGGufFJh",
+      "weight": "912090530"
+    },
+    {
+      "wallet": "CJpQW5RjP9szhmLNqZdpVcfrBbA7K3aiXVkS5754yMGQ",
+      "weight": "9352399827"
+    },
+    {
+      "wallet": "CMU76RoGDUcdjCmrpDpJfSj9x39Vt3XsXTyRkqeScjg1",
+      "weight": "9592179395"
+    },
+    {
+      "wallet": "CMokSxvGKmXGR1ohjx4CPmQ7icStmdS3Uui8pByZJAEH",
+      "weight": "634392727934"
+    },
+    {
+      "wallet": "CW4eiLZ5huM7NnEQBb1Re9YT7Gs6VwYmLzQXpAkfr8eD",
+      "weight": "591151371535"
+    },
+    {
+      "wallet": "CdFtC56d3PeB2MXixSrNNiAbRCUZ7gr8gQUmaXbZBBxy",
+      "weight": "3210183599849"
+    },
+    {
+      "wallet": "CgpjjEcm6xxwSRKA4ZXkXRsn8FC4b28hCHaL5tKUg6pv",
+      "weight": "748096506"
+    },
+    {
+      "wallet": "CmLRdR9XXwQwWLyLVqxzNZ2mBpmvBjAt8VXYaLELTMzF",
+      "weight": "15410577208325"
+    },
+    {
+      "wallet": "CvYYWme26g1KnFPkFhkF2sVNpMjWb2FuyfcMzuLCizLq",
+      "weight": "87667014938"
+    },
+    {
+      "wallet": "Cx3g6SWqxhQhUfea3vCX6vsFuokFWmk5zCtv2i52gDPM",
+      "weight": "100252218036"
+    },
+    {
+      "wallet": "CyFt21MB7ckqjJqBYpC6ybzsk59rJAx2CAb5Q6qaaF5G",
+      "weight": "14567954811310"
+    },
+    {
+      "wallet": "CyepeK1xPrkPZiQ1rZcrbKNbhHKnwNkT345PgaeSdAdi",
+      "weight": "2360232950306"
+    },
+    {
+      "wallet": "CywnNbAE3Y9fNAh9QTpGQmSrawrgJnLbYXQWwQs3WNkz",
+      "weight": "6389634110983"
+    },
+    {
+      "wallet": "CzYQ2kFnBxsNEt9Zy34vQ3n5fSDhvA4o4XaTnq1rLvyr",
+      "weight": "346168154"
+    },
+    {
+      "wallet": "D7uZ68inwmvXCjR38MHDZW8nge6YnfCE2gKo7M8kWDLG",
+      "weight": "7301027128831"
+    },
+    {
+      "wallet": "DADDyLEuVJtPACD5LcVGY46BMUvTGVNAUoKHox7Je2Ev",
+      "weight": "95171938"
+    },
+    {
+      "wallet": "DCgD9UKxzhikSfZtzxPKt53PDkgND95ckDHNovrQsfj7",
+      "weight": "680136225762"
+    },
+    {
+      "wallet": "DEMbirWTyP9yMxis4VC7r5qoB56Wp1i7j7YFKxpa2Dmz",
+      "weight": "1"
+    },
+    {
+      "wallet": "DFEDY87Hs7j5LD4xJk2RzyNY5yos132vu6SR4PdtnEhQ",
+      "weight": "14160585114"
+    },
+    {
+      "wallet": "DFVp2dGWbqPsmr6RNGVPEd6WBt1sweDcw8torzBDozAu",
+      "weight": "16350798846"
+    },
+    {
+      "wallet": "DHLQtFx3H7wRdCDPFEwniD9D4JnL5wHxtx15dptJ7snF",
+      "weight": "2224667727482"
+    },
+    {
+      "wallet": "DLJ1ggd8zcpv4RczUbjuPdc6AUAN8w2iMfzNVEvKHt4k",
+      "weight": "1823504306639"
+    },
+    {
+      "wallet": "DRnvpPrLN9BmHojv6HdYuWGYuT5bNTqiWeZHfBCxYGLn",
+      "weight": "47531893420"
+    },
+    {
+      "wallet": "DSN3j1ykL3obAVNv7ZX49VsFCPe4LqzxHnmtLiPwY6xg",
+      "weight": "3723846807"
+    },
+    {
+      "wallet": "DUfdkd4DMWt268Y3kcQr3TXMu2wjsPqnwB781SmSZzJ6",
+      "weight": "4811007821122"
+    },
+    {
+      "wallet": "DUgHd74UUqAkNBFySwEVjBq1wUojhW5c6WMDBHnayYks",
+      "weight": "26784664978"
+    },
+    {
+      "wallet": "DfQdYVVvDqhPrmfb7Ncs4ebp4GqFj6RiSVCtk4Zqnmks",
+      "weight": "116703422340"
+    },
+    {
+      "wallet": "Dfj59WcwnAqe3EzggydgPViqjNbSwd3i7ftHwDk5CppS",
+      "weight": "1"
+    },
+    {
+      "wallet": "Dg7btyhPQWbSfcvC8cs5xTeEsDFkiDM46JomQVMBAQEs",
+      "weight": "2015017630"
+    },
+    {
+      "wallet": "DmXxg1QYXqnnD8jdnscei3SbXGrnVft4xdkaPxueXBed",
+      "weight": "60876298"
+    },
+    {
+      "wallet": "Dn14XWm6qs8yuQSZA9TgkDW9noUFtTp3dTQdspUbTWiN",
+      "weight": "10000000000"
+    },
+    {
+      "wallet": "DnC6C2TABRHnbEBuzububcbHT4Y7GjU9bAFVS68sAasV",
+      "weight": "1554083158015"
+    },
+    {
+      "wallet": "DpthCNYb7gBy9ZiiF3o8wL9U1vnG4kXKxJdfu1nya7w9",
+      "weight": "2394012069126"
+    },
+    {
+      "wallet": "DqRe3riAqGn9ZXsYd89t8HBaEAMXPqMi4LcbfZrGimJ6",
+      "weight": "12931570791"
+    },
+    {
+      "wallet": "Dr2pPCYEqZntBWVoZzgtxYLCvpfJi7Zs8VLEs2apKwH7",
+      "weight": "26692541941"
+    },
+    {
+      "wallet": "DvPhfLP1cnntPecz2gDgwaW6jwZ9A1PN2SR94ji5hq84",
+      "weight": "452294821712"
+    },
+    {
+      "wallet": "DvUddY8kqx4QihV8wbEHtH2wwCqEVN2HFna1LByaLhFs",
+      "weight": "351801143119"
+    },
+    {
+      "wallet": "DvcuxJVdQoXLX4dUaTDAd9E49DvJs1ERdvF711faJxZH",
+      "weight": "1783448207"
+    },
+    {
+      "wallet": "E4m46tzEjcB8ziiab33egbnDsYtFPjpwqcEKHTQ18mKa",
+      "weight": "57162131175"
+    },
+    {
+      "wallet": "E7KoS85CSPnGA7Bwpk5JWL42zv3GHxtECgHLyPsuZ1zd",
+      "weight": "4704098132"
+    },
+    {
+      "wallet": "EAaB5brLcXvFZkinwqHFMJ8RiAwA5h5bAB39ftgfdfBw",
+      "weight": "14511784280919"
+    },
+    {
+      "wallet": "EH8ppC5sS5iqSTeTvwYFkRutQa4sTrQdvQAuL2SsZ37H",
+      "weight": "833926943692"
+    },
+    {
+      "wallet": "EHCytYoCe7c5fge3UHvBh6prXdzPkrCsFzKFx5eZvcKR",
+      "weight": "125428413307"
+    },
+    {
+      "wallet": "EHX1ckSbXjB3VPpwjr3yi9h3hR2GyCofSU3y5H93FP7h",
+      "weight": "4688470671"
+    },
+    {
+      "wallet": "EMCiyzN7ZunAXX6gGbPU9XNEB781MhS23GjNzinPSLfP",
+      "weight": "12591111337484"
+    },
+    {
+      "wallet": "EMPNnkrN3Mrzyqr8yifZAxh12D2eJEhNZeq6HnaDxAzW",
+      "weight": "36041358966"
+    },
+    {
+      "wallet": "ENJrZ1p4XpJmA5rLM5yPZRVFgBPXhwEoS3PTPtDa9abz",
+      "weight": "1161378552702"
+    },
+    {
+      "wallet": "EPhgkGftKCsoeCa9ccJhkAYimrNThaSCRofWrKLSxf3E",
+      "weight": "709513654"
+    },
+    {
+      "wallet": "EUVwYg6HXy9CUakoBVCsr37LDod4QfhYDQVaKBNqbYCh",
+      "weight": "667315228101"
+    },
+    {
+      "wallet": "EUyQq9wjUbU9MD9iHP6LVTLczkay5mt7tczzU6dL6XvV",
+      "weight": "93135021"
+    },
+    {
+      "wallet": "EYaBWyE386say5hjhCskKajUH1odatPdSN5eJTKcpWtZ",
+      "weight": "9434526590"
+    },
+    {
+      "wallet": "EbMTj6QvmH4ZE5QNhdZoU5XGeux6UprmYDGKjDqdiHf9",
+      "weight": "69273091183"
+    },
+    {
+      "wallet": "EcenJFTmzqVszwnikBV4qrpJZstrQeiXnCNUbcRMgQ3A",
+      "weight": "12910984"
+    },
+    {
+      "wallet": "EedJxjpLyrgJhxxCtryxLxc8okZ3GSbP2zGnh4cP4QWG",
+      "weight": "54354788703"
+    },
+    {
+      "wallet": "EkTvJq3gCBZTdWrh4ipkZfKR3jvkX9JTT61nEh12ZqZo",
+      "weight": "77138888492"
+    },
+    {
+      "wallet": "EnF1pSuMfvHS6bNoUrb5NCLUJCpQvfuogRRxBVaNzdHz",
+      "weight": "23376693981"
+    },
+    {
+      "wallet": "EquDnRAzpm7pyHdFRZcxZfkP2gdVameFABL7o8k73GWp",
+      "weight": "298509718"
+    },
+    {
+      "wallet": "EurbvbYQrnwetaGgA66kDDoU6ifArrHL538VERcmEXxa",
+      "weight": "57159062883"
+    },
+    {
+      "wallet": "EvFZr3WBmTe1XhcFNaisCrYfJA5ef1LsU4Zd2waQPUtk",
+      "weight": "33238214"
+    },
+    {
+      "wallet": "EwKuJrQc47k8VKpUFoR7CturQCSxZjzrZEoJx1PeZXxK",
+      "weight": "1657380899499"
+    },
+    {
+      "wallet": "F5PYg4GhEtd1GjnhKUD6Ce2AvHM7Bt7jEcRoy9qNWpRx",
+      "weight": "51628621272"
+    },
+    {
+      "wallet": "F9kLKu3ujfXc6uXZMdgJtQ8reAjaB9cfPTiocMJa1DND",
+      "weight": "295487583279"
+    },
+    {
+      "wallet": "F9yW3APBHxdcAnR9hxb4Qz5jddVDKh4Ks56gyE4tMrMu",
+      "weight": "113721959236"
+    },
+    {
+      "wallet": "FJVGkK58Gtdpi9ZYsdXvNBXBDibdUkySc2vMPwWVEi7z",
+      "weight": "300484352385"
+    },
+    {
+      "wallet": "FLxZCtjgbEcjpVKtHzMMarLa4RWTe8BrkAMK7oFRhH7d",
+      "weight": "9949276369"
+    },
+    {
+      "wallet": "FMVHP1xw6ZHB9zLGyrJeeAvEzCBgouH8bPzdkYqq2C5W",
+      "weight": "21628713686"
+    },
+    {
+      "wallet": "FRT8YuLJ9q8PPX2o4RUiJ9hWL427hNmMJ2M6JdgGgzwK",
+      "weight": "27524378565527"
+    },
+    {
+      "wallet": "FRkeSptidDMPSk3xD7jziL6MJ7CMiuNBaK4TUAZMfMwZ",
+      "weight": "20151983867"
+    },
+    {
+      "wallet": "FTuca4P2Ghd6hi2Uz4hSvWsAC7vtAZz5TXYKXYg2aTt5",
+      "weight": "977631"
+    },
+    {
+      "wallet": "FVpjft81nJGrM372WEBKTyd9Ekkvds5zjEiV6QxUsqRq",
+      "weight": "262724953"
+    },
+    {
+      "wallet": "FdCMAn9KRtbEuqPGJXqw9UW3fBeyjy9RrFF2jpmmVDKS",
+      "weight": "577007587550"
+    },
+    {
+      "wallet": "FdaH7KToj1i4nYXJbBumsqTCkdn7gE8VfBivEiqHGXsg",
+      "weight": "607282028817"
+    },
+    {
+      "wallet": "FfvhEVC4paptX2eBhv2gsqZAfUgk5e4j6C4cAPGN2DYn",
+      "weight": "145837064332"
+    },
+    {
+      "wallet": "FkYQ362qK7Br1feyVwfeMacJ3my8vPe6RoXSTin7mavJ",
+      "weight": "42071292793"
+    },
+    {
+      "wallet": "Fn9n3ftUzjhcmoLwXbTqJdATzamCp3xPEu4LmLSS8ELr",
+      "weight": "124951740"
+    },
+    {
+      "wallet": "FqvNc8coLpvbCPMihSiu7JMobo2vcRwvV4ttJPNKWq5a",
+      "weight": "12823125778"
+    },
+    {
+      "wallet": "FrFj9WLxRECuowAqpPG133dTxozkkFYVohCWu6FK1Zb7",
+      "weight": "770086336"
+    },
+    {
+      "wallet": "FrWAMP8tse6sRraUmLJZv64HnhACkezNodLRqUQY2QVi",
+      "weight": "211222004882"
+    },
+    {
+      "wallet": "Fs9RN3wAsuJKPbTmtX5eek1bhW5krNH8RkQxkFAtgNfR",
+      "weight": "25303178"
+    },
+    {
+      "wallet": "FvzWrPpiietRb8wPtJP7RcJF7Vsz5uxy3h6bUCYuirWF",
+      "weight": "15965362903"
+    },
+    {
+      "wallet": "GA2UZmCcU4hCvPvv2c71u7eHp4EUTdoeDmNeMLMAXvpY",
+      "weight": "11370211906"
+    },
+    {
+      "wallet": "GAW54P6pT4ehhDBZugEchuNQWqzrkYHkgked2rJzUAYu",
+      "weight": "1987829355"
+    },
+    {
+      "wallet": "GBtc3nVaM5jaZYxC8KqTUj8Bcz1GyLGroY8XU9CiKxnQ",
+      "weight": "164515153012"
+    },
+    {
+      "wallet": "GDNCyu5Mia6DgJTCDigUk4EJw8cAuKXF1njtzotMn72H",
+      "weight": "16178414"
+    },
+    {
+      "wallet": "GJv1yTZ4ZDD5UZG3WZ5jYZ66pkjjH2eC6Sb9UCRBsJgJ",
+      "weight": "59829129203"
+    },
+    {
+      "wallet": "GLcPP3WNyUZ2oSaEzc1CrjQhLLzxjhHaRVfDP7Qr7BFH",
+      "weight": "36611"
+    },
+    {
+      "wallet": "GMRVgpuxggsGJmzHS2WjCU1xdUnvLEqEnL67AsujHALi",
+      "weight": "3056268105"
+    },
+    {
+      "wallet": "GP8StUXNYSZjPikyRsvkTbvRV1GBxMErb59cpeCJnDf1",
+      "weight": "303833740"
+    },
+    {
+      "wallet": "GPAfkMCJXXpfNNWJEmBQhNy7x3TuYvfh4Ez6LmnTJNF1",
+      "weight": "244186437"
+    },
+    {
+      "wallet": "GS9jzcGcwEH2cHe9G9Qnt4U7874ZjwQs1FL22XEUBdRC",
+      "weight": "4665768117"
+    },
+    {
+      "wallet": "GUFFwdU1kJddc41rLLuMS1fBMAA3VCS7SpGFSUEnGWdq",
+      "weight": "465721732648"
+    },
+    {
+      "wallet": "GUGb1KSLYa7Dai5qn2vNRXA8dwCsQbqWJ6sMyYccd6q1",
+      "weight": "1006198"
+    },
+    {
+      "wallet": "GXHqfSxcRSVcMZMChqzvhjiPVSY6mSY2CSfQjn3MRLWh",
+      "weight": "500000010000"
+    },
+    {
+      "wallet": "GbCH9nbruaej6ABA4UwwpfpmabXVKL3FjtsmwpehG8Kk",
+      "weight": "194826316"
+    },
+    {
+      "wallet": "GdF6UMezKeo4jpC3fpkytLwSdvJGn1E8QdEnN4icXppg",
+      "weight": "141260913472"
+    },
+    {
+      "wallet": "GdKy7WiZ4YXnCukEiLKgiH92uM1f1uE1mpWiW5ZE6TyB",
+      "weight": "103694711765"
+    },
+    {
+      "wallet": "GfARydu3athZFTyoHhqmsmFy4JbKJWmRz3aBpR2rRRmU",
+      "weight": "18043134"
+    },
+    {
+      "wallet": "GijFWw4oNyh9ko3FaZforNsi3jk6wDovARpkKahPD4o5",
+      "weight": "17198977100605"
+    },
+    {
+      "wallet": "GkgdYjbXnqE81DXHHWLXY9ChLGShqFGw2KxTtfuJFvJB",
+      "weight": "950750127578"
+    },
+    {
+      "wallet": "Gm6EoGJGsnja8ukNVxnV8MzN2oTNcoKbX1LeB15raXLt",
+      "weight": "4137775014"
+    },
+    {
+      "wallet": "Gouc3dE9emSvoBE1JDAnED7RpMsPvz23vQuBKMDGzX9M",
+      "weight": "4034538473"
+    },
+    {
+      "wallet": "GqDCpoMwnL61y1eGPt5QASmtLC8g9uVWvXGA1JHYdC5A",
+      "weight": "1"
+    },
+    {
+      "wallet": "GrUZGwBj9sdiBbc8dPsL2sospgA18cMAqhmL5XfyHSgS",
+      "weight": "26861907389"
+    },
+    {
+      "wallet": "Gvze3pJkxr3AvGKfRQQGxrpg5x3P7PTzd2kHWFwBWV9d",
+      "weight": "2123954149897"
+    },
+    {
+      "wallet": "GxNEFufaWWKF7ztv3VDNcFTT9phFFdPpBVcfCjVNxooR",
+      "weight": "24969808598"
+    },
+    {
+      "wallet": "Gz1Qy22gUBYpxt9m1VUs2jDXn9QhRXFtqycgAgdRbnp",
+      "weight": "1488999630"
+    },
+    {
+      "wallet": "H2fSrkJGcFdCmHkhpbjUYM2HnE5zohgphmPy5Fray11R",
+      "weight": "13433861952650"
+    },
+    {
+      "wallet": "H2qBxyULgGsz5h1v5oKALKLi8Ux9i7hh5jeuKa2Yndh2",
+      "weight": "685293685"
+    },
+    {
+      "wallet": "H3CeY8mHENLHCAHTgG3G1U4z3gXWDjjDnAacLBQa1rno",
+      "weight": "467951664168"
+    },
+    {
+      "wallet": "H3nQr1fHgCJrMTT1qzMFKnpeCyXRkvvsX4GjFpmLYMGN",
+      "weight": "7412797916"
+    },
+    {
+      "wallet": "H8CVQcnPKMMVUNbtuKc9jcqQTqvzeEFeH3e7n1DMgjq1",
+      "weight": "8275580326306"
+    },
+    {
+      "wallet": "HA6WPiARRRUs2eiQYzNJr4yaHxrRgfQS49vgQYQKyAs",
+      "weight": "12631329651845"
+    },
+    {
+      "wallet": "HAjyBnieJK8jNmcidfQHx4bN4wT2UnTq1KU4Gg2MAj9i",
+      "weight": "125140330545"
+    },
+    {
+      "wallet": "HF7qRGNDkt3eeZJkA1ANVDsHW16FmmJwx5CDHN2qJbAZ",
+      "weight": "13410600205"
+    },
+    {
+      "wallet": "HHfJ8aaKoYFzoddDVnW4aommW6HQSnEdQf6R4d8w2E8S",
+      "weight": "341903496501"
+    },
+    {
+      "wallet": "HLDpgqdkPCZrdoUPaXoKd4Suxw7dN2gvg4J6se14rqXQ",
+      "weight": "1583946941093"
+    },
+    {
+      "wallet": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC",
+      "weight": "4"
+    },
+    {
+      "wallet": "HMGGynGnsmNE4vk6SFeQoaL6A7zpci1bY2v4FZiCgES6",
+      "weight": "1000584533"
+    },
+    {
+      "wallet": "HNPqLkPofQREif8pJRnhNWxo6CPW68UmLJNu9emYLDKy",
+      "weight": "15016504796"
+    },
+    {
+      "wallet": "HThgM9oLpqSJv8v2N7fAQPHKwD8hmpJAvmKT5F1W9Uj",
+      "weight": "9153772365"
+    },
+    {
+      "wallet": "HU23r7UoZbqTUuh3vA7emAGztFtqwTeVips789vqxxBw",
+      "weight": "162925390"
+    },
+    {
+      "wallet": "HX7SWSTHPnSCXU4bMzXvtTnc5eQBeDVrcUb12EpNRywQ",
+      "weight": "1263"
+    },
+    {
+      "wallet": "HYKsddaAu8w17SePdZ6Y4B9UghzsTGBy9VeCgD66TnGD",
+      "weight": "297326638754"
+    },
+    {
+      "wallet": "Hax3afQS4Z63FEmkPJGYfziKHPeJ7nPfJrJynzii2UGA",
+      "weight": "1"
+    },
+    {
+      "wallet": "HdWngDpkhn24qqdUfHjHeWe2Q5Q6sWQ6Qb4B6KFh9RTz",
+      "weight": "3040224114"
+    },
+    {
+      "wallet": "HirvJUqDcTqYjXSHRWNVLNZ6xQktvQ9XjnbGe7CzLFum",
+      "weight": "31185133184"
+    },
+    {
+      "wallet": "HkYaLUSncifKTBwMQs4nVGvKwUg4bZfjt9PUxULcqTZU",
+      "weight": "97358317555"
+    },
+    {
+      "wallet": "HkaLT2N7kv3CBSdgBsktrFViQHnyfvRP59USCWpnUcLQ",
+      "weight": "683597742"
+    },
+    {
+      "wallet": "Hr3nQ3g3RustVc1W3RWHWXDjCvY2Mph8NnyyRBa7HVfg",
+      "weight": "1275517695"
+    },
+    {
+      "wallet": "HvFdDWS3RqymRAVx1ZdoL2RjiC38r5dtt19Z8op5jqDK",
+      "weight": "1039590485"
+    },
+    {
+      "wallet": "HzAups7nmJA53A6CgcdoNKk5WnWnS2Xw4DwHSDhKbhUm",
+      "weight": "12825673373"
+    },
+    {
+      "wallet": "J47TXyJRXrT89yxnX95cbEeQbUA7FM4aq3QhPAgtQ3Ns",
+      "weight": "50640737348"
+    },
+    {
+      "wallet": "J8JGY35E5CxwtzxYQHtGaaa3xF8SxghwT9FP4WxgQWTv",
+      "weight": "583969630082"
+    },
+    {
+      "wallet": "J8xUTb7feHgS6XqhX5Yjkbok4SEKTT1fE65xcMinttzt",
+      "weight": "1363"
+    },
+    {
+      "wallet": "J9Qg6q8bwvQQ8QQsLPwsW8j2zBnN27xoVS7NXSrWVDeE",
+      "weight": "30528704485"
+    },
+    {
+      "wallet": "JBA4936Lw1ZdLyRJqQnXkG2YJMCxwkBKc6oZGddRq7QZ",
+      "weight": "1277126849455"
+    },
+    {
+      "wallet": "JD32XEbtvX18Qja5hg9uZDaQQgs6y5XkteKvYJU6upAY",
+      "weight": "34715443876"
+    },
+    {
+      "wallet": "PDzfbuFfr3A2cZBW8f5Fse71U1SaRfkUHCJbKj2AW5j",
+      "weight": "2683517159"
+    },
+    {
+      "wallet": "PLCyYkr4ZfHmfz7mJ1g9CCdygxPtdmFzRCfmqwHxNqC",
+      "weight": "11875342134356"
+    },
+    {
+      "wallet": "UPkgmEHX6rmLPNpWgLtKNWRdjRDvUvHWJKnQq8cgqVW",
+      "weight": "26873442036"
+    },
+    {
+      "wallet": "Y1ibdmEHKu1TUS2SnLVLhYX775G5yYUkgf3mhYCNCQJ",
+      "weight": "29544254676"
+    },
+    {
+      "wallet": "cUZ3i6B4TesbrDVNqmLjnLzAvvzW5p9tvH7TKHEiEM7",
+      "weight": "65948093934"
+    },
+    {
+      "wallet": "catK9v3gp2dd32bkUxDEst4BarwDoCL3pkFfVoVjcgi",
+      "weight": "29635825247156"
+    },
+    {
+      "wallet": "oPG2Yhmd4gp7oW2k54JfV5c1BDoBS2bFJ1Yj3zS7umt",
+      "weight": "29456895584"
+    },
+    {
+      "wallet": "ozgozK42sS4gz1gZVRjhs29zVumbyuYqQETYyWXFFXa",
+      "weight": "12493151"
+    },
+    {
+      "wallet": "sVBX6aDGXNKN4L6piQP5R8PtsaxyEoUzqTcFKsodcxF",
+      "weight": "9618464041"
+    },
+    {
+      "wallet": "sobLmyY3kjTYqk2r7Ui18PC6YzHUBDaD2tk6PPNAv4o",
+      "weight": "40153382907"
+    },
+    {
+      "wallet": "towmK1GhTD8zC6XdhTWEmqAYffUtKiGDTjp1B4JMauP",
+      "weight": "25921930873915"
+    },
+    {
+      "wallet": "tsRR3jcKrGCQJvXaZZmX1Wj49BQUyH3yiZoM2PipiHQ",
+      "weight": "2211559377"
+    },
+    {
+      "wallet": "uFA33TM4wGJt1jjcUCr3SK4y4o9CPAGrAbwY7YFihkr",
+      "weight": "260136795004"
+    }
+  ]
+}
