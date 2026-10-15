@@ -22,8 +22,11 @@ const TEST_TOKEN = { name: 'PHANTOM TEST', symbol: 'PTEST' };
 
 export const VARIANTS = Object.freeze({
   A: 'pump.fun create_v2 only (with the lookup table)',
+  B: 'create_v2 + createFeeSharingConfig (with the lookup table)',
   C: 'create_v2 + createFeeSharingConfig + updateFeeSharesV2 80/20: the real launch shape (with the lookup table)',
+  D: 'like C, but without the lookup table (every account written in the transaction)',
   E: 'control: a 0-lamport System transfer to yourself (if THIS warns, it is the domain or the session, not our instructions)',
+  F: 'createFeeSharingConfig + updateFeeSharesV2 only, for an EXISTING mint (PadPad); no create_v2, no mint signer',
 });
 
 /** The wallet chain id for the launch network. */

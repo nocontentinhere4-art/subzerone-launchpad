@@ -62,7 +62,8 @@ test('phantom test: every variant builds offline, unsigned, with the throwaway m
     } else assert.equal(tx.message.header.numRequiredSignatures, 1);
     assert.equal(out.chain, 'solana:mainnet');
   }
-  assert.equal(typeof sizes.A, 'number'); assert.equal(typeof sizes.C, 'number'); assert.equal(typeof sizes.E, 'number');
+  for (const v of ['A', 'B', 'C', 'E', 'F']) assert.equal(typeof sizes[v], 'number', v);
+  assert.match(String(sizes.D), /skipped: .*over the 1232-byte/, 'C without the table does not fit');
   assert.ok(sizes.A < sizes.C, 'create only is smaller than the full launch');
   const c = await pt.build({ variant: 'C', wallet: admin });
   assert.equal(web3.VersionedTransaction.deserialize(Buffer.from(c.txBase64, 'base64')).message.compiledInstructions.length, 3);
