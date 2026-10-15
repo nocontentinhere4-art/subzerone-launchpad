@@ -232,7 +232,7 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     const xa = db.get('SELECT planned_handle, planned_bio, status, x_handle, connected_at FROM x_accounts WHERE project_id = ?', p.id);
     const posts = (owner || staff) ? db.all('SELECT id, kind, text, status, x_post_id, error, approved_at, published_at FROM x_posts WHERE project_id = ? ORDER BY created_at', p.id) : undefined;
     const launch = db.get('SELECT * FROM launches WHERE project_id = ?', p.id);
-    const intent = (owner || staff) ? db.get(`SELECT id, status, mint, tx_signature, error, provider, network, created_at, updated_at, last_valid_block_height, dev_buy_mode
+    const intent = (owner || staff) ? db.get(`SELECT id, status, mint, tx_signature, error, provider, network, created_at, updated_at, last_valid_block_height, dev_buy_mode, split_tx
       FROM launch_intents WHERE project_id = ? ORDER BY created_at DESC LIMIT 1`, p.id) : undefined;
     const provider = getProvider(cfg, db);
     const gen = db.get('SELECT generator, cost_usd, created_at FROM generations WHERE project_id = ? ORDER BY version DESC LIMIT 1', p.id);

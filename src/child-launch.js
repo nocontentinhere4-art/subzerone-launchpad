@@ -25,7 +25,7 @@ import { moderateText } from './chat.js';
 import { submitIdea, sniffImage, currentVersion } from './ideas.js';
 import { getProvider, allocationStatement, feeMode, validateRecipients, CHILD_SPLIT_POLICY, requireSub01Wallet, parseInitialBuySol,
   maxInitialBuyLamports, createIntent, refreshIntent, submitSigned, abandonIntent, createDevBuy, refreshDevBuy, submitDevBuy, abandonDevBuy,
-  skipDevBuy, devBuyView, solString, SUB01_LABEL, LAUNCH_COST_RESERVE_LAMPORTS, createSplit, refreshSplit, submitSplit, abandonSplit, splitView } from './launch.js';
+  skipDevBuy, devBuyView, solString, SUB01_LABEL, LAUNCH_COST_RESERVE_LAMPORTS, createSplit, refreshSplit, submitSplit, abandonSplit, splitView, splitTxFor } from './launch.js';
 import { blockOf } from './app-blocks.js';
 import { liveSpec, issue, consume, ipHash } from './tool-api.js';
 import { publicStats } from './coin-stats.js';
@@ -329,7 +329,7 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
         if (!/^[0-9a-f]{64}$/.test(String(b.imageSha256 || ''))) throw new HttpError(400, 'bad_upload', 'pick an image first (PNG, JPEG, GIF or WebP, up to 1.5 MB)');
         const payload = payloadOf(parent, f, b.imageSha256, recipients, kind);
         const out = issue(db, parent, site, { wallet, action: 'launch.start', payload, summary: summaryOf(db, parent, f, b.imageSha256, recipients, provider, kind) }, t);
-        return { body: { ...out, recipients, statement, initialBuyLamports: f.initialBuyLamports, network: provider.network, mock: provider.isMock,
+        return { body: { ...out, recipients, statement, initialBuyLamports: f.initialBuyLamports, network: provider.network, mock: provider.isMock, splitTx: splitTxFor(cfg, provider, 'sharing_config'),
           launchpad: kind.launchpad, depth: kind.depth, maxDepth: MAX_DEPTH } };
       }
       // start: the image must be the one whose hash was signed

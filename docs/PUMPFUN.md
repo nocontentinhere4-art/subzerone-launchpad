@@ -46,6 +46,38 @@ So:
 - **Not yet verified on-chain**: creation and fee sharing together in one transaction. It isn't documented. The SDK
   builds it and simulation is the next check. **Test it on devnet before relying on it** (see STATUS).
 
+### Two-step launch (default since 2026-10-15, `LAUNCH_SPLIT_TX=1`)
+
+Phantom showed "This dApp could be malicious" on the single creation transaction (create + fee-sharing config +
+shares, a second signer). The launch is now two signatures; `LAUNCH_SPLIT_TX=0` restores the single transaction below
+without a code change (read when the transaction is built; launches already split keep their step 2).
+
+| | contents | signers | measured |
+|---|---|---|---|
+| tx1 | `create_v2` only | the author first, then the mint key (server, after the wallet) | 584 bytes (devnet and mainnet sim) |
+| tx2 | `sweep_creator_fee`, `create_fee_sharing_config`, `update_fee_shares_v2` (+ ATA + `buy_v2` when the total stays <= 1232 - 150) | the author alone | 714 (80/20), 748 (gen 1), 783 (gen 2); with the buy 977 / 1011 / 1046 |
+
+- Between the two, the curve's creator is the author's wallet: trades in that window put creator fees on the curve,
+  and `update_fee_shares_v2` / `create_fee_sharing_config` fail with 6095 `CreatorFeesNotSwept` until they are swept
+  (mainnet simulation 2026-10-15 on a live coin with 0.478 SOL on its curve: without the sweep 6095, with it ok). The
+  permissionless `sweep_creator_fee` (creator = the author) therefore always comes first; it pays those fees into the
+  author's own creator vault and is harmless when the bucket is empty.
+- The project is `launched` after tx1 (the coin exists) but `launches.split_state = 'pending'`: the PC, the coin site,
+  the city and the fee ledger say "Coin created · fee split not locked yet" and never call the split locked; the
+  allocation row stays `approved`; a child coin is signed into its parent's registry only after the lock.
+- tx2 (`/launch/split/transaction|refresh|signed|abandon`, coin sites `/_api/launch/:id/split/*`): built after tx1 is
+  verified, fresh blockhash; the shares are re-derived server side (the allocation row, SUB-01 >= 20%, the family rule
+  for a family coin) and checked again in the signed bytes (`checkSignedShares`, exactly the fee instructions + the
+  buy, one signer). The buy's creator is the sharing-config PDA. A buy that does not fit becomes tx3 (the dev-buy step,
+  allowed only once the split is locked); `separateBuy: true` locks the split alone.
+- `split_recheck` (hourly, worker): a sharing config found on chain with exactly the approved shares and the admin
+  revoked -> `locked` (idempotent); other shares or not revoked -> `mismatch`, an `ALERT` audit row, never retried by
+  itself (`POST /api/admin/projects/:slug/reverify` reads it again); nothing on chain -> a reminder note every 6 hours.
+- Fee reader: before the lock the author's own creator vault (scope: all its coins), after it the project vault.
+- Devnet run 2026-10-15 (local instance, the test wallet signing programmatically): tx1 `iTtUgRvf…fCC2`, tx2
+  `3UdaaQck…LErxPP` (split 80/20 + 0.01 SOL dev buy in one signature), sharing config `4KZwxhTb…rkCkW` holds exactly
+  the shares, admin revoked; transcripts `docs/demo/flow-pumpfun-split-2026-10-15T15-06-09.json` and, with a sniper buying between tx1 and tx2, `…T15-06-58.json` (tx2 `yb6BJPTN…dGky`).
+
 ### With the dev buy: two Phantom-safe transactions
 
 Phantom cannot simulate a pump.fun create whose program event authorities come from an address lookup table and

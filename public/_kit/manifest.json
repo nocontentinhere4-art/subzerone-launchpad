@@ -69,9 +69,9 @@
    "sha256": "8f567ef1e2967e311d23fa653d30960a10fa3861f166a7b8e8d925a75b357eb1"
   },
   "site-launch.v1.js": {
-   "bytes": 18575,
-   "gzip": 7165,
-   "sha256": "bf60f80f59ef1e95579e2316c7d97187e83bec2df929322ff7b712208ee8d07d"
+   "bytes": 21539,
+   "gzip": 8008,
+   "sha256": "00a8f083c0e99d8a5ba51f8a8e5f2bf31d59ae48b84193cf4d75237189a97c2a"
   },
   "vendor/anime-4.5.0.js": {
    "bytes": 39995,

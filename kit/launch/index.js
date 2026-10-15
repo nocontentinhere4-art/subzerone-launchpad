@@ -161,10 +161,11 @@ export function launchBlock(slot, b, K) {
           h('div', { cls: 'ln-coin' }, h('img', { src: image.url, alt: '', width: 72, height: 72 }), h('div', {}, h('strong', { text: `${fields.name} $${fields.ticker}` }), h('p', { cls: 'fine', text: fields.description }))),
           h('p', { cls: 'fine', text: q.launchpad ? `What you launch: a LAUNCHPAD, generation ${q.depth} of at most ${q.maxDepth}. Its own site launches coins too.` : parent.childrenMode && parent.childrenMode !== 'coins' ? `What you launch: a coin (not a launchpad).` : '' }),
           h('p', { cls: 'fine', text: `Network: ${q.mock ? 'MOCK provider (rehearsal, no blockchain)' : `pump.fun on Solana ${q.network}`}. Created by your wallet ${short(account.address)}, which pays the network fee and rent (about 0.02 SOL).` }),
-          h('h4', { text: 'Creator fees: split on-chain, locked at launch' }), splitRows(q.recipients),
-          h('p', { cls: 'fine', text: `Dev buy: ${q.initialBuyLamports > 0 ? `${sol(q.initialBuyLamports)} of your own coin, a second signature right after the launch (pump.fun's fees included; you can skip it then)` : 'none'}.` }),
+          h('h4', { text: q.splitTx ? 'Creator fees: split on-chain, locked in step 2 (one more signature right after the coin is created)' : 'Creator fees: split on-chain, locked at launch' }), splitRows(q.recipients),
+          h('p', { cls: 'fine', text: `Dev buy: ${q.initialBuyLamports > 0 ? `${sol(q.initialBuyLamports)} of your own coin, ${q.splitTx ? 'with step 2 when it fits, else right after it' : 'a second signature right after the launch'} (pump.fun's fees included; you can skip it then)` : 'none'}.` }),
           h('ol', { cls: 'fine ln-how' }, h('li', { text: 'You sign one message (below). It is not a transaction.' }), h('li', { text: 'SUB-01 votes on it, in seconds. He may pass: then nothing is created.' }),
-            h('li', { text: 'If he builds it, you review the exact launch transaction here and sign it in your wallet.' }), h('li', { text: 'The coin, its name, image and description are public; the split above cannot be changed afterwards, by anyone at SUBZERONE or by you.' })),
+            h('li', { text: 'If he builds it, you review the exact launch transaction here and sign it in your wallet.' }),
+            ...(q.splitTx ? [h('li', { text: 'Right after the coin is created, one more signature (yours alone) writes and locks the fee split above on chain. Until then it is NOT locked.' })] : []), h('li', { text: 'The coin, its name, image and description are public; the split above cannot be changed afterwards, by anyone at SUBZERONE or by you.' })),
           h('details', {}, h('summary', { text: 'The exact message you sign' }), h('pre', { cls: 'pq-code', text: q.message })),
           h('div', { cls: 'row' }, sign, h('button', { cls: 'btn btn-ghost', type: 'button', text: 'Edit', onclick: () => review.replaceChildren() }))));
         slideIn(review.firstChild);
@@ -184,7 +185,9 @@ export function launchBlock(slot, b, K) {
       if (following !== id) return;
       let s; try { s = await api(`/_api/launch/${encodeURIComponent(id)}`); } catch (e) { if (e.status === 404) { store.set(LAST, ''); live.replaceChildren(); return; } timer = setTimeout(tickFn, 5000); return; }
       drawLive(s);
-      if (!DONE.has(s.status) || (s.status === 'launched' && s.devBuy && ['submitted', 'awaiting_signature'].includes(s.devBuy.status))) timer = setTimeout(tickFn, 2500);
+      // a two-step launch: keep following until the fee split is locked (step 2) or flagged
+      const splitOpen = s.status === 'launched' && s.split && !['locked', 'mismatch'].includes(s.split.state);
+      if (!DONE.has(s.status) || splitOpen || (s.status === 'launched' && s.devBuy && ['submitted', 'awaiting_signature'].includes(s.devBuy.status))) timer = setTimeout(tickFn, splitOpen && s.split.state === 'pending' ? 5000 : 2500);
       else if (s.status === 'launched') loadParent().catch(() => {});
     };
     tickFn();
@@ -192,10 +195,15 @@ export function launchBlock(slot, b, K) {
   const keyFor = (id) => store.get(keyOf(id));
   let busyStep = false;                                     // a wallet prompt is open: the poll leaves the buttons alone
   const seen = new Map();                                   // launch id -> the transaction last shown for review
+  const autoSplit = new Set();                              // launch ids whose tx1 this page signed: step 2 opens by itself after it lands
   function drawLive(s) {
     if (busyStep) return;
     const at = ORDER[s.status] ?? -1, m = msg();
-    const steps = h('ol', { cls: 'ln-steps' }, ...STEPS.map(([k, l], i) => h('li', { cls: i < at || s.status === 'launched' ? 'done' : i === at ? 'now' : '', text: l })));
+    // a two-step launch (the fee split is its own second signature): "Launched" only once the split is locked
+    const sp = s.split && typeof s.split === 'object' ? s.split : null, splitDone = !sp || sp.state === 'locked';
+    const list = sp ? [...STEPS.slice(0, -1), ['launched', 'Coin created'], ['split', 'Fee split locked']] : STEPS;
+    const steps = h('ol', { cls: 'ln-steps' }, ...list.map(([k, l], i) => h('li', { cls: k === 'split' ? (sp.state === 'locked' ? 'done' : s.status === 'launched' ? 'now' : '')
+      : i < at || s.status === 'launched' ? 'done' : i === at ? 'now' : '', text: l })));
     const kids = [h('span', { cls: 'eyebrow', text: 'Your launch' }), h('div', { cls: 'ln-coin' }, h('img', { src: s.coin.imageUrl, alt: '', width: 56, height: 56 }),
       h('div', {}, h('strong', { text: `${s.coin.name} $${s.coin.ticker}` }), h('p', { cls: 'fine', text: `${s.stageLabel}${s.note ? `: ${s.note}` : ''}` }))), steps];
     if (s.verdict) {
@@ -229,7 +237,9 @@ export function launchBlock(slot, b, K) {
           say(m, 'Check it in your wallet, then approve…');
           const signed = tx.mock ? await signText(tx.mockSigningText) : await signTx(tx.txBase64, network);
           say(m, 'Signed; sending it to the network…');
-          await api(`/_api/launch/${s.id}/signed`, { key, signed });
+          const out = await api(`/_api/launch/${s.id}/signed`, { key, signed });
+          if (tx.splitTx) autoSplit.add(s.id);                // step 2 follows by itself once the coin is confirmed
+          return out;
         };
         kids.push(review, h('div', { cls: 'row' }, ...(s.status === 'launch_prepared' ? [step('Prepare the transaction', show)]
           : [step('Sign the launch in your wallet', sign), ...(seen.get(s.id) ? [] : [step('Show the transaction', show, true)]),
@@ -237,7 +247,33 @@ export function launchBlock(slot, b, K) {
       } else kids.push(h('p', { cls: 'fine', text: 'This browser does not hold the key of this launch. Open the coin in SUBZERONE with the wallet that started it to continue.' }));
     }
     if (s.status === 'confirming') kids.push(h('p', { cls: 'fine', text: 'Waiting for the network to finalize it, then every on-chain check runs before it is called launched.' }), s.intent?.explorerTx ? h('a', { cls: 'fine', href: s.intent.explorerTx, target: '_blank', rel: 'noopener noreferrer', text: 'The transaction on Solscan ↗' }) : null);
-    if (s.status === 'launched' && s.launch) {
+    if (s.status === 'launched' && s.launch && !splitDone) {
+      // step 2 of 2: the coin exists, its fee split is NOT locked until this signature lands
+      const a = sp.attempt || null, err = String(a?.error || '').replace(/^before signing: |^preflight: /, '');
+      const lock = (separateBuy) => async () => {
+        say(m, 'Building the fee-split transaction…');
+        await api(`/_api/launch/${s.id}/split/tx`, { key, ...(separateBuy ? { separateBuy: true } : {}) });
+        const tx = await api(`/_api/launch/${s.id}/split/refresh`, { key });
+        seen.set(`${s.id}:split`, tx);
+        say(m, `Step 2 of 2: check it in your wallet (one signature, yours: it writes and locks ${tx.splitText}${tx.withBuy ? ` and buys ${sol(tx.costLamports ?? tx.requestedLamports)} of your coin` : ''}), then approve…`);
+        let signed;
+        try { signed = tx.mock ? await signText(tx.mockSigningText) : await signTx(tx.txBase64, s.launch.network); } catch (e) { await api(`/_api/launch/${s.id}/split/abandon`, { key, reason: 'rejected' }).catch(() => {}); throw e; }
+        say(m, 'Signed; locking the fee split…');
+        await api(`/_api/launch/${s.id}/split/signed`, { key, signed });
+      };
+      kids.push(h('div', { cls: 'ln-card' }, h('strong', { text: `Coin created ✓ ${s.launch.provider === 'mock' ? '(MOCK, no blockchain)' : `on ${s.launch.network}`}` }),
+        h('p', { cls: 'fine', text: `Mint ${s.launch.mint} · ${s.launch.checks} on-chain checks passed.` }),
+        h('h4', { text: sp.state === 'mismatch' ? 'The fee split on chain is NOT the approved one' : `Step 2: lock the fee split (${sp.text})` }), splitRows(s.recipients || []),
+        h('p', { cls: 'fine', text: sp.state === 'mismatch' ? 'SUBZERONE has been alerted; nothing here can change it.'
+          : sp.state === 'submitted' ? 'Signed · locking the fee split… the network decides, not the server.'
+            : `Until you sign step 2 the fee split is NOT locked: creator fees go to your own wallet's vault and nobody else gets their share.${err ? ` Last try: ${err}.` : ''}` })));
+      if (key && ['pending', 'failed', 'awaiting_signature'].includes(sp.state)) {
+        const lockBtn = step(sp.state === 'failed' ? 'Try again: lock the fee split' : 'Lock the fee split in your wallet', lock(false));
+        kids.push(h('div', { cls: 'row' }, lockBtn, ...((a?.withBuy || sp.state === 'failed') && s.devBuy && ['pending', 'failed'].includes(s.devBuy.status) ? [step('Lock it without the dev buy', lock(true), true)] : [])));
+        if (sp.state === 'pending' && autoSplit.has(s.id)) { autoSplit.delete(s.id); setTimeout(() => lockBtn.click(), 0); }
+      } else if (!key && sp.state !== 'mismatch') kids.push(h('p', { cls: 'fine', text: 'This browser does not hold the key of this launch. Open it with the wallet that started it to lock the fee split.' }));
+    }
+    if (s.status === 'launched' && s.launch && splitDone) {
       kids.push(h('div', { cls: 'ln-card ok' }, h('strong', { text: `Launched ✓ ${s.launch.provider === 'mock' ? '(MOCK, no blockchain)' : `on ${s.launch.network}`}` }),
         h('p', { cls: 'fine', text: `Mint ${s.launch.mint} · ${s.launch.checks} on-chain checks passed.` }),
         s.launchpad ? h('p', { cls: 'fine', text: `It is a launchpad (generation ${s.depth}): its own site launches the next generation.` }) : null,
@@ -257,7 +293,7 @@ export function launchBlock(slot, b, K) {
           }), step('Skip it', async () => { await api(`/_api/launch/${s.id}/devbuy/skip`, { key }); }, true)));
       } else if (d) kids.push(h('p', { cls: 'fine', text: `Dev buy: ${d.status}${d.attempt?.tokensBase && d.status === 'done' ? ` (${d.attempt.tokensBase} base units)` : ''}.` }));
     }
-    if (DONE.has(s.status) && !(s.status === 'launched' && s.devBuy && !['done', 'skipped'].includes(s.devBuy.status))) {
+    if (DONE.has(s.status) && !(s.status === 'launched' && ((sp && sp.state !== 'locked') || (s.devBuy && !['done', 'skipped'].includes(s.devBuy.status))))) {
       kids.push(h('button', { cls: 'btn btn-sm btn-ghost', type: 'button', text: s.status === 'launched' ? 'Launch another' : 'Close', onclick: () => { store.set(LAST, ''); following = null; live.replaceChildren(); } }));
     }
     kids.push(m);

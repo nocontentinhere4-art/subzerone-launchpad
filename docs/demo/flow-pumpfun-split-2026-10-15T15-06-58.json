@@ -1,0 +1,283 @@
+{
+  "steps": [
+    {
+      "t": "2026-10-15T15:06:31.650Z",
+      "msg": "local instance",
+      "data": {
+        "base": "http://127.0.0.1:8895",
+        "provider": "pumpfun",
+        "network": "devnet",
+        "splitTx": true,
+        "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+        "balanceLamports": 769913640
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:32.178Z",
+      "msg": "configuration",
+      "data": {
+        "slug": "split-ramen-1506",
+        "splitTx": true,
+        "devBuyMode": "second_tx",
+        "shares": [
+          {
+            "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+            "bps": 8000
+          },
+          {
+            "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+            "bps": 2000
+          }
+        ],
+        "irreversible": [
+          "The token name, ticker and metadata link cannot be changed after creation.",
+          "The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.",
+          "The creator-fee split (80% you / 20% SUB-01) is written on-chain and locked in step 2, a second signature right after the coin is created: from then on nobody at SUBZERONE, and not you, can change it. (pump.fun keeps an emergency takeover authority over all coins.)",
+          "Your dev buy of 0.01 SOL rides in step 2 with the fee split when it fits (else it is a third signature right after), at the price then (pump.fun's fees included; the tokens go to your wallet). If the price moves more than 5% first, it does not go through and you keep your SOL. You can also skip it."
+        ]
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:33.713Z",
+      "msg": "tx1 built (review)",
+      "data": {
+        "bytes": 584,
+        "signers": 2,
+        "tables": 1,
+        "programs": [
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        ],
+        "splitTx": true,
+        "simulation": {
+          "ok": true,
+          "unitsConsumed": 99393
+        },
+        "fee": 10000,
+        "rent": 5608320,
+        "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:33.810Z",
+      "msg": "tx1 signed by the wallet, mint key added server-side, broadcast",
+      "data": {
+        "signature": "4bxNmYwpUGksKcH9mNwVsQA9pP8cP1bmS6Ha6xzjgYxpiwbtgvPB154nsqEbn3UBBByHC3y6wxpPtiZXQPviZro8",
+        "uncertain": false
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:41.430Z",
+      "msg": "tx1 verified: coin created, split pending",
+      "data": {
+        "status": "launched",
+        "note": "Coin created on devnet. Step 2: lock the fee split (80% you / 20% SUB-01) with one more signature. Until then the fee split is NOT locked.",
+        "split": {
+          "state": "pending",
+          "line": "Coin created. Step 2: lock the fee split (80% you / 20% SUB-01). Until then the fee split is NOT locked."
+        },
+        "ledgerLocked": false,
+        "allocation": "approved",
+        "checks": [
+          "ok transaction found at finalized commitment",
+          "ok transaction succeeded",
+          "ok payer is the approved signer",
+          "ok pump program invoked",
+          "ok mint account in transaction",
+          "ok mint exists (Token-2022)",
+          "ok mint authority is none",
+          "ok freeze authority is none",
+          "ok decimals",
+          "ok bonding curve exists",
+          "ok curve creator is the author (the fee split is locked in step 2)"
+        ],
+        "explorer": "https://solscan.io/tx/4bxNmYwpUGksKcH9mNwVsQA9pP8cP1bmS6Ha6xzjgYxpiwbtgvPB154nsqEbn3UBBByHC3y6wxpPtiZXQPviZro8?cluster=devnet"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:41.610Z",
+      "msg": "chain before tx2",
+      "data": {
+        "pda": "C83g3qLLnJZkn7dTWNt7z2zRipDnCXtSDVqNdU1YSCrz",
+        "want": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n:8000,4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg:2000",
+        "curveCreator": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+        "curveComplete": false,
+        "state": "absent",
+        "got": null,
+        "adminRevoked": null
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:42.659Z",
+      "msg": "funded the sniper (devnet)",
+      "data": {
+        "sig": "4WAUzExUejc76dtCeLTeJMxqBNC9xCM19LZYTZ31wfWTVZGnqTw7hmTM5uWGEbVEi6rHWhuDmmHBJHH9Y13v9NWq"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:43.915Z",
+      "msg": "a sniper bought before tx2",
+      "data": {
+        "sig": "5SSPmefuSt6Mhkb89fNGZbGRjNQBMdyJmqWATyGrbqJ786fAzn9tSxVHAZFubudnRMtiEuwKMZgipHtaxNqaz4qB",
+        "sniper": "BhG8X1LRcHNkQTcgr2Z1L2Y87QB2spsnfLSM7dexRHtY",
+        "curveCreatorFeeLamports": "0",
+        "curveCreator": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:50.693Z",
+      "msg": "tx2 built (review)",
+      "data": {
+        "bytes": 977,
+        "signers": 1,
+        "tables": 1,
+        "programs": [
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",
+          "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ",
+          "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+          "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P"
+        ],
+        "withBuy": true,
+        "buyDeferred": false,
+        "shareholders": [
+          {
+            "wallet": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n",
+            "bps": 8000
+          },
+          {
+            "wallet": "4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg",
+            "bps": 2000
+          }
+        ],
+        "splitText": "80% you / 20% SUB-01",
+        "simulation": {
+          "ok": true,
+          "unitsConsumed": 292099
+        },
+        "fee": 5000,
+        "rent": 8016240,
+        "buy": 10000000,
+        "cap": 10500000,
+        "tokens": "30163720596040"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:50.784Z",
+      "msg": "tx2 signed by the wallet alone, broadcast",
+      "data": {
+        "signature": "yb6BJPTNiqFXH7NdhuaAUTtRV95Z9eXPaDvy5gS98BVwkHa8fwcmNQbd8JTU6c2C1W8jcs8skFKWKtr5Bg8dGky",
+        "uncertain": false
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:58.383Z",
+      "msg": "tx2 verified: split locked",
+      "data": {
+        "note": "Fee split locked on chain: 80% you / 20% SUB-01 · dev buy: 0.01 SOL for 30,163,720 tokens, in your wallet. Launched.",
+        "split": "locked",
+        "allocation": "locked",
+        "ledgerLocked": true,
+        "checks": [
+          "ok transaction found at finalized commitment",
+          "ok transaction succeeded",
+          "ok payer is the author",
+          "ok fee-sharing program invoked",
+          "ok sharing config exists",
+          "ok shareholders match the approved allocation",
+          "ok sharing admin revoked (allocation locked)",
+          "ok curve creator is the sharing config",
+          "ok pump program invoked",
+          "ok mint account in transaction",
+          "ok dev buy landed: exactly the reviewed amount of tokens in the author wallet",
+          "ok SOL the buy took is within the signed cap"
+        ],
+        "explorer": "https://solscan.io/tx/yb6BJPTNiqFXH7NdhuaAUTtRV95Z9eXPaDvy5gS98BVwkHa8fwcmNQbd8JTU6c2C1W8jcs8skFKWKtr5Bg8dGky?cluster=devnet",
+        "devBuy": {
+          "status": "done",
+          "tokens": "30163720596040"
+        }
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:58.646Z",
+      "msg": "on chain now",
+      "data": {
+        "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH",
+        "sharingConfig": "C83g3qLLnJZkn7dTWNt7z2zRipDnCXtSDVqNdU1YSCrz",
+        "state": "locked",
+        "shares": "12MXaessdp9pdJNriYXuiBfZXVNeEZyU1fwPsenWwx6n:8000,4o16Xj4EvVSLctQxNNXymEMPnYDXAcyXjzdGKL5VjVAg:2000",
+        "adminRevoked": true,
+        "curveCreator": "C83g3qLLnJZkn7dTWNt7z2zRipDnCXtSDVqNdU1YSCrz",
+        "authorTokens": "30163720596040",
+        "tx1": "4bxNmYwpUGksKcH9mNwVsQA9pP8cP1bmS6Ha6xzjgYxpiwbtgvPB154nsqEbn3UBBByHC3y6wxpPtiZXQPviZro8",
+        "tx2": "yb6BJPTNiqFXH7NdhuaAUTtRV95Z9eXPaDvy5gS98BVwkHa8fwcmNQbd8JTU6c2C1W8jcs8skFKWKtr5Bg8dGky"
+      }
+    },
+    {
+      "t": "2026-10-15T15:06:58.647Z",
+      "msg": "simulation log lines",
+      "data": [
+        {
+          "t": "2026-10-15T15:06:33.077Z",
+          "level": "info",
+          "msg": "launch simulation",
+          "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH",
+          "ok": true,
+          "err": null,
+          "units": 99393,
+          "bytes": 584,
+          "refresh": false,
+          "phantomSafe": false,
+          "devBuyMode": "second_tx",
+          "splitTx": true
+        },
+        {
+          "t": "2026-10-15T15:06:33.711Z",
+          "level": "info",
+          "msg": "launch simulation",
+          "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH",
+          "ok": true,
+          "err": null,
+          "units": 99393,
+          "bytes": 584,
+          "refresh": true,
+          "phantomSafe": false,
+          "devBuyMode": "second_tx",
+          "splitTx": true
+        },
+        {
+          "t": "2026-10-15T15:06:46.260Z",
+          "level": "info",
+          "msg": "split simulation",
+          "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH",
+          "ok": true,
+          "err": null,
+          "units": 292099,
+          "bytes": 977,
+          "refresh": false,
+          "withBuy": true,
+          "buyDeferred": null,
+          "tokens": "[redacted]",
+          "maxLamports": 10500000,
+          "phantomSafe": false
+        },
+        {
+          "t": "2026-10-15T15:06:50.689Z",
+          "level": "info",
+          "msg": "split simulation",
+          "mint": "25JeBvDZpyS4fJWxoCgzRYCEVZsqURQcHGuugCo2M2AH",
+          "ok": true,
+          "err": null,
+          "units": 292099,
+          "bytes": 977,
+          "refresh": true,
+          "withBuy": true,
+          "buyDeferred": null,
+          "tokens": "[redacted]",
+          "maxLamports": 10500000,
+          "phantomSafe": false
+        }
+      ]
+    }
+  ]
+}
