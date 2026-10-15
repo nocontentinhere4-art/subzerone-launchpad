@@ -111,6 +111,9 @@ export function loadConfig(env = process.env) {
       rpcUrl: launchRpc(e('SOLANA_RPC_URL', 'https://api.devnet.solana.com'), e('SOLANA_NETWORK', 'devnet'), e('HELIUS_API_KEY')),
       requireAdminClearance: e('REQUIRE_ADMIN_CLEARANCE', '1') !== '0',
       eventAuthStatic: e('LAUNCH_EVENT_AUTH_STATIC', '0') === '1',   // pumpfun.js: event authorities written in (old layout)
+      // two-step launch (launch.js createSplit): tx1 = create_v2 only, tx2 = the locked fee split (+ the dev buy when it
+      // fits), signed by the author alone. '0' = the old single creation transaction (instant rollback, no code deploy)
+      splitTx: e('LAUNCH_SPLIT_TX', '1') !== '0',
       confirmTimeoutS: num('LAUNCH_CONFIRM_TIMEOUT_S', 180),
       metadataUploader: e('METADATA_UPLOADER', 'self'),  // self: metadata JSON + image served by this app
       lookupTable: e('LAUNCH_LOOKUP_TABLE'),             // address lookup table with the static launch accounts

@@ -25,7 +25,7 @@ import { moderateText } from './chat.js';
 import { submitIdea, sniffImage, currentVersion } from './ideas.js';
 import { getProvider, allocationStatement, feeMode, validateRecipients, CHILD_SPLIT_POLICY, requireSub01Wallet, parseInitialBuySol,
   maxInitialBuyLamports, createIntent, refreshIntent, submitSigned, abandonIntent, createDevBuy, refreshDevBuy, submitDevBuy, abandonDevBuy,
-  skipDevBuy, devBuyView, solString, SUB01_LABEL, LAUNCH_COST_RESERVE_LAMPORTS } from './launch.js';
+  skipDevBuy, devBuyView, solString, SUB01_LABEL, LAUNCH_COST_RESERVE_LAMPORTS, createSplit, refreshSplit, submitSplit, abandonSplit, splitView } from './launch.js';
 import { blockOf } from './app-blocks.js';
 import { liveSpec, issue, consume, ipHash } from './tool-api.js';
 import { publicStats } from './coin-stats.js';
@@ -171,6 +171,8 @@ export function childView(db, cfg, cl) {
     launch: launch ? { mint: launch.mint, network: launch.network, provider: launch.provider, signature: launch.tx_signature, verifiedAt: launch.verified_at,
       checks: (parseJson(launch.verification, []) || []).length, explorerTx: provider?.explorerTx?.(launch.tx_signature) ?? null, explorerToken: provider?.explorerToken?.(launch.mint) ?? null } : null,
     devBuy: launch && p ? devBuyView(db, provider, p) : null,
+    // the two-step launch (launch.js): 'pending' until the creator signs tx2, which locks this family split on chain
+    split: launch && p ? splitView(db, provider, p, { owner: true }) : null,
     registry: pqSeq != null ? { project: db.get('SELECT slug FROM projects WHERE id = ?', cl.parent_project_id).slug, seq: pqSeq } : null,
   };
 }
@@ -206,7 +208,7 @@ export async function childBuild(ctx) {
   const spec = { ...base, name: cl.name, ticker: cl.ticker, description: cl.description,
     tagline: clip(pad ? `A launchpad born at ${parent.name}. SUB-01 voted to build it.` : `Launched at ${parent.name}. SUB-01 voted to build it.`, 90),
     sections: [{ heading: pad ? 'The launchpad' : 'The coin', body: cl.description }, { heading: 'Why SUB-01 built it', body: clip(brainNote(brain), 700) },
-      { heading: `Launched at ${clip(parent.name, 40)}`, body: clip(`Its creator launched it from ${parent.name} ($${parent.ticker}), a SUBZERONE ${cl.depth > 1 ? 'launchpad of a family' : 'coin whose site launches coins'}. Its creator fees are split on-chain and locked: ${split}. They go to creators up the family tree and SUB-01; buying or holding it pays nobody anything.`, 700) },
+      { heading: `Launched at ${clip(parent.name, 40)}`, body: clip(`Its creator launched it from ${parent.name} ($${parent.ticker}), a SUBZERONE ${cl.depth > 1 ? 'launchpad of a family' : 'coin whose site launches coins'}. Its creator fees are split on-chain and locked when its launch completes: ${split}. They go to creators up the family tree and SUB-01; buying or holding it pays nobody anything.`, 700) },
       ...(pad ? [{ heading: 'A launchpad of the family', body: clip(`This site launches coins and launchpads too, down to depth ${MAX_DEPTH} of the family (this one is at depth ${cl.depth}). Creator fees of every coin launched here flow up the family tree: its creator, this launchpad's creator, ${parent.name}'s creator, and SUB-01.`, 700) }] : []),
       base.sections[base.sections.length - 1]] };
   spec.app = pad
@@ -365,7 +367,7 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
       wake(`evaluate:${ideaId}:v1`);                            // SUB-01's vote in seconds
       return { body: { id: cid, key, ideaId, status: 'submitted' } };
     }
-    const m = /^\/_api\/launch\/([A-Za-z0-9_-]{1,40})\/(tx|refresh|signed|abandon|devbuy\/tx|devbuy\/refresh|devbuy\/signed|devbuy\/abandon|devbuy\/skip)$/.exec(path);
+    const m = /^\/_api\/launch\/([A-Za-z0-9_-]{1,40})\/(tx|refresh|signed|abandon|split\/tx|split\/refresh|split\/signed|split\/abandon|devbuy\/tx|devbuy\/refresh|devbuy\/signed|devbuy\/abandon|devbuy\/skip)$/.exec(path);
     if (!m) throw new HttpError(404, 'not_found');
     const { cl, p } = owned(parent, m[1], b);
     limit('siteLaunch', `wallet:${cl.wallet}`);
@@ -375,6 +377,11 @@ export function createLaunchApi({ db, cfg, limit, wake = () => {} }) {
       case 'refresh': return { body: mockText(await refreshIntent(db, cfg, p, cl.wallet)) };
       case 'signed': return { body: await submitSigned(db, cfg, p, cl.wallet, String(b.signed || '')) };
       case 'abandon': abandonIntent(db, p, cl.wallet, reason); return { body: { ok: true } };
+      // step 2 of a two-step launch: the family split (creator / parent / grandparent / SUB-01), re-derived server side
+      case 'split/tx': return { body: await createSplit(db, cfg, p, cl.wallet, { separateBuy: b.separateBuy === true }) };
+      case 'split/refresh': return { body: await refreshSplit(db, cfg, p, cl.wallet) };
+      case 'split/signed': return { body: await submitSplit(db, cfg, p, cl.wallet, String(b.signed || '')) };
+      case 'split/abandon': abandonSplit(db, p, cl.wallet, reason); return { body: { ok: true } };
       case 'devbuy/tx': return { body: await createDevBuy(db, cfg, p, cl.wallet) };
       case 'devbuy/refresh': return { body: await refreshDevBuy(db, cfg, p, cl.wallet) };
       case 'devbuy/signed': return { body: await submitDevBuy(db, cfg, p, cl.wallet, String(b.signed || '')) };

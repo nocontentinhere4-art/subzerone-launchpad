@@ -6,7 +6,7 @@ import { loadConfig } from './config.js';
 import { openDb, migrate, backup, getSetting, setSetting } from './db.js';
 import { claim, runJob, enqueue, nudgeDeferredEvaluations } from './jobs.js';
 import { handlers, onDead , recoverConfigFailedBuilds } from './pipeline.js';
-import { sweepSubmitted } from './launch.js';
+import { sweepSubmitted, sweepSplits } from './launch.js';
 import { scheduleCoinStats } from './coin-stats.js';
 import { log } from './log.js';
 import { now } from './util.js';
@@ -25,6 +25,7 @@ export function makeWorker({ cfg, db, fetchImpl = fetch, id = `${hostname()}:${p
   }
   function periodic(t = now()) {
     sweepSubmitted(db, t);
+    sweepSplits(db, t);                                     // two-step launches whose fee split is not locked: hourly recheck
     const hour = Math.floor(t / 3_600_000);
     for (const p of db.all('SELECT project_id FROM launches')) {
       enqueue(db, { type: 'reconcile_fees', key: `fees:${p.project_id}:${hour}`, projectId: p.project_id });

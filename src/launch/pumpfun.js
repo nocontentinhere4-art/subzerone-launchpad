@@ -11,6 +11,13 @@
 //     Phantom-safe layout create + split + buy is 1242-1259 bytes, over 1232: the buy is then a SECOND transaction
 //     (devBuyInstructions / prepareDevBuy), quoted on the curve tx1 created, signed by the author alone. It stays
 //     inside tx1 only when that still fits Phantom-safe (launch.js devBuyMode 'same_tx'); never the compact layout.
+//   - the two-step launch (LAUNCH_SPLIT_TX=1, the default since 2026-10-15; Phantom flagged the single creation
+//     transaction as "could be malicious"): tx1 = create_v2 ONLY (prepare with splitTx); tx2 = sweep_creator_fee +
+//     create_fee_sharing_config + update_fee_shares_v2 (+ ATA + buy_v2 when that still fits Phantom-safe), signed by
+//     the author ALONE (prepareSplit / verifySplitSigned / verifySplit). Between the two the curve's creator is the
+//     author's wallet, so trades in that window leave creator fees on the curve: update_fee_shares_v2 refuses to run
+//     while they are unswept (6095 CreatorFeesNotSwept), hence the permissionless sweep_creator_fee first (it pays them
+//     to the author's own creator vault; harmless when the bucket is empty).
 // The submitter's own wallet is the payer and creator and signs; this app never holds a key that can move funds.
 // The mint keypair is generated per launch intent, signs once during preparation and is then discarded.
 import { createRequire } from 'node:module';
@@ -67,8 +74,13 @@ export function decodeFeeShares(data) {
   return Array.from({ length: n }, (_, i) => ({ wallet: b58encode(b.subarray(12 + i * 34, 44 + i * 34)), bps: b.readUInt16LE(44 + i * 34) }));
 }
 /** Throws unless the signed message writes exactly the configured split (sharing_config) or no split at all (direct). */
-export function checkSignedShares(message, config) {
+export function checkSignedShares(message, config, { expectNone = false } = {}) {
   const keys = message.staticAccountKeys.map((k) => k.toBase58());
+  // tx1 of a two-step launch: create_v2 only, the fee-sharing program is not called at all (the split is tx2)
+  if (expectNone) {
+    if (message.compiledInstructions.some((ix) => keys[ix.programIdIndex] === PROGRAMS.pumpFees)) throw new Error('the creation transaction of a two-step launch must not call the fee-sharing program; the split is step 2');
+    return null;
+  }
   const found = message.compiledInstructions.filter((ix) => keys[ix.programIdIndex] === PROGRAMS.pumpFees).map((ix) => decodeFeeShares(ix.data)).filter(Boolean);
   const sharing = config?.feeSharing?.mode === 'sharing_config';
   if (!sharing) { if (found.length) throw new Error('the signed transaction writes a fee split the approved configuration does not have'); return null; }
@@ -136,12 +148,13 @@ async function buybackRecipient() {
  * -> { ixs, buy: null | { lamports (real cost, fees included), requestedLamports, maxLamports, tokensBase, feeRecipient,
  *      buybackFeeRecipient, ata } }
  */
-export async function launchInstructions({ config, mint, signer, global = null, feeConfig = null, probe = false }) {
+export async function launchInstructions({ config, mint, signer, global = null, feeConfig = null, probe = false, createOnly = false }) {
   const { web3, spl, pump } = sdk();
   const Big = require('bn.js');
   const ixs = [];
   ixs.push(await pump.PUMP_SDK.createV2Instruction({ mint, name: config.name, symbol: config.symbol, uri: config.uri,
     creator: signer, user: signer, mayhemMode: false }));
+  if (createOnly) return { ixs, buy: null };            // tx1 of a two-step launch: the curve's creator is the author until tx2
   const sharing = config.feeSharing.mode === 'sharing_config';
   if (sharing) {
     ixs.push(await pump.PUMP_SDK.createFeeSharingConfig({ creator: signer, mint, pool: null }));
@@ -181,6 +194,68 @@ export async function launchInstructions({ config, mint, signer, global = null, 
   return { ixs, buy };
 }
 
+/** The fee split's own instructions (tx2 of a two-step launch), in this order: sweep_creator_fee (the curve's creator
+ *  is still the author: trades since tx1 left creator fees on the curve, which block the split until swept to the
+ *  author's vault), create_fee_sharing_config (the per-mint PDA becomes the curve's creator), update_fee_shares_v2
+ *  (the exact approved shares; revokes the admin: locked). */
+export async function splitFeeInstructions({ config, mint, signer }) {
+  const { web3, spl, pump } = sdk();
+  if (config?.feeSharing?.mode !== 'sharing_config') throw new Error('step 2 locks a fee split; this launch has none');
+  return [
+    await pump.PUMP_SDK.sweepCreatorFeeInstruction({ payer: signer, mint, creator: signer, quoteMint: spl.NATIVE_MINT }),
+    await pump.PUMP_SDK.createFeeSharingConfig({ creator: signer, mint, pool: null }),
+    await pump.PUMP_SDK.updateFeeSharesV2({ authority: signer, mint, currentShareholders: [signer],
+      newShareholders: config.feeSharing.shareholders.map((s) => ({ address: new web3.PublicKey(s.wallet), shareBps: s.bps })),
+      quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID, bondingCurveComplete: false }),
+  ];
+}
+
+/** tx2 offline: the split, then (buy) the dev buy quoted on the live curve with the sharing-config PDA as the buy's
+ *  creator (create_fee_sharing_config made it the creator a moment earlier in the same transaction).
+ *  buy: null | {lamports, global, feeConfig, curve, reuse} ; probe: a size-only build (dummy quote, no chain). */
+export async function splitInstructions({ config, mint, signer, buy = null, probe = false }) {
+  const { web3, spl, pump } = sdk();
+  const ixs = await splitFeeInstructions({ config, mint, signer });
+  if (!buy) return { ixs, buy: null };
+  if (probe) {
+    const Big = require('bn.js');
+    const ata = spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID);
+    ixs.push(spl.createAssociatedTokenAccountIdempotentInstruction(signer, ata, signer, mint, spl.TOKEN_2022_PROGRAM_ID));
+    ixs.push(await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator: pump.feeSharingConfigPda(mint), amount: new Big(1), quoteAmount: new Big(String(buy.lamports || 1)),
+      feeRecipient: buy.feeRecipient || signer, buybackFeeRecipient: await buybackRecipient(), tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID }));
+    return { ixs, buy: { lamports: buy.lamports, probe: true } };
+  }
+  const d = await devBuyInstructions({ mint, signer, lamports: buy.lamports, global: buy.global, feeConfig: buy.feeConfig, curve: buy.curve, reuse: buy.reuse ?? null,
+    creator: pump.feeSharingConfigPda(mint) });
+  ixs.push(...d.ixs);
+  return { ixs, buy: d.buy };
+}
+// what tx2 may contain, in order: the three fee instructions, then optionally the ATA + buy_v2
+const SPLIT_ORDER = (withBuy) => [PROGRAMS.pump, PROGRAMS.pumpFees, PROGRAMS.pumpFees, ...(withBuy ? ['ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL', PROGRAMS.pump] : [])];
+/** The programs of a tx2 message's own instructions (wallet guards removed), for the shape check. */
+export function splitShape(message) {
+  const keys = message.staticAccountKeys.map((k) => k.toBase58());
+  return message.compiledInstructions.map((ix) => keys[ix.programIdIndex]).filter((k) => !WALLET_GUARDS.has(k));
+}
+
+/** The size of tx2, offline (as compiledTxBytes: a table holding every account common to two random builds).
+ *  -> { bytes, fitsWithBuy (<= 1232 - WALLET_HEADROOM_BYTES), fits } */
+export async function splitTxBytes(config, { withBuy = (Number(config.initialBuyLamports) || 0) > 0, phantomSafe = false } = {}) {
+  const { web3 } = sdk();
+  const build = async () => {
+    const signer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
+    const { ixs } = await splitInstructions({ config, mint, signer, buy: withBuy ? { lamports: Number(config.initialBuyLamports) || 1 } : null, probe: true });
+    return { signer, ixs, keys: new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58())) };
+  };
+  const [a, b] = [await build(), await build()];
+  const table = new web3.AddressLookupTableAccount({ key: web3.Keypair.generate().publicKey,
+    state: { deactivationSlot: 0n, lastExtendedSlot: 0, lastExtendedSlotStartIndex: 0, authority: undefined, addresses: [...a.keys].filter((k) => b.keys.has(k)).map((k) => new web3.PublicKey(k)) } });
+  const m = new web3.TransactionMessage({ payerKey: a.signer, recentBlockhash: web3.Keypair.generate().publicKey.toBase58(), instructions: a.ixs })
+    .compileToV0Message(phantomSafe ? phantomSafeTables([table]) : [table]);
+  let bytes = null; try { bytes = new web3.VersionedTransaction(m).serialize().length; } catch { /* overruns */ }
+  return { bytes, fitsWithBuy: bytes != null && bytes <= ONE_TX_BUY_LIMIT, fits: bytes != null && bytes <= MAX_TX_BYTES };
+}
+
 /**
  * The size of a launch transaction, offline (no RPC, nothing signed): built twice with random keys, the accounts
  * common to both are what the lookup table holds, the rest stay static. Exact for a table that holds every static
@@ -208,7 +283,7 @@ export async function compiledTxBytes(config) {
   const { web3 } = sdk();
   const build = async () => {
     const signer = web3.Keypair.generate().publicKey, mint = web3.Keypair.generate().publicKey;
-    const { ixs } = await launchInstructions({ config, mint, signer, probe: true });
+    const { ixs } = await launchInstructions({ config, mint, signer, probe: true, createOnly: config.splitTx === true });
     return { signer, ixs, keys: new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58())) };
   };
   const [a, b] = [await build(), await build()];
@@ -261,7 +336,7 @@ export function reviewOfMessage(message) {
  * curve: the decoded BondingCurve (OnlinePumpSdk.fetchBondingCurve); its creator is what buy_v2 must name (the
  * sharing-config PDA for our launches).
  */
-export async function devBuyInstructions({ mint, signer, lamports, global, feeConfig, curve, reuse = null }) {
+export async function devBuyInstructions({ mint, signer, lamports, global, feeConfig, curve, reuse = null, creator = null }) {
   const { spl, pump } = sdk();
   const Big = require('bn.js');
   if (!curve) throw new LaunchBuildError('no_curve', 'the coin\'s bonding curve is not visible on the network yet; try again in a few seconds');
@@ -284,10 +359,10 @@ export async function devBuyInstructions({ mint, signer, lamports, global, feeCo
   const ata = spl.getAssociatedTokenAddressSync(mint, signer, true, spl.TOKEN_2022_PROGRAM_ID);
   const feeRecipient = global.feeRecipient, buybackFeeRecipient = await buybackRecipient();
   const ixs = [spl.createAssociatedTokenAccountIdempotentInstruction(signer, ata, signer, mint, spl.TOKEN_2022_PROGRAM_ID),
-    await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator: curve.creator, amount: tokens, quoteAmount: maxQuote, feeRecipient, buybackFeeRecipient,
+    await pump.PUMP_SDK.getBuyV2InstructionRaw({ user: signer, mint, creator: creator ?? curve.creator, amount: tokens, quoteAmount: maxQuote, feeRecipient, buybackFeeRecipient,
       tokenProgram: spl.TOKEN_2022_PROGRAM_ID, quoteMint: spl.NATIVE_MINT, quoteTokenProgram: spl.TOKEN_PROGRAM_ID })];
   return { ixs, buy: { lamports: Number(cost.toString()), requestedLamports: lamports, maxLamports: Number(maxQuote.toString()), tokensBase: tokens.toString(),
-    ata: ata.toBase58(), creator: curve.creator.toBase58(), feeRecipient: feeRecipient.toBase58(), buybackFeeRecipient: buybackFeeRecipient.toBase58() } };
+    ata: ata.toBase58(), creator: (creator ?? curve.creator).toBase58(), feeRecipient: feeRecipient.toBase58(), buybackFeeRecipient: buybackFeeRecipient.toBase58() } };
 }
 
 /** Token balance change of `owner`'s account for `mint` in a fetched transaction (meta pre/post token balances). */
@@ -402,6 +477,57 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     return estimate;
   }
 
+  /** On-chain checks of a finalized tx2. The author's account must gain EXACTLY the reviewed tokens (exact-out), and
+   *  the SOL the buy took must be within the signed cap (see verifyDevBuy). Shared by the dev buy's own tx and a tx2
+   *  that carries the buy with the fee split. */
+  async function verifyDevBuyOnChain(attempt) {
+    const checks = [];
+    const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
+    const tx = await conn.getTransaction(attempt.tx_signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
+    add('transaction found at finalized commitment', tx, attempt.tx_signature);
+    if (!tx) return { ok: false, retry: true, checks };
+    add('transaction succeeded', tx.meta && tx.meta.err === null, JSON.stringify(tx.meta?.err ?? null));
+    const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).keySegments().flat().map((k) => k.toBase58());
+    add('payer is the author', keys[0] === attempt.signer_wallet, keys[0]);
+    add('pump program invoked', keys.includes(PROGRAMS.pump), PROGRAMS.pump);
+    add('mint account in transaction', keys.includes(attempt.mint), attempt.mint);
+    const d = tokenDelta(tx.meta, attempt.mint, attempt.signer_wallet);
+    add('dev buy landed: exactly the reviewed amount of tokens in the author wallet', d && attempt.tokens_base && d.delta === BigInt(attempt.tokens_base),
+      d ? `${d.delta} base units (reviewed ${attempt.tokens_base})` : 'no token balance of the author for this mint');
+    if (d && tx.meta) {
+      const spent = tx.meta.preBalances[0] - tx.meta.postBalances[0];
+      const created = keys.map((k, i) => ({ k, i })).filter(({ i }) => i > 0 && tx.meta.preBalances[i] === 0 && tx.meta.postBalances[i] > 0);
+      const funded = created.reduce((s, { i }) => s + tx.meta.postBalances[i], 0);
+      const buyCost = spent - tx.meta.fee - funded;
+      add('SOL the buy took is within the signed cap', attempt.max_lamports != null && buyCost <= attempt.max_lamports,
+        `${buyCost} lamports (cap ${attempt.max_lamports}; network fee ${tx.meta.fee}; new accounts funded ${funded}: ${created.map(({ k, i }) => `${k.slice(0, 6)}… ${tx.meta.postBalances[i]}`).join(', ') || 'none'})`);
+    }
+    return { ok: checks.every((c) => c.ok), retry: false, checks, slot: tx.slot, blockTime: tx.blockTime, tokensBase: d ? String(d.delta) : null };
+  }
+
+  /** What the chain says about a coin's fee split NOW (finalized reads). -> {state: 'absent' | 'locked' | 'unlocked' |
+   *  'wrong', reason?, got, want, adminRevoked, curveCreator, curveComplete, pda}. 'locked' = the sharing config holds
+   *  exactly the approved shares, its admin is revoked and (while the curve runs) it is the curve's creator. */
+  async function splitOnChain(mint, config) {
+    const { pump } = sdk();
+    const mintKey = new web3.PublicKey(mint), pda = pump.feeSharingConfigPda(mintKey);
+    const want = (config?.feeSharing?.shareholders || []).map((x) => `${x.wallet}:${x.bps}`).sort().join(',');
+    const acc = await conn.getAccountInfo(pda, 'finalized');
+    let curve = null;
+    try { curve = await new pump.OnlinePumpSdk(conn).fetchBondingCurve(mintKey); } catch { /* none visible */ }
+    const base = { pda: pda.toBase58(), want, curveCreator: curve?.creator?.toBase58() ?? null, curveComplete: Boolean(curve?.complete) };
+    if (!acc) return { ...base, state: 'absent', got: null, adminRevoked: null };
+    let sc = null;
+    try { sc = pump.PUMP_SDK.decodeSharingConfig(acc); } catch { /* reported */ }
+    if (!sc) return { ...base, state: 'wrong', reason: 'the sharing config account exists but does not decode', got: null, adminRevoked: null };
+    const got = sc.shareholders.map((x) => `${x.address.toBase58()}:${x.shareBps}`).sort().join(',');
+    const out = { ...base, got, adminRevoked: sc.adminRevoked === true };
+    if (got !== want) return { ...out, state: 'wrong', reason: 'the shareholders on chain differ from the approved split' };
+    if (sc.adminRevoked !== true) return { ...out, state: 'unlocked', reason: 'the shares match but the sharing admin is not revoked: the split could still be changed' };
+    if (curve && !curve.complete && base.curveCreator !== base.pda) return { ...out, state: 'wrong', reason: 'the bonding curve\'s creator is not the sharing config' };
+    return { ...out, state: 'locked' };
+  }
+
   return {
     name: 'pumpfun',
     network,
@@ -421,7 +547,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
      * WITHOUT the buy, and estimate.devBuy carries the fresh-curve quote of the buy that follows (what step 2 costs
      * if nobody buys first). Without a buy the compact layout stays the fallback for large splits.
      */
-    async prepare(config, { mintSecret = null, devBuyMode = 'same_tx' } = {}) {
+    async prepare(config, { mintSecret = null, devBuyMode = 'same_tx', splitTx = false } = {}) {
       const signer = new web3.PublicKey(config.signer);
       // refresh (same intent, fresh blockhash right before the wallet opens): the intent's own mint key, not a new one
       const mintKp = mintSecret ? web3.Keypair.fromSecretKey(Buffer.from(mintSecret, 'base64')) : web3.Keypair.generate();
@@ -430,11 +556,14 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       // no compute-budget instruction: the default (200k CU per instruction) covers create_v2 + fee sharing (+ buy_v2)
       let { ixs, buy } = await buildInstructions(config, mint, signer);
       let devBuy = null;
-      if (wantsBuy && devBuyMode === 'second_tx') {
+      // two-step launch: tx1 is create_v2 alone; the split (and the buy) follow in tx2. A buy never rides in tx1 then.
+      if (splitTx && config.feeSharing?.mode !== 'sharing_config') throw new Error('a two-step launch needs a fee split (sharing_config)');
+      if (wantsBuy && (devBuyMode === 'second_tx' || splitTx)) {
         devBuy = { mode: 'second_tx', requestedLamports: buy.requestedLamports, lamports: buy.lamports, maxLamports: buy.maxLamports, tokensBase: buy.tokensBase, quotedAt: 'fresh curve' };
-        ({ ixs } = await launchInstructions({ config: { ...config, initialBuyLamports: 0 }, mint, signer }));
         buy = null;
       }
+      if (splitTx) ({ ixs } = await launchInstructions({ config: { ...config, initialBuyLamports: 0 }, mint, signer, createOnly: true }));
+      else if (devBuy) ({ ixs } = await launchInstructions({ config: { ...config, initialBuyLamports: 0 }, mint, signer }));
       const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
       const tables = await lookupTables();
       const compile = (t) => new web3.TransactionMessage({ payerKey: signer, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(t);
@@ -468,7 +597,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       // initialBuyLamports: the buy's real cost, fees included (what the simulation's balance change contains);
       // initialBuyMaxLamports: the cap signed in the transaction (cost + slippage); accountsLamports is the rent alone:
       // the simulation's balance change minus the buy and minus the network fee it charged
-      const estimate = { phantomSafe, devBuyMode: wantsBuy ? devBuyMode : null,
+      const estimate = { phantomSafe, devBuyMode: wantsBuy ? (splitTx ? 'second_tx' : devBuyMode) : null, splitTx: Boolean(splitTx),
         initialBuyLamports: buy ? buy.lamports : 0, initialBuyRequestedLamports: buy ? buy.requestedLamports : 0,
         initialBuyMaxLamports: buy ? buy.maxLamports : 0, initialBuyTokensBase: buy ? buy.tokensBase : null,
         ...(devBuy ? { devBuy } : {}), ...(await estimateOf(tx, message, signer, buy ? buy.lamports : 0)) };
@@ -556,29 +685,118 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
      *  what funded accounts this transaction created (the author's token account; on devnet 2026-10-12 also the
      *  project's creator vault, 679,870 lamports on its first trade). A lower bound when the vault is new (its share of
      *  the creator fee is counted as funding); the program itself enforces max_sol_cost exactly. */
-    async verifyDevBuy(attempt) {
+    verifyDevBuy: (attempt) => verifyDevBuyOnChain(attempt),
+
+    // --- the two-step launch: tx2 locks the fee split ------------------------------------------------------------------
+    /**
+     * tx2, built right after tx1 is confirmed, with a fresh blockhash: sweep_creator_fee + create_fee_sharing_config +
+     * update_fee_shares_v2 (the exact shares) and, when withBuy and it still leaves the wallet room (<= 1232 -
+     * WALLET_HEADROOM_BYTES), the dev buy (ATA + buy_v2 quoted on the live curve, creator = the sharing config). The
+     * author's wallet is the only signer. -> {txBase64, messageHash, lastValidBlockHeight, mint, estimate, txBytes, buy,
+     * withBuy, buyDeferred ({bytes}: the buy did not fit and becomes its own transaction)}.
+     * reuse ({tokensBase, costLamports, maxLamports}): the reviewed buy again (blockhash refresh): it must fit as before.
+     */
+    async prepareSplit({ config, mint, signer, lamports = 0, withBuy = true }, { reuse = null } = {}) {
+      const { pump } = sdk();
+      const signerKey = new web3.PublicKey(signer), mintKey = new web3.PublicKey(mint);
+      if (config?.feeSharing?.mode !== 'sharing_config') throw new Error('step 2 locks a fee split; this launch has none');
+      let curve = null;
+      try { curve = await new pump.OnlinePumpSdk(conn).fetchBondingCurve(mintKey); } catch { /* refused below */ }
+      if (!curve) throw new LaunchBuildError('no_curve', 'the coin\'s bonding curve is not visible on the network yet; try again in a few seconds');
+      if (curve.complete) throw new LaunchBuildError('curve_complete', 'the coin already left pump.fun\'s bonding curve: the fee split can no longer be locked from here; a SUBZERONE admin has to look at it');
+      const pda = pump.feeSharingConfigPda(mintKey);
+      if (!curve.creator.equals(signerKey)) {
+        throw new LaunchBuildError(curve.creator.equals(pda) ? 'split_exists' : 'creator_changed', curve.creator.equals(pda)
+          ? 'a fee-sharing config already exists for this coin on chain; it is being checked instead of writing a new one'
+          : 'the coin\'s creator on chain is no longer your wallet; a SUBZERONE admin has to look at it');
+      }
+      const wantBuy = Boolean(withBuy) && Number(lamports) > 0;
+      const chain = wantBuy ? await chainAccounts() : {};
+      const { blockhash, lastValidBlockHeight } = await conn.getLatestBlockhash('confirmed');
+      const tables = await lookupTables();
+      const safe = cfg.launch.eventAuthStatic === true, t = safe ? phantomSafeTables(tables) : tables;
+      const compile = (ixs) => new web3.TransactionMessage({ payerKey: signerKey, recentBlockhash: blockhash, instructions: ixs }).compileToV0Message(t);
+      const sizeOf = (m) => { try { return new web3.VersionedTransaction(m).serialize().length; } catch { return null; } };
+      let built = await splitInstructions({ config, mint: mintKey, signer: signerKey, buy: wantBuy ? { lamports: Number(lamports), ...chain, curve, reuse } : null });
+      let message = compile(built.ixs), size = sizeOf(message), buyDeferred = null;
+      if (built.buy && (size == null || size > ONE_TX_BUY_LIMIT)) {
+        if (reuse) throw new LaunchBuildError('tx_too_large', 'the reviewed fee-split transaction with the dev buy no longer leaves the wallet room; prepare step 2 again');
+        buyDeferred = { bytes: size };                      // the buy becomes its own transaction after the split is locked
+        built = await splitInstructions({ config, mint: mintKey, signer: signerKey, buy: null });
+        message = compile(built.ixs); size = sizeOf(message);
+      }
+      if (size == null || size > MAX_TX_BYTES) {
+        if (!cfg.launch.lookupTable) throw new Error(`fee-split transaction too large (${size ?? 'over 1232'} bytes): it needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)`);
+        throw new LaunchBuildError('tx_too_large', `the fee-split transaction is ${size ?? 'over 1232'} bytes, over the 1232-byte limit (the lookup table may be missing accounts: npm run lookup-table -- --extend <table>)`);
+      }
+      const tx = new web3.VersionedTransaction(message);
+      const bytes = tx.serialize(), buy = built.buy;
+      const estimate = { kind: 'split', phantomSafe: safe, withBuy: Boolean(buy), buyDeferred,
+        shareholders: config.feeSharing.shareholders.map(({ wallet, bps }) => ({ wallet, bps })),
+        initialBuyLamports: buy ? buy.lamports : 0, initialBuyRequestedLamports: buy ? buy.requestedLamports : 0, initialBuyMaxLamports: buy ? buy.maxLamports : 0,
+        initialBuyTokensBase: buy ? buy.tokensBase : null, quotedAt: buy ? (reuse ? 'the reviewed quote, fresh blockhash' : 'the live curve') : null,
+        ...(await estimateOf(tx, message, signerKey, buy ? buy.lamports : 0)) };
+      return { txBase64: Buffer.from(bytes).toString('base64'), messageHash: createHash('sha256').update(message.serialize()).digest('hex'),
+        lastValidBlockHeight, mint, estimate, txBytes: bytes.length, buy, withBuy: Boolean(buy), buyDeferred };
+    },
+
+    /** tx2 signed by the wallet: the reviewed split (Phantom's guards tolerated as in verifySigned), the author the
+     *  only signer, exactly the approved shares (checkSignedShares on the bytes the wallet signed), exactly the fee
+     *  instructions (+ the buy when the attempt carries it). */
+    async verifySplitSigned(attempt, signedBase64, config) {
+      const tx = web3.VersionedTransaction.deserialize(Buffer.from(signedBase64, 'base64'));
+      const msgBytes = tx.message.serialize();
+      if (createHash('sha256').update(msgBytes).digest('hex') !== attempt.tx_message_hash) await sameLaunch(web3, attempt, tx);
+      const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
+      if (keys[0] !== attempt.signer_wallet) throw new Error('payer is not the expected wallet');
+      if (tx.message.header.numRequiredSignatures !== 1) throw new Error('the fee split is signed by your wallet alone; this transaction asks for another signer');
+      checkSignedShares(tx.message, config);
+      if (JSON.stringify(splitShape(tx.message)) !== JSON.stringify(SPLIT_ORDER(Boolean(attempt.with_buy)))) throw new Error('the signed transaction is not the fee split that was reviewed');
+      const sig = tx.signatures[0];
+      if (!sig || sig.every((b) => b === 0)) throw new Error('missing wallet signature');
+      if (!verifyWalletSignature(attempt.signer_wallet, msgBytes, sig)) throw new Error('wallet signature does not verify');
+      return { signature: b58encode(sig), raw: Buffer.from(tx.serialize()) };
+    },
+
+    /** tx2's fate by its signature (as devBuyStatus). */
+    async splitStatus(attempt) { return this.devBuyStatus(attempt); },
+
+    /** An abandoned tx2: could a signed copy still land? (A second split can never land: the config exists once.) */
+    async splitLandCheck(attempt) {
+      const height = await conn.getBlockHeight('finalized');
+      if (height <= attempt.last_valid_block_height) return { state: 'open', blocksLeft: attempt.last_valid_block_height - height };
+      return { state: 'dead' };
+    },
+
+    splitOnChain,
+
+    /** On-chain checks of a finalized tx2: it succeeded, the author paid, the sharing config holds exactly the approved
+     *  shares with the admin revoked and is the curve's creator; with the buy inside, the dev-buy checks too.
+     *  -> {ok, splitOk, buyOk, retry, checks, slot, blockTime, chain} */
+    async verifySplit(attempt, config) {
       const checks = [];
       const add = (name, ok, detail) => checks.push({ name, ok: Boolean(ok), detail });
       const tx = await conn.getTransaction(attempt.tx_signature, { maxSupportedTransactionVersion: 0, commitment: 'finalized' });
       add('transaction found at finalized commitment', tx, attempt.tx_signature);
-      if (!tx) return { ok: false, retry: true, checks };
+      if (!tx) return { ok: false, splitOk: false, buyOk: false, retry: true, checks };
       add('transaction succeeded', tx.meta && tx.meta.err === null, JSON.stringify(tx.meta?.err ?? null));
       const keys = tx.transaction.message.getAccountKeys({ accountKeysFromLookups: tx.meta?.loadedAddresses }).keySegments().flat().map((k) => k.toBase58());
       add('payer is the author', keys[0] === attempt.signer_wallet, keys[0]);
-      add('pump program invoked', keys.includes(PROGRAMS.pump), PROGRAMS.pump);
-      add('mint account in transaction', keys.includes(attempt.mint), attempt.mint);
-      const d = tokenDelta(tx.meta, attempt.mint, attempt.signer_wallet);
-      add('dev buy landed: exactly the reviewed amount of tokens in the author wallet', d && attempt.tokens_base && d.delta === BigInt(attempt.tokens_base),
-        d ? `${d.delta} base units (reviewed ${attempt.tokens_base})` : 'no token balance of the author for this mint');
-      if (d && tx.meta) {
-        const spent = tx.meta.preBalances[0] - tx.meta.postBalances[0];
-        const created = keys.map((k, i) => ({ k, i })).filter(({ i }) => i > 0 && tx.meta.preBalances[i] === 0 && tx.meta.postBalances[i] > 0);
-        const funded = created.reduce((s, { i }) => s + tx.meta.postBalances[i], 0);
-        const buyCost = spent - tx.meta.fee - funded;
-        add('SOL the buy took is within the signed cap', attempt.max_lamports != null && buyCost <= attempt.max_lamports,
-          `${buyCost} lamports (cap ${attempt.max_lamports}; network fee ${tx.meta.fee}; new accounts funded ${funded}: ${created.map(({ k, i }) => `${k.slice(0, 6)}… ${tx.meta.postBalances[i]}`).join(', ') || 'none'})`);
+      add('fee-sharing program invoked', keys.includes(PROGRAMS.pumpFees), PROGRAMS.pumpFees);
+      const chain = await splitOnChain(attempt.mint, config);
+      add('sharing config exists', chain.state !== 'absent', chain.pda);
+      add('shareholders match the approved allocation', chain.got != null && chain.got === chain.want, chain.got);
+      add('sharing admin revoked (allocation locked)', chain.adminRevoked === true, String(chain.adminRevoked));
+      add('curve creator is the sharing config', chain.curveComplete || chain.curveCreator === chain.pda, chain.curveCreator);
+      const splitOk = checks.every((c) => c.ok);
+      let buyOk = true;
+      if (attempt.with_buy) {
+        const b = await verifyDevBuyOnChain(attempt);
+        for (const c of b.checks) if (!/^(transaction found|transaction succeeded|payer is)/.test(c.name)) checks.push(c);
+        buyOk = b.ok;
       }
-      return { ok: checks.every((c) => c.ok), retry: false, checks, slot: tx.slot, blockTime: tx.blockTime, tokensBase: d ? String(d.delta) : null };
+      const ok = splitOk && buyOk;
+      return { ok, splitOk, buyOk, retry: !ok && chain.state === 'absent' && tx.meta?.err === null, checks, slot: tx.slot, blockTime: tx.blockTime, chain };
     },
 
     reviewOf(txBase64) { return reviewOfMessage(web3.VersionedTransaction.deserialize(Buffer.from(txBase64, 'base64')).message); },
@@ -596,7 +814,8 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
         const a = web3.Keypair.generate().publicKey, b = web3.Keypair.generate().publicKey, m = web3.Keypair.generate().publicKey;
         const { ixs } = await launchInstructions({ config: { name: 'x', symbol: 'X', uri: 'https://x', initialBuyLamports: 10_000_000,
           feeSharing: { mode: 'sharing_config', shareholders: [{ wallet: a.toBase58(), bps: 5000 }, { wallet: b.toBase58(), bps: 5000 }] } }, mint: m, signer: a, ...chain });
-        return new Set(ixs.flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()));
+        const split = await splitFeeInstructions({ config: { feeSharing: { mode: 'sharing_config', shareholders: [{ wallet: a.toBase58(), bps: 5000 }, { wallet: b.toBase58(), bps: 5000 }] } }, mint: m, signer: a });
+        return new Set([...ixs, ...split].flatMap((ix) => [ix.programId, ...ix.keys.map((k) => k.pubkey)]).map((k) => k.toBase58()));
       };
       const [x, y] = [await keysOf(), await keysOf()];
       return [...x].filter((k) => y.has(k)).sort();
@@ -616,7 +835,7 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       if (hash !== intent.tx_message_hash) await sameLaunch(web3, intent, tx);
       // the exact shares: the split instruction in the bytes the wallet signed is the approved one (a family coin's
       // creator / parent / grandparent / SUB-01 rows, recomputed server-side in launch.js submitSigned before this)
-      if (intent.config_json) checkSignedShares(tx.message, JSON.parse(intent.config_json));
+      if (intent.config_json) checkSignedShares(tx.message, JSON.parse(intent.config_json), { expectNone: Boolean(intent.split_tx) });
       const keys = tx.message.staticAccountKeys.map((k) => k.toBase58());
       if (keys[0] !== intent.signer_wallet) throw new Error('payer is not the expected wallet');
       const sig = tx.signatures[0];
@@ -708,7 +927,13 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       try { curve = await online.fetchBondingCurve(intent.mint); } catch { /* checked below */ }
       add('bonding curve exists', curve, curve ? 'ok' : 'missing');
       let missing = !mintInfo.value || !curve;
-      if (config.feeSharing.mode === 'sharing_config') {
+      if (config.feeSharing.mode === 'sharing_config' && intent.split_tx) {
+        // tx1 of a two-step launch: the coin exists with the author as the curve's creator; the split is step 2
+        // (verifySplit). A config already on chain (the author was faster than this check) is judged by the recheck.
+        const pda = pump.feeSharingConfigPda(new web3.PublicKey(intent.mint)).toBase58();
+        const creator = curve?.creator?.toBase58();
+        add('curve creator is the author (the fee split is locked in step 2)', curve && (creator === intent.signer_wallet || creator === pda), creator);
+      } else if (config.feeSharing.mode === 'sharing_config') {
         const pda = pump.feeSharingConfigPda(new web3.PublicKey(intent.mint));
         add('curve creator is the sharing config', curve && curve.creator.toBase58() === pda.toBase58(), curve?.creator?.toBase58());
         const acc = await conn.getAccountInfo(pda, 'finalized');
@@ -751,13 +976,16 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
     async readFees(launch, config) {
       const { web3, pump } = sdk();
       const mint = new web3.PublicKey(launch.mint);
-      const sharing = config.feeSharing.mode === 'sharing_config';
-      const owner = sharing ? pump.feeSharingConfigPda(mint) : new web3.PublicKey(config.feeSharing.shareholders[0].wallet);
+      // a two-step launch whose split is not locked yet: the curve's creator is still the author, so its creator fees
+      // go to the author's own vault (all its coins); the project vault (sharing config) exists only once tx2 landed
+      const splitOpen = launch.split_state != null && launch.split_state !== 'locked';
+      const sharing = config.feeSharing.mode === 'sharing_config' && !splitOpen;
+      const owner = sharing ? pump.feeSharingConfigPda(mint) : new web3.PublicKey(splitOpen ? config.signer : config.feeSharing.shareholders[0].wallet);
       const vault = pump.creatorVaultPda(owner);
       const slot = await conn.getSlot('confirmed');
       const [bal, rent] = await Promise.all([conn.getBalance(vault, 'confirmed'), conn.getMinimumBalanceForRentExemption(0)]);
       const out = [{ kind: 'vault_balance', account: vault.toBase58(), lamports: Math.max(0, bal - (bal > 0 ? rent : 0)), slot,
-        scope: sharing ? 'project' : 'creator wallet (all its coins)' }];
+        scope: sharing ? 'project' : splitOpen ? 'author wallet (all its coins): the fee split is not locked yet' : 'creator wallet (all its coins)' }];
       let curve = null;
       try { curve = await new pump.OnlinePumpSdk(conn).fetchBondingCurve(mint); } catch { /* none */ }
       if (curve?.creatorFee && Number(curve.creatorFee.toString()) > 0) {

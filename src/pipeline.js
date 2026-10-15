@@ -18,7 +18,7 @@ import { bannerCredit } from './site.js';
 import { buildSiteVersion } from './site.js';
 import { publishSite } from './site-qa.js';
 import { planAccount, publishPost } from './x.js';
-import { buildLaunchConfig, configHash, confirmIntent, confirmDevBuy, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
+import { buildLaunchConfig, configHash, confirmIntent, confirmDevBuy, confirmSplit, recheckSplit, reconcileFees, defaultAllocation, draftAllocation } from './launch.js';
 import { canSpend, recordSpend } from './budget.js';
 import { refreshCoinStats } from './coin-stats.js';
 import { childBuild, afterLaunched } from './child-launch.js';
@@ -243,7 +243,7 @@ export const handlers = {
     if (!project) throw new Permanent('project not found');
     const last = db.get(`SELECT spec_json FROM site_versions WHERE project_id = ? AND version = ?`, project.id, project.live_site_version);
     const site = await buildSiteVersion(db, cfg, project, parseJson(last.spec_json), 'system');
-    const pub = await publishSite(db, cfg, project, site.version, 'system', { mustPublish: ctx.payload?.reason === 'launched' });
+    const pub = await publishSite(db, cfg, project, site.version, 'system', { mustPublish: ctx.payload?.reason === 'launched' || ctx.payload?.reason === 'split_locked' });
     return { version: site.version, live: pub.live, qa: pub.qa?.line };
   },
 
@@ -281,8 +281,22 @@ export const handlers = {
 
   async confirm_launch(ctx) {
     const out = await confirmIntent(ctx.db, ctx.cfg, ctx.payload.intentId, ctx.progress);
-    if (out.state === 'launched') await afterLaunched(ctx.db, ctx.cfg, ctx.job.project_id);    // a child launch: the parent's registry
+    // a child launch: the parent's registry. A two-step launch is signed in once its fee split is locked (below).
+    if (out.state === 'launched' && !out.split) await afterLaunched(ctx.db, ctx.cfg, ctx.job.project_id);
     return out;
+  },
+
+  async confirm_split(ctx) {
+    return confirmSplit(ctx.db, ctx.cfg, ctx.payload.attemptId, ctx.progress);
+  },
+
+  async split_recheck(ctx) {
+    return recheckSplit(ctx.db, ctx.cfg, ctx.job.project_id);
+  },
+
+  // a two-step child launch, once its fee split is locked (launch.js markSplitLocked): the parent's registry
+  async after_launched(ctx) {
+    return afterLaunched(ctx.db, ctx.cfg, ctx.job.project_id);
   },
 
   async confirm_dev_buy(ctx) {
@@ -349,6 +363,8 @@ export function onDead(db, job) {
     transition(db, job.idea_id, ['generating', 'selected'], 'failed', { note: `building failed: ${why}` });
   } else if (job.type === 'confirm_launch') {
     note(db, job.idea_id, 'not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
+  } else if (job.type === 'confirm_split') {
+    note(db, job.idea_id, 'the fee split is not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
   } else if (job.type === 'confirm_dev_buy') {
     note(db, job.idea_id, 'the dev buy is not confirmed yet; the network is still being checked every few minutes', { actor: 'system' });
   } else if (job.type === 'prepare_launch' && idea.status === 'approved') {

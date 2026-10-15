@@ -433,6 +433,10 @@ const JOB_VERBS = { evaluate: 'Thinking about', generate: 'Building', build_site
 const STAGE_WORD = { submitted: 'dropped', evaluating: 'reading', selected: 'selected', generating: 'building', preview_ready: 'preview',
   approved: 'approved', launch_prepared: 'launch ready', awaiting_signature: 'signature', confirming: 'confirming', launched: 'launched' };
 
+// launches.split_state (two-step launch): the city never calls a split locked before tx2 is verified on chain
+export const SPLIT_PENDING_LABEL = 'Coin created · fee split not locked yet';
+const splitOf = (state) => (state ? { state, locked: state === 'locked' } : null);
+
 /** The public city snapshot. Private ideas show as 'Private project' with stage only; no wallet ever appears. */
 export function worldView(db, cfg, t = now()) {
   const genProgress = new Map(db.all(`SELECT idea_id, progress FROM jobs WHERE type = 'generate' AND status = 'running' AND idea_id IS NOT NULL`)
@@ -448,9 +452,13 @@ export function worldView(db, cfg, t = now()) {
     // project's id is never sent (the placeholder carries null).
     if (x.visibility !== 'public') return { ideaId: null, slug: null, name: 'Private project', ticker: null, ...base, launched: false, mint: null, logoUrl: null, bannerUrl: null };
     const launched = stage === 'launched' && Boolean(x.mint);
+    // a two-step launch before tx2 (launch.js): the coin exists, its fee split is NOT locked; never shown as fully launched
+    const split = splitOf(x.split_state);
+    if (split && !split.locked) base.stageLabel = SPLIT_PENDING_LABEL;
     // the same public, immutable /meta/<slug>/… files the token metadata links to (app.js serves them for public ideas only)
     const asset = (kind, v, ext) => (x.slug && v ? `/meta/${x.slug}/${kind}-v${v}.${ext}` : null);
     return { ideaId: x.idea_id, slug: x.slug || null, name: x.pname || x.title, ticker: x.ticker || x.ticker_suggestion || null, ...base, launched, mint: launched ? x.mint : null,
+      ...(split ? { split } : {}),
       siteUrl: x.slug && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,   // the coin's own site (city: "Open the coin site")
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),
       // a coin launched from another coin's site (child-launch.js): the link back; a launchpad coin: how many it launched
@@ -462,7 +470,7 @@ export function worldView(db, cfg, t = now()) {
       ...(launched ? { stats: publicStats(parseJson(x.cs_json), t) } : {}) };
   };
   const rows = db.all(`SELECT pl.plot_id, pl.kind, pl.idea_id, r.name rname, r.look_json, r.traits_json, f.buff, i.status, i.visibility, v.title, v.ticker_suggestion,
-      p.id pid, p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, cs.json cs_json, pp.slug parent_slug, pp.name parent_name,
+      p.id pid, p.slug, p.name pname, p.ticker, p.live_site_version, l.mint, l.split_state, cs.json cs_json, pp.slug parent_slug, pp.name parent_name,
       EXISTS (SELECT 1 FROM projects c WHERE c.parent_project_id = p.id) has_children,
       (SELECT COUNT(*) FROM projects c JOIN launches cl ON cl.project_id = c.id WHERE c.parent_project_id = p.id) kids,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
@@ -537,7 +545,7 @@ const progressOf = (db, ideaId, stage) => {
  * office, X drafts, ideas); never a wallet. helpers: { previewLink(projectRow) -> url|null, explorerTx(sig) -> url|null }. */
 export function deskView(db, cfg, { wallet, owner, plotIdeaId = null, previewLink, explorerTx }) {
   const rows = db.all(`SELECT p.id, p.slug, p.name, p.ticker, p.live_site_version, i.id idea_id, i.status, i.visibility, v.title, v.ticker_suggestion,
-      l.mint, l.tx_signature, xa.status xstatus, xa.planned_handle, xa.x_handle,
+      l.mint, l.tx_signature, l.split_state, xa.status xstatus, xa.planned_handle, xa.x_handle,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'logo') logo_v,
       (SELECT MAX(version) FROM assets a WHERE a.project_id = p.id AND a.kind = 'banner') banner_v
     FROM projects p JOIN ideas i ON i.id = p.idea_id JOIN idea_versions v ON v.idea_id = i.id AND v.version = i.current_version
@@ -553,8 +561,8 @@ export function deskView(db, cfg, { wallet, owner, plotIdeaId = null, previewLin
     const handle = connected ? x.x_handle : x.planned_handle || null;
     return {
       slug: x.slug, name: x.name || x.title, ticker: x.ticker || x.ticker_suggestion || null,
-      stage: x.status, stageLabel: LABELS[x.status] || x.status, progress: progressOf(db, x.idea_id, x.status),
-      launched, mint: launched ? x.mint : null, explorerTx: launched && x.tx_signature ? explorerTx(x.tx_signature) ?? null : null,
+      stage: x.status, stageLabel: splitOf(x.split_state)?.locked === false ? SPLIT_PENDING_LABEL : LABELS[x.status] || x.status, progress: progressOf(db, x.idea_id, x.status),
+      launched, mint: launched ? x.mint : null, ...(splitOf(x.split_state) ? { split: splitOf(x.split_state) } : {}), explorerTx: launched && x.tx_signature ? explorerTx(x.tx_signature) ?? null : null,
       siteUrl: pub && x.live_site_version ? `${cfg.projectsScheme}://${x.slug}.${cfg.projectsHost}/` : null,
       previewLink: preview,
       logoUrl: asset('logo', x.logo_v, 'png'), bannerUrl: asset('banner', x.banner_v, 'svg'),

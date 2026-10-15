@@ -1,6 +1,9 @@
 // Fee allocation and launch orchestration. A launch goes: approved allocation -> reviewed launch configuration ->
 // launch intent (exact transaction, persisted BEFORE the signature is requested) -> wallet signature -> broadcast ->
 // on-chain verification -> launched. A provider's answer alone never marks a project launched.
+// Two-step launch (LAUNCH_SPLIT_TX=1, the default; see "step 2: the fee split" below): tx1 creates the coin only, the
+// launch row is then 'split pending' and the author signs tx2, which writes and locks the fee split (and carries the
+// dev buy when it fits). Nothing calls the split locked before tx2 is verified on chain.
 import { createHash } from 'node:crypto';
 import { log } from './log.js';
 import { audit, isPaused } from './db.js';
@@ -77,6 +80,16 @@ export async function devBuyModeFor(provider, shape) {
 const shapeOf = (config, initialBuyLamports = Number(config.initialBuyLamports) || 0) => ({ name: config.token.name, symbol: config.token.symbol, uri: config.token.uri,
   initialBuyLamports, feeSharing: { mode: config.feeSharing.mode, shareholders: config.feeSharing.shareholders } });
 // the plain words before step 1 (configuration, review card): what a second signature means for the author
+/** Is this launch two-step (tx1 create only, tx2 the locked split)? LAUNCH_SPLIT_TX (default on), a split to lock,
+ *  and a provider that can build tx2. */
+export const splitTxFor = (cfg, provider, mode) => cfg.launch?.splitTx !== false && mode === 'sharing_config' && typeof provider?.prepareSplit === 'function';
+/** The split in plain words for the author: "80% you / 20% SUB-01", a family coin "60% you / 10% X's author / …". */
+export function splitText(rows) {
+  const who = (r) => (r.role === 'submitter' ? 'you' : r.role === 'sub01' ? SUB01_LABEL : r.role === 'parent' ? 'the parent launchpad\'s author'
+    : r.role === 'grandparent' ? 'the grandparent launchpad\'s author' : String(r.label || 'collaborator'));
+  return (rows || []).map((r) => `${(r.bps / 100).toFixed(r.bps % 100 ? 2 : 0)}% ${who(r)}`).join(' / ');
+}
+export const splitBuyNote = (lamports) => `Your dev buy of ${solString(lamports)} SOL rides in step 2 with the fee split when it fits (else it is a third signature right after), at the price then (pump.fun's fees included; the tokens go to your wallet). If the price moves more than ${INITIAL_BUY_SLIPPAGE_BPS / 100}% first, it does not go through and you keep your SOL. You can also skip it.`;
 export const devBuyStepNote = (lamports) => `Your dev buy of ${solString(lamports)} SOL is a second signature right after the launch, at the price then (pump.fun's fees included; the tokens go to your wallet). If the price moves more than ${INITIAL_BUY_SLIPPAGE_BPS / 100}% first, it does not go through and you keep your SOL. You can also skip it.`;
 
 /**
@@ -251,15 +264,22 @@ export async function buildLaunchConfig(db, cfg, project) {
     'The token name, ticker and metadata link cannot be changed after creation.',
     'The supply is fixed by the launch program; there is no mint or freeze authority you can use afterwards.',
   ];
-  if (mode === 'sharing_config') irreversible.push('The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
+  const splitTx = splitTxFor(cfg, provider, mode);
+  if (mode === 'sharing_config') {
+    irreversible.push(splitTx
+      ? `The creator-fee split (${splitText(recipients)}) is written on-chain and locked in step 2, a second signature right after the coin is created: from then on nobody at SUBZERONE, and not you, can change it. (pump.fun keeps an emergency takeover authority over all coins.)`
+      : 'The creator-fee split is written on-chain and locked: nobody at SUBZERONE, and not you, can change it later. (pump.fun keeps an emergency takeover authority over all coins.)');
+  }
   let devBuyMode = null;
   if (initialBuyLamports > 0) {
     if (initialBuyLamports < MIN_INITIAL_BUY_LAMPORTS) throw new Permanent(`the dev buy is at least ${solString(MIN_INITIAL_BUY_LAMPORTS)} SOL, or 0 for none`);
-    devBuyMode = await devBuyModeFor(provider, { name: project.name, symbol: project.ticker, uri, initialBuyLamports,
+    // two-step launch: the buy never rides in tx1 (it goes with the split in tx2 when that fits, else after it)
+    devBuyMode = splitTx ? 'second_tx' : await devBuyModeFor(provider, { name: project.name, symbol: project.ticker, uri, initialBuyLamports,
       feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })) } });
-    irreversible.push(devBuyMode === 'same_tx'
-      ? `You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`
-      : devBuyStepNote(initialBuyLamports));
+    irreversible.push(splitTx ? splitBuyNote(initialBuyLamports)
+      : devBuyMode === 'same_tx'
+        ? `You buy ${solString(initialBuyLamports)} SOL of your own coin in the creation transaction, pump.fun's fees included; the tokens go to your wallet. The transaction caps the cost at the quote + ${INITIAL_BUY_SLIPPAGE_BPS / 100}%.`
+        : devBuyStepNote(initialBuyLamports));
   }
   const config = {
     version: 'launch-config/1',
@@ -268,7 +288,7 @@ export async function buildLaunchConfig(db, cfg, project) {
       totalSupplyBase: params.totalSupplyBase, tokenProgram: params.tokenProgram,
       authorities: { mint: 'none after creation', freeze: 'none' } },
     signer, payer: signer, creator: mode === 'sharing_config' ? 'per-mint sharing config (holds the split)' : signer,
-    initialBuyLamports, initialBuySlippageBps: initialBuyLamports > 0 ? INITIAL_BUY_SLIPPAGE_BPS : 0, devBuyMode,
+    initialBuyLamports, initialBuySlippageBps: initialBuyLamports > 0 ? INITIAL_BUY_SLIPPAGE_BPS : 0, devBuyMode, splitTx,
     feeSharing: { mode, shareholders: recipients.map(({ wallet, bps }) => ({ wallet, bps })), recipients, locked: mode === 'sharing_config',
       allocationId: alloc.id, allocationVersion: alloc.version },
     tradingFees: params.fees,
@@ -294,7 +314,8 @@ export async function createIntent(db, cfg, project, wallet) {
       const provider = getProvider(cfg, db);
       return { intentId: pending.id, mint: pending.mint, txBase64: pending.tx_base64, messageHash: pending.tx_message_hash,
         estimate: pending.estimate_json ? parseJson(pending.estimate_json) : null, lastValidBlockHeight: pending.last_valid_block_height, mock: provider.isMock,
-        txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true, ...review(provider, pending.tx_base64, pending.network, pending.signer_wallet) };
+        txBytes: Buffer.from(pending.tx_base64, 'base64').length, resumed: true, step: 1, kind: 'launch', splitTx: Boolean(pending.split_tx),
+        ...review(provider, pending.tx_base64, pending.network, pending.signer_wallet) };
     }
   }
   if (idea.status !== 'launch_prepared') throw new HttpError(409, 'bad_state', `idea is ${idea.status}`);
@@ -311,9 +332,12 @@ export async function createIntent(db, cfg, project, wallet) {
   if (!config || configHash(config) !== project.launch_config_hash) throw new HttpError(409, 'config_changed', 'launch configuration changed; prepare it again');
   if (config.provider !== provider.name || config.network !== provider.network) throw new HttpError(409, 'config_changed', 'provider changed; prepare again');
   const buyLamports = Number(config.initialBuyLamports) || 0;
+  // two-step launch (LAUNCH_SPLIT_TX, read NOW: flipping it to 0 rolls back without a deploy); the buy then never rides in tx1
+  const splitTx = splitTxFor(cfg, provider, config.feeSharing.mode);
   // a configuration from before the two-step launch has no devBuyMode: decided now, the same way
-  const devBuyMode = buyLamports > 0 ? (config.devBuyMode || await devBuyModeFor(provider, shapeOf(config))) : null;
-  const built = await buildChecked(provider, config, buyLamports, { devBuyMode });
+  const devBuyMode = buyLamports > 0 ? (splitTx ? 'second_tx' : (config.devBuyMode === 'second_tx' || config.devBuyMode === 'same_tx') && !config.splitTx ? config.devBuyMode
+    : await devBuyModeFor(provider, shapeOf(config))) : null;
+  const built = await buildChecked(provider, config, buyLamports, { devBuyMode, splitTx });
   const est = built.estimate || {};
   const reviewed = review(provider, built.txBase64, provider.network, config.payer);   // before anything is stored
   const intentId = id('intent');
@@ -322,15 +346,16 @@ export async function createIntent(db, cfg, project, wallet) {
     // the mint key signs after the wallet (verifySigned): kept encrypted until the broadcast, then wiped
     const mintSecretEnc = built.mintSecret ? encrypt(cfg.encryptionKey, built.mintSecret) : null;
     db.run(`INSERT INTO launch_intents (id, project_id, provider, network, config_json, config_hash, allocation_id, mint, mint_secret_enc,
-              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, estimate_json, dev_buy_mode, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?, ?)`,
+              signer_wallet, status, tx_base64, tx_message_hash, last_valid_block_height, buy_tokens_base, estimate_json, dev_buy_mode, split_tx, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     intentId, project.id, provider.name, provider.network, project.launch_config_json, project.launch_config_hash,
     config.feeSharing.allocationId, built.mint, mintSecretEnc, config.signer, built.txBase64, built.messageHash, built.lastValidBlockHeight,
-    devBuyMode === 'same_tx' && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, JSON.stringify(built.estimate ?? null), devBuyMode, t, t);
+    devBuyMode === 'same_tx' && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, JSON.stringify(built.estimate ?? null), devBuyMode, splitTx ? 1 : 0, t, t);
     transition(db, idea.id, 'launch_prepared', 'awaiting_signature', { actor: `wallet:${wallet}`,
       note: provider.isMock ? 'MOCK transaction ready for your wallet' : 'transaction ready for your wallet', data: { intent: intentId, mint: built.mint } });
   });
-  return { intentId, mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
+  return { intentId, step: 1, kind: 'launch', splitTx, ...(splitTx ? { steps: 2, splitText: splitText(config.feeSharing.recipients) } : {}),
+    mint: built.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
     lastValidBlockHeight: built.lastValidBlockHeight, mock: provider.isMock, txBytes: built.txBytes, ...reviewed };
 }
 
@@ -348,7 +373,7 @@ async function buildChecked(provider, config, buyLamports, opts = {}) {
   // every simulation is logged (Phantom support, 2026-10-12: show that only transactions that simulate cleanly reach the wallet)
   log.info('launch simulation', { mint: built.mint, ok: est.simulation?.ok ?? null, err: est.simulation?.err ?? null,
     units: est.simulation?.unitsConsumed ?? null, bytes: built.txBytes ?? null, refresh: Boolean(opts.mintSecret),
-    phantomSafe: est.phantomSafe ?? null, devBuyMode: est.devBuyMode ?? null });
+    phantomSafe: est.phantomSafe ?? null, devBuyMode: est.devBuyMode ?? null, splitTx: Boolean(opts.splitTx) });
   if (!est.simulation || est.simulation.ok !== true) {
     if (est.simulation?.logs) log.warn('launch simulation logs', { mint: built.mint, logs: est.simulation.logs });
     throw new HttpError(409, 'simulation_failed', simulationMessage(est, buyLamports));   // nothing goes to the wallet
@@ -372,12 +397,12 @@ export async function refreshIntent(db, cfg, project, wallet) {
   const config = parseJson(intent.config_json);
   const current = () => ({ intentId: intent.id, mint: intent.mint, txBase64: intent.tx_base64, messageHash: intent.tx_message_hash,
     estimate: intent.estimate_json ? parseJson(intent.estimate_json) : null, lastValidBlockHeight: intent.last_valid_block_height, mock: provider.isMock,
-    txBytes: Buffer.from(intent.tx_base64, 'base64').length, resumed: true, ...review(provider, intent.tx_base64, intent.network, intent.signer_wallet) });
+    txBytes: Buffer.from(intent.tx_base64, 'base64').length, resumed: true, step: 1, kind: 'launch', splitTx: Boolean(intent.split_tx), ...review(provider, intent.tx_base64, intent.network, intent.signer_wallet) });
   if (provider.isMock || !intent.mint_secret_enc) return current();          // the mock has no blockhash; no key → sign what was reviewed
   let mintSecret;
   try { mintSecret = decrypt(cfg.encryptionKey, intent.mint_secret_enc).toString('utf8'); } catch { return current(); }
   const buy = Number(config.initialBuyLamports) || 0;
-  const built = await buildChecked(provider, config, buy, { mintSecret, devBuyMode: buy > 0 ? (intent.dev_buy_mode || 'same_tx') : null });
+  const built = await buildChecked(provider, config, buy, { mintSecret, devBuyMode: buy > 0 ? (intent.dev_buy_mode || 'same_tx') : null, splitTx: Boolean(intent.split_tx) });
   mintSecret = null;
   if (built.mint !== intent.mint) throw new HttpError(500, 'mint_mismatch', 'the refreshed transaction is not for the same mint');
   const before = review(provider, intent.tx_base64, intent.network, intent.signer_wallet), after = review(provider, built.txBase64, built.network ?? intent.network, intent.signer_wallet);
@@ -387,7 +412,7 @@ export async function refreshIntent(db, cfg, project, wallet) {
   db.run(`UPDATE launch_intents SET tx_base64 = ?, tx_message_hash = ?, last_valid_block_height = ?, estimate_json = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
     built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(built.estimate ?? null), now(), intent.id);
   return { intentId: intent.id, mint: intent.mint, txBase64: built.txBase64, messageHash: built.messageHash, estimate: built.estimate,
-    lastValidBlockHeight: built.lastValidBlockHeight, mock: false, txBytes: built.txBytes, resumed: true, refreshed: true, ...after };
+    lastValidBlockHeight: built.lastValidBlockHeight, mock: false, txBytes: built.txBytes, resumed: true, refreshed: true, step: 1, kind: 'launch', splitTx: Boolean(intent.split_tx), ...after };
 }
 
 /** A failed preparation simulation in one plain sentence: funds first, else the last useful program log line. */
@@ -551,23 +576,32 @@ export async function confirmIntent(db, cfg, intentId, progress = () => {}) {
   }
   const buy = Number(config.initialBuyLamports) || 0;
   const step2 = buy > 0 && intent.dev_buy_mode === 'second_tx';           // the dev buy waits for its own signature
+  const split = Boolean(intent.split_tx);                                  // the fee split waits for tx2 (step 2)
   db.tx(() => {
     db.run(`UPDATE launch_intents SET status = 'confirmed', updated_at = ? WHERE id = ?`, now(), intent.id);
-    db.run(`INSERT INTO launches (project_id, intent_id, provider, network, mint, tx_signature, slot, block_time, verification, verified_at, dev_buy_status, dev_buy_lamports)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
-    intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now(), step2 ? 'pending' : null, step2 ? buy : 0);
-    db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
+    db.run(`INSERT INTO launches (project_id, intent_id, provider, network, mint, tx_signature, slot, block_time, verification, verified_at, dev_buy_status, dev_buy_lamports, split_state)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, project.id, intent.id, intent.provider, intent.network, intent.mint,
+    intent.tx_signature, v.slot, v.blockTime, JSON.stringify(v.checks), now(), step2 ? 'pending' : null, step2 ? buy : 0, split ? 'pending' : null);
+    // a two-step launch: the allocation is locked when tx2 is verified (markSplitLocked), not before
+    if (!split) db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
     // the launched note records what the author bought, in whole tokens (the config's decimals) and SOL
     const tokens = intent.buy_tokens_base ? tokensText(intent.buy_tokens_base, config) : null;
-    const bought = step2 ? ` · next: your dev buy of ${solString(buy)} SOL, a second signature (step 2)`
+    const bought = split ? '' : step2 ? ` · next: your dev buy of ${solString(buy)} SOL, a second signature (step 2)`
       : buy > 0 ? ` · dev buy: ${solString(buy)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet` : '';
-    transition(db, project.idea_id, 'confirming', 'launched', { note: (provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`) + bought,
-      data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length, ...(buy > 0 ? { devBuyLamports: buy, devBuyTokensBase: intent.buy_tokens_base ?? null } : {}) } });
+    const head = split ? `${provider.isMock ? 'MOCK coin recorded (no blockchain)' : `Coin created on ${intent.network}`}. ${splitPendingLine(config)}`
+      : (provider.isMock ? 'MOCK launch recorded (no blockchain)' : `verified on ${intent.network}`) + bought;
+    transition(db, project.idea_id, 'confirming', 'launched', { note: head,
+      data: { mint: intent.mint, signature: intent.tx_signature, checks: v.checks.length, ...(split ? { splitState: 'pending' } : {}), ...(buy > 0 ? { devBuyLamports: buy, devBuyTokensBase: intent.buy_tokens_base ?? null } : {}) } });
   });
   enqueue(db, { type: 'build_site', key: `site:launched:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: { reason: 'launched' } });
   enqueue(db, { type: 'reconcile_fees', key: `fees:${project.id}:first`, projectId: project.id, payload: {} });
-  return { state: 'launched' };
+  // the on-chain recheck of the split: a first look after 10 minutes (it reminds the author, or finds tx2 landed)
+  if (split) enqueue(db, { type: 'split_recheck', key: `split-recheck:${project.id}:first`, projectId: project.id, runAfter: now() + 10 * 60_000, payload: {} });
+  return { state: 'launched', ...(split ? { split: 'pending' } : {}) };
 }
+
+/** The author's step-2 line while the split is not locked: plain words, the exact percentages. */
+export const splitPendingLine = (config) => `Step 2: lock the fee split (${splitText(config?.feeSharing?.recipients || [])}) with one more signature. Until then the fee split is NOT locked.`;
 
 const tokensText = (base, config) => (Number(BigInt(base) / 10n ** BigInt(config?.token?.decimals ?? 6))).toLocaleString('en-US');
 
@@ -586,7 +620,20 @@ export function sweepSubmitted(db, t = now()) {
     const p = db.get('SELECT idea_id FROM projects WHERE id = ?', a.project_id);
     enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${a.id}:${Math.floor(t / 300_000)}`, ideaId: p.idea_id, projectId: a.project_id, payload: { attemptId: a.id } });
   }
-  return rows.length + buys.length;
+  const splits = db.all(`SELECT a.* FROM split_attempts a WHERE a.status = 'submitted' AND NOT EXISTS
+    (SELECT 1 FROM jobs j WHERE j.type = 'confirm_split' AND j.status IN ('queued','running') AND j.payload_json LIKE '%' || a.id || '%')`);
+  for (const a of splits) {
+    const p = db.get('SELECT idea_id FROM projects WHERE id = ?', a.project_id);
+    enqueue(db, { type: 'confirm_split', key: `confirm-split:${a.id}:${Math.floor(t / 300_000)}`, ideaId: p.idea_id, projectId: a.project_id, payload: { attemptId: a.id } });
+  }
+  return rows.length + buys.length + splits.length;
+}
+
+/** Worker sweep: every launch whose split is not locked gets an hourly on-chain recheck (recheckSplit). */
+export function sweepSplits(db, t = now()) {
+  const rows = db.all(`SELECT project_id FROM launches WHERE split_state IN ('pending','failed','awaiting_signature')`);
+  for (const r of rows) enqueue(db, { type: 'split_recheck', key: `split-recheck:${r.project_id}:${Math.floor(t / 3_600_000)}`, projectId: r.project_id, payload: {} });
+  return rows.length;
 }
 
 // --- step 2: the dev buy as its own transaction (devBuyMode 'second_tx') ------------------------------------------------
@@ -661,6 +708,8 @@ async function settleEarlierDevBuys(db, provider, project) {
 export async function createDevBuy(db, cfg, project, wallet) {
   if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
   const { launch } = launchWithBuy(db, project, wallet);
+  // a two-step launch: the buy's creator fee must already go to the project's split, so the buy waits for the lock
+  if (launch.split_state && launch.split_state !== 'locked') throw new HttpError(409, 'split_pending', 'lock the fee split first (step 2): the dev buy comes with it or right after it');
   const provider = getProvider(cfg, db);
   if (launch.dev_buy_status === 'awaiting_signature') {
     const pending = db.get(`SELECT * FROM dev_buy_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
@@ -764,8 +813,17 @@ export function skipDevBuy(db, project, wallet) {
   if (!['pending', 'failed', 'awaiting_signature'].includes(launch.dev_buy_status)) {
     throw new HttpError(409, 'bad_state', launch.dev_buy_status === 'submitted' ? 'the dev buy is already on its way to the network' : `the dev buy is ${launch.dev_buy_status}`);
   }
+  const splitWithBuy = db.get(`SELECT id FROM split_attempts WHERE project_id = ? AND status = 'awaiting_signature' AND with_buy = 1`, project.id);
+  if (db.get(`SELECT 1 FROM split_attempts WHERE project_id = ? AND status = 'submitted' AND with_buy = 1`, project.id)) {
+    throw new HttpError(409, 'bad_state', 'the dev buy is already on its way to the network with the fee split');
+  }
   db.tx(() => {
     db.run(`UPDATE dev_buy_attempts SET status = 'cancelled', error = 'skipped by the author', updated_at = ? WHERE project_id = ? AND status = 'awaiting_signature'`, now(), project.id);
+    if (splitWithBuy) {
+      // the waiting fee-split transaction carried the buy: cancelled, step 2 is built again without it
+      db.run(`UPDATE split_attempts SET status = 'cancelled', error = 'the dev buy was skipped; build the fee split again without it', updated_at = ? WHERE id = ?`, now(), splitWithBuy.id);
+      db.run(`UPDATE launches SET split_state = 'pending' WHERE project_id = ? AND split_state = 'awaiting_signature'`, project.id);
+    }
     db.run(`UPDATE launches SET dev_buy_status = 'skipped' WHERE project_id = ?`, project.id);
     note(db, project.idea_id, 'dev buy skipped by the author; nothing was bought', { actor: `wallet:${wallet}` });
   });
@@ -833,6 +891,362 @@ export function devBuyView(db, provider, project) {
       explorerTx: a.tx_signature ? provider?.explorerTx?.(a.tx_signature) ?? null : null, updatedAt: a.updated_at } : null };
 }
 
+// --- step 2 of a two-step launch: the fee split (tx2) --------------------------------------------------------------------
+// After tx1 is confirmed and verified the coin exists ("launched", launches.split_state = 'pending'), but its curve's
+// creator is still the author's wallet: NOTHING is shared or locked yet, and every view says so. The author then asks
+// for tx2 (built fresh: sweep + sharing config + the exact approved shares, + the dev buy when it fits), signs it alone,
+// the server checks it is the reviewed one with exactly the approved shares (family rule recomputed), broadcasts,
+// confirms and verifies the sharing config on chain -> 'locked'. Abandoned: the author resumes any time (a fresh
+// blockhash each time). The worker rechecks the chain hourly (recheckSplit): the split found locked with the right
+// shares is marked locked (idempotent); found with OTHER shares it is flagged 'mismatch' for an admin, loudly.
+const SPLIT_BUILDABLE = ['pending', 'failed'];
+const sharesKey = (rows) => (rows || []).map((r) => `${r.wallet}:${r.bps}`).sort().join(',');
+
+function launchWithSplit(db, project, wallet) {
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', project.id);
+  if (!launch) throw new HttpError(409, 'not_launched', 'the coin is not created yet: the fee split is locked right after it (step 2)');
+  if (!launch.split_state) throw new HttpError(409, 'no_split_step', 'this launch locked its fee split in the creation transaction');
+  const intent = db.get('SELECT * FROM launch_intents WHERE id = ?', launch.intent_id);
+  if (intent.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  return { launch, intent, config: parseJson(intent.config_json) };
+}
+
+/** The shares tx2 may write, re-derived server side every time: the reviewed configuration = the approved allocation
+ *  row, SUB-01's mandatory row present, and for a family coin the family rule recomputed from the database. */
+async function splitShares(db, cfg, project, intent, config) {
+  if (config?.feeSharing?.mode !== 'sharing_config') throw new HttpError(409, 'no_split_step', 'this launch has no fee split to lock');
+  const rows = config.feeSharing.shareholders;
+  const alloc = db.get('SELECT * FROM fee_allocations WHERE id = ?', intent.allocation_id);
+  if (!alloc || !['approved', 'locked'].includes(alloc.status) || sharesKey(parseJson(alloc.recipients_json)) !== sharesKey(rows)) {
+    throw new HttpError(409, 'split_mismatch', 'the approved fee split does not match the launch configuration; nothing was signed or sent');
+  }
+  const sub01 = cfg.sub01FeeWallet;
+  if (!sub01 || !rows.some((r) => r.wallet === sub01 && r.bps >= SUB01_FEE_BPS) || rows.reduce((n, r) => n + r.bps, 0) !== 10000) {
+    throw new HttpError(409, 'split_mismatch', `the fee split must give SUB-01 (${sub01 || 'SUB01_FEE_WALLET unset'}) at least ${SUB01_FEE_BPS / 100}% and total 100%; nothing was signed or sent`);
+  }
+  if (project.parent_project_id) {
+    const { checkFamilySplit } = await import('./family.js');
+    checkFamilySplit(db, cfg, project, rows, { shareholdersOnly: true });      // 409 split_mismatch
+  }
+  return rows.map(({ wallet, bps }) => ({ wallet, bps }));
+}
+
+/** What the author sees of a tx2 attempt (the same shape as createIntent's answer). */
+function splitAnswer(provider, a, config, extra = {}) {
+  return { attemptId: a.id, step: 2, kind: 'split', mint: a.mint, txBase64: a.tx_base64, messageHash: a.tx_message_hash, estimate: a.estimate_json ? parseJson(a.estimate_json) : null,
+    lastValidBlockHeight: a.last_valid_block_height, mock: provider.isMock, txBytes: a.tx_base64 ? Buffer.from(a.tx_base64, 'base64').length : null,
+    shareholders: parseJson(a.shares_json, []), recipients: config?.feeSharing?.recipients ?? null, splitText: splitText(config?.feeSharing?.recipients || []),
+    withBuy: Boolean(a.with_buy), requestedLamports: a.requested_lamports, costLamports: a.cost_lamports, maxLamports: a.max_lamports, tokensBase: a.tokens_base,
+    ...(provider.isMock ? { mockSigningText: mockSigningText(a.tx_message_hash) } : {}),
+    ...review(provider, a.tx_base64, a.network, a.signer_wallet), ...extra };
+}
+
+/** provider.prepareSplit with the checks the author must see as a sentence; every simulation is logged. */
+async function buildSplitChecked(provider, args, opts = {}) {
+  let built;
+  try { built = await provider.prepareSplit(args, opts); } catch (e) {
+    if (e?.code) throw new HttpError(409, e.code, e.message);    // no_curve, curve_complete, split_exists, creator_changed, tx_too_large, buy_*
+    throw e;
+  }
+  const est = built.estimate || {};
+  log.info('split simulation', { mint: args.mint, ok: est.simulation?.ok ?? null, err: est.simulation?.err ?? null, units: est.simulation?.unitsConsumed ?? null,
+    bytes: built.txBytes ?? null, refresh: Boolean(opts.reuse), withBuy: Boolean(built.withBuy), buyDeferred: built.buyDeferred ?? null,
+    tokens: est.initialBuyTokensBase ?? null, maxLamports: est.initialBuyMaxLamports ?? null, phantomSafe: est.phantomSafe ?? null });
+  if (!est.simulation || est.simulation.ok !== true) {
+    if (est.simulation?.logs) log.warn('split simulation logs', { mint: args.mint, logs: est.simulation.logs });
+    const { text } = simulationText(est);
+    const why = PRICE_MOVED_RE.test(text) ? `the price moved more than ${INITIAL_BUY_SLIPPAGE_BPS / 100}% since the quote, so the dev buy inside step 2 would cost more than its cap; nothing was sent. Lock the split without the buy (skip it, or buy separately), or try again`
+      : FUNDS_RE.test(text) ? `the network simulation says your wallet cannot cover the fee split${args.lamports && args.withBuy ? ' and the dev buy' : ''} (rent of the sharing config and the network fee${args.lamports && args.withBuy ? `, plus ${solString(args.lamports)} SOL` : ''})`
+        : `the network simulation rejected the fee-split transaction (${simulationText(est).line}); nothing was sent. Try again in a moment`;
+    const err = new HttpError(409, 'simulation_failed', why);
+    err.priceMoved = PRICE_MOVED_RE.test(text);
+    throw err;
+  }
+  if (est.signerBalanceLamports != null && est.networkFeeLamports != null && est.accountsLamports != null) {
+    const extra = est.networkFeeLamports + est.accountsLamports, buy = Number(est.initialBuyLamports) || 0;
+    if (est.signerBalanceLamports < buy + extra) throw new HttpError(409, 'insufficient_funds', fundsMessage(est.signerBalanceLamports, buy, extra, true));
+  }
+  return built;
+}
+
+/** Mark the split locked (tx2 verified, or the recheck found it on chain with the exact shares). Idempotent. */
+function markSplitLocked(db, project, launch, { source, attempt = null, checks = null, chain = null, isMock = false }) {
+  const intent = db.get('SELECT allocation_id, config_json FROM launch_intents WHERE id = ?', launch.intent_id);
+  const config = parseJson(intent.config_json);
+  const changed = db.run(`UPDATE launches SET split_state = 'locked', split_locked_at = COALESCE(split_locked_at, ?), split_checked_at = ?, split_detail = ? WHERE project_id = ? AND split_state IS NOT NULL AND split_state != 'locked'`,
+    now(), now(), JSON.stringify({ source, attempt: attempt?.id ?? null, checks: checks ? checks.length : null, chain: chain ? { got: chain.got, pda: chain.pda } : null }), project.id).changes;
+  if (!changed) return false;
+  db.run(`UPDATE fee_allocations SET status = 'locked' WHERE id = ?`, intent.allocation_id);
+  // an attempt still waiting for a signature is moot now (the config exists once; a second tx2 would fail)
+  db.run(`UPDATE split_attempts SET status = 'cancelled', error = 'the fee split was found locked on chain', updated_at = ? WHERE project_id = ? AND status = 'awaiting_signature'`, now(), project.id);
+  const buyOwed = launch.dev_buy_status === 'pending' || launch.dev_buy_status === 'awaiting_signature' ? Number(launch.dev_buy_lamports) : 0;
+  note(db, project.idea_id, `${isMock ? 'MOCK ' : ''}Fee split locked on chain: ${splitText(config.feeSharing.recipients)}. Launched.${buyOwed && !(attempt?.with_buy) ? ` Next: your dev buy of ${solString(buyOwed)} SOL, one more signature (or skip it).` : ''}`,
+    { data: { source, attempt: attempt?.id ?? null, signature: attempt?.tx_signature ?? chain?.signature ?? null } });
+  audit(db, { actor: 'system', kind: 'split_locked', ideaId: project.idea_id, projectId: project.id, isPublic: true, message: `Creator-fee split locked on chain (${source})`,
+    data: { shares: config.feeSharing.shareholders, attempt: attempt?.id ?? null } });
+  enqueue(db, { type: 'build_site', key: `site:split-locked:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: { reason: 'split_locked' } });
+  enqueue(db, { type: 'reconcile_fees', key: `fees:${project.id}:split-locked`, projectId: project.id, payload: {} });
+  // a child launch is signed into its parent's registry only now that its split is locked (pipeline after_launched)
+  if (project.parent_project_id) enqueue(db, { type: 'after_launched', key: `after-launched:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: {} });
+  return true;
+}
+
+/** Flag a split that exists on chain with other shares (or not locked): never retried, an admin must look. */
+function markSplitMismatch(db, project, chain, source) {
+  const changed = db.run(`UPDATE launches SET split_state = 'mismatch', split_checked_at = ?, split_detail = ? WHERE project_id = ? AND split_state IS NOT NULL AND split_state NOT IN ('locked','mismatch')`,
+    now(), JSON.stringify({ source, state: chain.state, reason: chain.reason ?? null, got: chain.got ?? null, want: chain.want ?? null, pda: chain.pda ?? null }), project.id).changes;
+  if (!changed) return false;
+  db.run(`UPDATE split_attempts SET status = 'cancelled', error = 'a different fee split exists on chain', updated_at = ? WHERE project_id = ? AND status = 'awaiting_signature'`, now(), project.id);
+  log.error('FEE SPLIT MISMATCH ON CHAIN', { project: project.id, slug: project.slug, state: chain.state, reason: chain.reason, got: chain.got, want: chain.want });
+  audit(db, { actor: 'system', kind: 'split_mismatch', ideaId: project.idea_id, projectId: project.id,
+    message: `ALERT: the creator-fee split on chain is NOT the approved one (${chain.reason || chain.state}); an admin must look at it`, data: chain });
+  note(db, project.idea_id, `The creator-fee split on chain is not the approved one (${chain.reason || chain.state}). A SUBZERONE admin has been alerted.`);
+  enqueue(db, { type: 'build_site', key: `site:split-mismatch:${project.id}`, ideaId: project.idea_id, projectId: project.id, payload: { reason: 'split_mismatch' } });
+  return true;
+}
+
+/** Before a new tx2: what the chain says (locked -> mark it; other shares -> flag it), and earlier attempts dead. */
+async function settleSplit(db, provider, project, launch, config) {
+  const chain = await provider.splitOnChain(launch.mint, config);
+  if (chain.state === 'locked') {
+    markSplitLocked(db, project, launch, { source: 'chain', chain, isMock: provider.isMock });
+    throw new HttpError(409, 'already_locked', 'the fee split is already locked on chain with the approved shares');
+  }
+  if (chain.state !== 'absent') {
+    markSplitMismatch(db, project, chain, 'before tx2');
+    throw new HttpError(409, 'split_mismatch', `a fee-sharing config already exists on chain and it is not the approved one (${chain.reason || chain.state}); an admin has been alerted`);
+  }
+  const old = db.all(`SELECT * FROM split_attempts WHERE project_id = ? AND status IN ('cancelled','expired') AND (error IS NULL OR error NOT LIKE '%[final]%')`, project.id);
+  for (const a of old) {
+    const c = await provider.splitLandCheck(a);
+    if (c.state === 'open') throw new HttpError(409, 'previous_open', `the previous fee-split transaction could still land for about ${Math.ceil((c.blocksLeft ?? 150) * 0.4)} more seconds; try again after that`);
+    db.run(`UPDATE split_attempts SET error = COALESCE(error, '') || ' [final]' WHERE id = ?`, a.id);
+  }
+}
+
+/** Owner asks for tx2 ("Step 2 of 2: lock the fee split"). Resumes the waiting one, else builds a fresh one.
+ *  separateBuy: lock the split alone even when the dev buy would fit (the buy then follows as its own transaction). */
+export async function createSplit(db, cfg, project, wallet, { separateBuy = false } = {}) {
+  if (isPaused(db, 'launch')) throw new HttpError(503, 'paused', 'launches are paused');
+  const { launch, intent, config } = launchWithSplit(db, project, wallet);
+  const provider = getProvider(cfg, db);
+  if (launch.split_state === 'awaiting_signature') {
+    const pending = db.get(`SELECT * FROM split_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+    if (pending && (!separateBuy || !pending.with_buy)) return splitAnswer(provider, pending, config, { resumed: true });
+    if (pending) abandonSplit(db, project, wallet, 'rebuilt without the dev buy');
+  }
+  const state = db.get('SELECT split_state FROM launches WHERE project_id = ?', project.id).split_state;
+  if (state === 'locked') throw new HttpError(409, 'already_locked', 'the fee split is already locked on chain');
+  if (state === 'mismatch') throw new HttpError(409, 'split_mismatch', 'the fee split on chain is not the approved one; an admin has been alerted');
+  if (!SPLIT_BUILDABLE.includes(state)) throw new HttpError(409, 'bad_state', `the fee split is ${String(state).replace(/_/g, ' ')}`);
+  const shares = await splitShares(db, cfg, project, intent, config);
+  await settleSplit(db, provider, project, launch, config);
+  const owed = launch.dev_buy_status === 'pending' ? Number(launch.dev_buy_lamports) || 0 : 0;
+  const built = await buildSplitChecked(provider, { config, mint: launch.mint, signer: wallet, lamports: owed, withBuy: owed > 0 && !separateBuy });
+  const est = built.estimate || {};
+  const attemptId = id('split'), t = now();
+  db.tx(() => {
+    db.run(`INSERT INTO split_attempts (id, project_id, intent_id, mint, signer_wallet, network, status, shares_json, with_buy, requested_lamports, cost_lamports, max_lamports, tokens_base,
+              tx_base64, tx_message_hash, last_valid_block_height, estimate_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'awaiting_signature', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, attemptId, project.id, launch.intent_id, launch.mint, wallet, launch.network,
+    JSON.stringify(shares), built.withBuy ? 1 : 0, built.withBuy ? owed : 0, built.withBuy ? est.initialBuyLamports ?? null : null, built.withBuy ? est.initialBuyMaxLamports ?? null : null,
+    built.withBuy && est.initialBuyTokensBase != null ? String(est.initialBuyTokensBase) : null, built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(est), t, t);
+    db.run(`UPDATE launches SET split_state = 'awaiting_signature' WHERE project_id = ?`, project.id);
+    note(db, project.idea_id, `${provider.isMock ? 'MOCK ' : ''}Step 2 of 2: the fee-split transaction (${splitText(config.feeSharing.recipients)}${built.withBuy ? ` + your dev buy of ${solString(owed)} SOL` : ''}) is ready for your wallet`, { actor: `wallet:${wallet}` });
+  });
+  return splitAnswer(provider, db.get('SELECT * FROM split_attempts WHERE id = ?', attemptId), config, built.buyDeferred && owed > 0 ? { buyDeferred: true } : {});
+}
+
+/** Right before the wallet opens: the SAME split (same shares; the same buy: tokens and cap) with a fresh blockhash. */
+export async function refreshSplit(db, cfg, project, wallet) {
+  const provider = getProvider(cfg, db);
+  const a = db.get(`SELECT * FROM split_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no fee-split transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  const { intent, config } = launchWithSplit(db, project, wallet);
+  if (provider.isMock) return splitAnswer(provider, a, config, { resumed: true });
+  const shares = await splitShares(db, cfg, project, intent, config);
+  if (sharesKey(shares) !== sharesKey(parseJson(a.shares_json, []))) throw new HttpError(409, 'split_mismatch', 'the fee split changed since the review; build step 2 again');
+  let built;
+  try {
+    built = await buildSplitChecked(provider, { config, mint: a.mint, signer: wallet, lamports: a.requested_lamports, withBuy: Boolean(a.with_buy) },
+      { reuse: a.with_buy ? { tokensBase: a.tokens_base, costLamports: a.cost_lamports, maxLamports: a.max_lamports } : null });
+    if (built.withBuy !== Boolean(a.with_buy)) throw new HttpError(409, 'config_changed', 'the fee-split transaction changed shape since the review; build step 2 again');
+  } catch (e) {
+    if (e instanceof HttpError && e.status === 409) {
+      db.tx(() => {
+        db.run(`UPDATE split_attempts SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`, `before signing: ${e.message.slice(0, 200)}`, now(), a.id);
+        db.run(`UPDATE launches SET split_state = 'pending' WHERE project_id = ? AND split_state = 'awaiting_signature'`, project.id);
+      });
+    }
+    throw e;
+  }
+  db.run(`UPDATE split_attempts SET tx_base64 = ?, tx_message_hash = ?, last_valid_block_height = ?, estimate_json = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`,
+    built.txBase64, built.messageHash, built.lastValidBlockHeight, JSON.stringify(built.estimate ?? null), now(), a.id);
+  return splitAnswer(provider, db.get('SELECT * FROM split_attempts WHERE id = ?', a.id), config, { resumed: true, refreshed: true });
+}
+
+/** tx2 signed: the shares re-derived server side, the bytes verified (exact shares, one signer), persisted, broadcast. */
+export async function submitSplit(db, cfg, project, wallet, signed) {
+  const provider = getProvider(cfg, db);
+  const a = db.get(`SELECT * FROM split_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no fee-split transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  const { intent, config } = launchWithSplit(db, project, wallet);
+  const shares = await splitShares(db, cfg, project, intent, config);
+  if (sharesKey(shares) !== sharesKey(parseJson(a.shares_json, []))) throw new HttpError(409, 'split_mismatch', 'the fee split changed since the review; nothing was sent');
+  let checked;
+  try { checked = await provider.verifySplitSigned(a, signed, { ...config, feeSharing: { ...config.feeSharing, shareholders: shares } }); } catch (e) { throw new HttpError(400, 'bad_signed_tx', e.message); }
+  db.tx(() => {
+    db.run(`UPDATE split_attempts SET status = 'submitted', tx_signature = ?, updated_at = ? WHERE id = ? AND status = 'awaiting_signature'`, checked.signature, now(), a.id);
+    db.run(`UPDATE launches SET split_state = 'submitted' WHERE project_id = ?`, project.id);
+    if (a.with_buy) db.run(`UPDATE launches SET dev_buy_status = 'submitted' WHERE project_id = ? AND dev_buy_status IN ('pending','failed')`, project.id);
+    note(db, project.idea_id, 'fee split signed; broadcast and waiting for the network', { actor: `wallet:${wallet}`, data: { signature: checked.signature } });
+  });
+  let uncertain = false;
+  try {
+    await provider.submit(db.get('SELECT * FROM split_attempts WHERE id = ?', a.id), checked.raw);
+  } catch (e) {
+    if (e.rejected) {
+      const moved = PRICE_MOVED_RE.test(String(e.message));
+      const why = moved ? 'the price moved more than 5% before the dev buy, so the whole step 2 did not go through: nothing was locked or bought. Lock the split without the buy (skip it, or buy separately), or try again'
+        : `the network rejected the fee-split transaction before it ran (${String(e.message).slice(0, 120)}); nothing was locked`;
+      db.tx(() => {
+        db.run(`UPDATE split_attempts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, `preflight: ${String(e.message).slice(0, 280)}`, now(), a.id);
+        db.run(`UPDATE launches SET split_state = 'failed' WHERE project_id = ?`, project.id);
+        if (a.with_buy) db.run(`UPDATE launches SET dev_buy_status = 'pending' WHERE project_id = ? AND dev_buy_status = 'submitted'`, project.id);
+        note(db, project.idea_id, why);
+      });
+      throw new HttpError(400, 'rejected', why);
+    }
+    uncertain = true;
+    note(db, project.idea_id, 'fee split broadcast answer unclear; checking the network for the transaction', { actor: 'system' });
+  }
+  enqueue(db, { type: 'confirm_split', key: `confirm-split:${a.id}:0`, ideaId: project.idea_id, projectId: project.id, payload: { attemptId: a.id } });
+  return { signature: checked.signature, uncertain };
+}
+
+/** The wallet declined, or the author walked away from tx2: back to 'pending' (resume any time, a fresh blockhash). */
+export function abandonSplit(db, project, wallet, reason = 'signature request cancelled') {
+  const a = db.get(`SELECT * FROM split_attempts WHERE project_id = ? AND status = 'awaiting_signature'`, project.id);
+  if (!a) throw new HttpError(409, 'no_intent', 'no fee-split transaction is waiting for a signature');
+  if (a.signer_wallet !== wallet) throw new HttpError(403, 'not_signer');
+  db.tx(() => {
+    db.run(`UPDATE split_attempts SET status = 'cancelled', error = ?, updated_at = ? WHERE id = ?`, reason, now(), a.id);
+    db.run(`UPDATE launches SET split_state = 'pending' WHERE project_id = ? AND split_state = 'awaiting_signature'`, project.id);
+    note(db, project.idea_id, `fee split: ${reason}; nothing was locked yet. Step 2 is still waiting: lock the fee split from your room's computer.`, { actor: `wallet:${wallet}` });
+  });
+}
+
+/** confirm_split job: resolve one submitted tx2. */
+export async function confirmSplit(db, cfg, attemptId, progress = () => {}) {
+  const provider = getProvider(cfg, db);
+  const a = db.get('SELECT * FROM split_attempts WHERE id = ?', attemptId);
+  if (!a) throw new Permanent('split attempt not found');
+  if (a.status !== 'submitted') return { state: `attempt is ${a.status}` };
+  const project = db.get('SELECT * FROM projects WHERE id = ?', a.project_id);
+  const intent = db.get('SELECT * FROM launch_intents WHERE id = ?', a.intent_id);
+  const config = parseJson(intent.config_json);
+  const back = (state) => {
+    db.run(`UPDATE launches SET split_state = ? WHERE project_id = ? AND split_state = 'submitted'`, state, a.project_id);
+    if (a.with_buy) db.run(`UPDATE launches SET dev_buy_status = 'pending' WHERE project_id = ? AND dev_buy_status = 'submitted'`, a.project_id);
+  };
+  const st = await provider.splitStatus(a);
+  progress(`network status: ${st.state}`);
+  if (st.state === 'pending' || st.state === 'confirmed') throw new Defer(`waiting for finalization (${st.state})`, 4000);
+  if (st.state === 'expired') {
+    db.tx(() => {
+      db.run(`UPDATE split_attempts SET status = 'expired', error = 'blockhash expired before the transaction landed', updated_at = ? WHERE id = ?`, now(), a.id);
+      back('pending');
+      note(db, project.idea_id, `the fee-split transaction expired before it landed; nothing was locked. ${splitPendingLine(config)}`);
+    });
+    return { state: 'expired' };
+  }
+  if (st.state === 'failed') {
+    const moved = PRICE_MOVED_RE.test(st.err);
+    db.tx(() => {
+      db.run(`UPDATE split_attempts SET status = 'failed', error = ?, updated_at = ? WHERE id = ?`, st.err, now(), a.id);
+      back('failed');
+      note(db, project.idea_id, moved ? 'the price moved more than 5% before the dev buy, so step 2 failed on-chain as a whole: nothing was locked or bought (only the network fee was paid). Lock the split without the buy, or try again'
+        : `the fee-split transaction failed on-chain (${String(st.err).slice(0, 120)}); nothing was locked. Try again from your room's computer`);
+    });
+    return { state: 'failed' };
+  }
+  const v = await provider.verifySplit(a, config);
+  if (!v.ok && v.retry) throw new Defer('finalized, but the sharing config is not visible yet on this RPC node; checking again', 15_000);
+  if (!v.splitOk) {
+    db.tx(() => {
+      db.run(`UPDATE split_attempts SET status = 'failed', error = 'landed: on-chain verification failed', verification = ?, updated_at = ? WHERE id = ?`, JSON.stringify(v.checks), now(), a.id);
+      const chain = v.chain || { state: 'wrong', reason: 'tx2 landed but its checks failed' };
+      if (!markSplitMismatch(db, project, { ...chain, reason: chain.reason || 'tx2 landed but did not verify' }, 'confirm_split')) back('failed');
+      if (a.with_buy) db.run(`UPDATE launches SET dev_buy_status = 'failed' WHERE project_id = ? AND dev_buy_status = 'submitted'`, a.project_id);
+    });
+    return { state: 'verification_failed', checks: v.checks };
+  }
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', a.project_id);
+  db.tx(() => {
+    db.run(`UPDATE split_attempts SET status = 'done', verification = ?, updated_at = ? WHERE id = ?`, JSON.stringify(v.checks), now(), a.id);
+    if (launch.split_state === 'locked') db.run(`UPDATE launches SET split_detail = ? WHERE project_id = ?`, JSON.stringify({ source: 'tx2', attempt: a.id, checks: v.checks.length }), a.project_id);
+    else markSplitLocked(db, project, { ...launch, split_state: 'submitted' }, { source: 'tx2', attempt: a, checks: v.checks, isMock: provider.isMock });
+    if (a.with_buy) {
+      // the dev buy rode in tx2: recorded as a done dev-buy attempt (same signature), so the step-2 views stay one place
+      if (v.buyOk) {
+        db.run(`INSERT INTO dev_buy_attempts (id, project_id, intent_id, mint, signer_wallet, network, status, requested_lamports, cost_lamports, max_lamports, tokens_base,
+                  tx_base64, tx_message_hash, tx_signature, last_valid_block_height, estimate_json, verification, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, 'done', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`, id('devbuy'), a.project_id, a.intent_id, a.mint, a.signer_wallet, a.network,
+        a.requested_lamports, a.cost_lamports, a.max_lamports, a.tokens_base, a.tx_base64, a.tx_message_hash, a.tx_signature, a.last_valid_block_height, a.estimate_json, JSON.stringify(v.checks), now(), now());
+        db.run(`UPDATE launches SET dev_buy_status = 'done' WHERE project_id = ?`, a.project_id);
+        const tokens = a.tokens_base && !provider.isMock ? tokensText(a.tokens_base, config) : null;
+        note(db, project.idea_id, `${provider.isMock ? 'MOCK ' : ''}Fee split locked on chain: ${splitText(config.feeSharing.recipients)} · dev buy: ${solString(a.cost_lamports ?? a.requested_lamports)} SOL${tokens ? ` for ${tokens} tokens` : ''}, in your wallet. Launched.`,
+          { data: { signature: a.tx_signature, tokensBase: a.tokens_base } });
+      } else {
+        db.run(`UPDATE launches SET dev_buy_status = 'failed' WHERE project_id = ?`, a.project_id);
+        audit(db, { actor: 'system', kind: 'dev_buy_mismatch', ideaId: project.idea_id, projectId: project.id, message: 'the dev buy inside the fee-split transaction did not match its review', data: { checks: v.checks } });
+        note(db, project.idea_id, 'Fee split locked on chain. The dev buy inside it did not match what you reviewed; an admin has been alerted');
+      }
+    }
+  });
+  return { state: 'locked', withBuy: Boolean(a.with_buy) };
+}
+
+/** split_recheck job: what the chain says about a split that is not locked yet. Idempotent. */
+export async function recheckSplit(db, cfg, projectId, t = now()) {
+  const provider = getProvider(cfg, db);
+  const launch = db.get('SELECT * FROM launches WHERE project_id = ?', projectId);
+  if (!launch?.split_state || ['locked', 'mismatch', 'submitted'].includes(launch.split_state)) return { state: launch?.split_state ?? 'none', skipped: true };
+  const project = db.get('SELECT * FROM projects WHERE id = ?', projectId);
+  const config = parseJson(db.get('SELECT config_json FROM launch_intents WHERE id = ?', launch.intent_id).config_json);
+  const chain = await provider.splitOnChain(launch.mint, config);
+  if (chain.state === 'locked') { markSplitLocked(db, project, launch, { source: 'recheck', chain, isMock: provider.isMock }); return { state: 'locked' }; }
+  if (chain.state !== 'absent') { markSplitMismatch(db, project, chain, 'recheck'); return { state: 'mismatch', reason: chain.reason }; }
+  db.run('UPDATE launches SET split_checked_at = ? WHERE project_id = ?', t, projectId);
+  // a reminder to the author, at most every 6 hours, while nothing is signed
+  if (launch.split_state !== 'awaiting_signature' && (!launch.split_reminded_at || t - launch.split_reminded_at >= 6 * 3_600_000)) {
+    db.run('UPDATE launches SET split_reminded_at = ? WHERE project_id = ?', t, projectId);
+    note(db, project.idea_id, `Coin created, fee split NOT locked yet. ${splitPendingLine(config)} Open your room's computer to finish.`);
+    return { state: 'pending', reminded: true };
+  }
+  return { state: 'pending' };
+}
+
+/** The owner's (and the public's) view of step 2: null for a launch that locked the split in tx1. */
+export function splitView(db, provider, project, { owner = false } = {}) {
+  const launch = db.get('SELECT split_state, split_locked_at, split_checked_at, split_detail, intent_id FROM launches WHERE project_id = ?', project.id);
+  if (!launch?.split_state) return null;
+  const config = parseJson(db.get('SELECT config_json FROM launch_intents WHERE id = ?', launch.intent_id)?.config_json);
+  const a = owner ? db.get('SELECT * FROM split_attempts WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', project.id) : null;
+  const detail = parseJson(launch.split_detail, null);
+  return { state: launch.split_state, locked: launch.split_state === 'locked', lockedAt: launch.split_locked_at, checkedAt: launch.split_checked_at,
+    text: splitText(config?.feeSharing?.recipients || []), recipients: config?.feeSharing?.recipients ?? [],
+    line: launch.split_state === 'locked' ? `Fee split locked on chain: ${splitText(config?.feeSharing?.recipients || [])}.`
+      : launch.split_state === 'mismatch' ? 'The creator-fee split on chain is not the approved one. A SUBZERONE admin has been alerted.'
+        : `Coin created. Step 2: lock the fee split (${splitText(config?.feeSharing?.recipients || [])}). Until then the fee split is NOT locked.`,
+    ...(launch.split_state === 'mismatch' ? { mismatch: detail ? { reason: detail.reason, got: detail.got, want: detail.want } : null } : {}),
+    attempt: a ? { id: a.id, status: a.status, signature: a.tx_signature, error: a.error ? a.error.replace(/ \[final\]$/, '') : null, withBuy: Boolean(a.with_buy),
+      costLamports: a.cost_lamports, maxLamports: a.max_lamports, tokensBase: a.tokens_base, verification: a.verification ? parseJson(a.verification) : null,
+      explorerTx: a.tx_signature ? provider?.explorerTx?.(a.tx_signature) ?? null : null, updatedAt: a.updated_at } : null };
+}
+
 // --- fee ledger ---------------------------------------------------------------------------------------------------
 export async function reconcileFees(db, cfg, projectId) {
   const provider = getProvider(cfg, db);
@@ -865,18 +1279,21 @@ export function feeLedger(db, projectId) {
   const payouts = db.all(`SELECT * FROM fee_observations WHERE project_id = ? AND kind IN ('distribution','payout','claim') ORDER BY block_time DESC`, projectId);
   const undistributed = latestVault.reduce((s, o) => s + o.lamports, 0);
   const paidTotal = payouts.reduce((s, o) => s + o.lamports, 0);
+  // a two-step launch before tx2: the vault read is the author's own (all its coins), nothing is shared or locked yet
+  const splitOpen = launch.split_state != null && launch.split_state !== 'locked';
+  const shared = config.feeSharing.mode === 'sharing_config' && !splitOpen;
   const recipients = config.feeSharing.recipients.map((r) => ({
     ...r,
     // only meaningful when the vault belongs to this project alone
-    estimatedShareOfUndistributed: config.feeSharing.mode === 'sharing_config' ? Math.floor((undistributed * r.bps) / 10000) : null,
+    estimatedShareOfUndistributed: shared ? Math.floor((undistributed * r.bps) / 10000) : null,
     confirmedPayouts: payouts.filter((p) => p.recipient === r.wallet).reduce((s, o) => s + o.lamports, 0),
   }));
   return {
-    mode: config.feeSharing.mode, locked: config.feeSharing.locked, network: launch.network, provider: launch.provider,
+    mode: config.feeSharing.mode, locked: Boolean(config.feeSharing.locked) && !splitOpen, splitState: launch.split_state ?? null, network: launch.network, provider: launch.provider,
     mock: launch.provider === 'mock',
     tradingFees: config.tradingFees,
     verifiedUndistributedLamports: latestVault.length ? undistributed : null,
-    vaultScope: config.feeSharing.mode === 'sharing_config' ? 'this project only' : 'the creator wallet\'s vault (all coins it created)',
+    vaultScope: shared ? 'this project only' : splitOpen ? 'the author wallet\'s own vault (all coins it created): the fee split is not locked yet' : 'the creator wallet\'s vault (all coins it created)',
     vaultObservedAt: latestVault[0]?.observed_at ?? null, vaultSlot: latestVault[0]?.slot ?? null,
     vaultAccounts: latestVault.map((o) => o.account),
     verifiedAccruedLamports: latestVault.length ? undistributed + paidTotal : null,

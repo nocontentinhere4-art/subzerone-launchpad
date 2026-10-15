@@ -131,7 +131,12 @@ export function siteContext(db, cfg, project, { preview }) {
     ] };
   // the coin art since 2026-10-12 (coinart.js) is a black-and-white 16:9 PNG banner; older coins keep their SVG one
   const banner = db.get(`SELECT mime FROM assets WHERE project_id = ? AND kind = 'banner' ORDER BY version DESC LIMIT 1`, project.id);
-  return { preview, launched: Boolean(launch), network: launch?.network, mint: launch?.mint,
+  // a two-step launch before tx2 (launch.js): the coin exists but its creator-fee split is NOT locked; the page says so
+  const cfgJson = launch?.split_state ? db.get('SELECT config_json FROM launch_intents WHERE id = ?', launch.intent_id)?.config_json : null;
+  const who = { submitter: 'its creator', sub01: 'SUB-01', parent: 'the parent launchpad\'s author', grandparent: 'the grandparent launchpad\'s author' };
+  const split = launch?.split_state ? { state: launch.split_state, locked: launch.split_state === 'locked',
+    text: (cfgJson ? JSON.parse(cfgJson)?.feeSharing?.recipients || [] : []).map((r) => `${(r.bps / 100).toFixed(r.bps % 100 ? 2 : 0)}% ${who[r.role] || 'a collaborator'}`).join(' / ') } : null;
+  return { preview, launched: Boolean(launch), network: launch?.network, mint: launch?.mint, split,
     submitter: idea.owner_wallet, generatorLabel, links, launchpad, token, parent, family: { depth: depthOf(db, project), maxDepth: MAX_DEPTH }, art: banner && banner.mime !== 'image/svg+xml' ? 'bw' : 'classic' };
 }
 

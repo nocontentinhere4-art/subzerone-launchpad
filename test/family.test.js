@@ -216,7 +216,7 @@ test('pump.fun: the split instruction in the signed bytes is checked share by sh
 });
 
 test('PadPad end to end (MOCK): launchpads launched from launchpads down to 5 generations, the fee tree at every depth, strict re-checks, the tree, the city', async () => {
-  const h = await harness(ENV);
+  const h = await harness({ ...ENV, LAUNCH_SPLIT_TX: '0' });
   try {
     const k0 = await root(h);
     const rootAuthor = authorOfIdea(h, k0.ideaId);

@@ -60,7 +60,10 @@ ${(tk.links || []).length ? `<div class="row">${tk.links.map((l) => link(l, 'btn
     case 'game': return tool(t, c.title || 'Mini-game', '<p>Thirty seconds: catch the falling coins, dodge the red ones.</p>', { wide: true });
     case 'trades': case 'holders': case 'devwatch': case 'fees': case 'alerts': {
       const note = tk.state === 'pre-launch' ? 'Goes live at launch: there is no coin on chain yet.' : tk.state === 'mock' ? 'MOCK launch: no blockchain, nothing to read.' : 'Reads the chain on the live site.';
-      return tool(t, TRUST[t.id][0], `<p>${esc(TRUST[t.id][1])}</p>`, { wide: t.id === 'trades' || t.id === 'holders', note });
+      // the fee ledger of a coin whose split is not locked yet never says "locked"
+      const open = t.id === 'fees' && context.launched && context.split && !context.split.locked;
+      const text = open ? 'The creator fees of this coin. Its fee split is NOT locked on chain yet: until its author signs step 2, creator fees go to the author\'s own wallet vault.' : TRUST[t.id][1];
+      return tool(t, TRUST[t.id][0], `<p>${esc(text)}</p>`, { wide: t.id === 'trades' || t.id === 'holders', note });
     }
     case 'chart': return tool(t, c.title || 'Chart', `<div class="chart" data-chart></div><p class="fine">Price over the last ${c.range === '7d' ? 'week' : 'day'}, from the stored samples. No samples, no line.</p>`, { wide: true });
     default: return '';
@@ -159,10 +162,19 @@ function render({ spec, context }) {
   // sections in order, numbered
   const order = [app && 'app', tools.length && 'tools', chain.length && 'chain', 'about'].filter(Boolean);
   const idx = (k) => String(order.indexOf(k) + 1).padStart(2, '0');
-  const state = mock ? '<span class="state mock">MOCK launch · no blockchain</span>'
+  // a two-step launch whose creator-fee split is not locked yet (site.js siteContext split): never "locked" before it is
+  const splitOpen = Boolean(context.launched && context.split && !context.split.locked);
+  const splitLine = splitOpen ? (context.split.state === 'mismatch'
+    ? 'The creator-fee split on chain is NOT the approved one. SUBZERONE has been alerted.'
+    : `Coin created. Step 2: its author locks the creator-fee split (${context.split.text || 'the approved split'}) with one more signature. Until then the fee split is NOT locked.`) : '';
+  const splitChip = !splitOpen ? '' : context.split.state === 'mismatch' ? '<span class="state pre">Fee split on chain is NOT the approved one</span>'
+    : '<span class="state pre">Coin created · fee split not locked yet</span>';
+  const state = mock ? `<span class="state mock">MOCK launch · no blockchain</span>${splitChip}`
+    : splitOpen ? splitChip
     : context.launched ? `<span class="state ok">Live on ${context.network === 'mainnet-beta' ? 'Solana' : `Solana ${esc(context.network)}`}</span>`
     : `<span class="state pre">${context.preview ? 'Preview · not launched' : 'Not launched yet'}</span>`;
-  const statusLong = mock ? 'MOCK launch: rehearsal only, no blockchain, no token exists.'
+  const statusLong = mock ? `MOCK launch: rehearsal only, no blockchain, no token exists.${splitOpen ? ` ${esc(splitLine)}` : ''}`
+    : splitOpen ? `Created on ${esc(context.network)}. Mint ${esc(context.mint)}, verified by the launchpad. ${esc(splitLine)}`
     : context.launched ? `Launched on ${esc(context.network)}. Mint ${esc(context.mint)}, verified by the launchpad.`
     : context.preview ? 'PREVIEW — not launched. No token exists yet.' : 'Not launched yet. No token exists yet.';
   const ca = tk.mint ? `<div class="ca-chip reveal-hero${mock ? ' mockca' : ''}" data-ca-copy><span class="ca-k">${mock ? 'MOCK' : 'CA'}</span><code data-ca>${esc(tk.mint)}</code></div>` : '';
@@ -225,7 +237,7 @@ ${bw ? '<img class="hero-art" src="./banner.svg" alt="" width="1536" height="864
 <h1 class="hero-name${nameSize(spec.name)} reveal-hero">${esc(spec.name)}</h1>
 <p class="hero-pitch reveal-hero">${esc(pitchOf(spec))}</p>
 ${cta || pump ? `<div class="hero-cta reveal-hero">${ctaBtn(' btn-lg')}${buyBtn(' btn-lg', 'Buy on pump.fun')}</div>` : ''}
-${ca}${parent}
+${ca}${parent}${splitOpen ? `<p class="hero-parent reveal-hero" data-split-pending>${esc(splitLine)}${context.split.state !== 'mismatch' && context.launchpad?.href ? ` <a class="btn btn-line" href="${esc(context.launchpad.href)}" rel="noopener noreferrer" target="_blank">Author: lock the fee split</a>` : ''}</p>` : ''}
 </div>
 </section>
 ${figures}

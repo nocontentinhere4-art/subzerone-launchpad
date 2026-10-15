@@ -21,7 +21,8 @@ import { treeView } from './family.js';
 import { validateSpec } from './generator.js';
 import { getProvider, validateRecipients, draftAllocation, allocationStatement, feeMode, createIntent, submitSigned,
   abandonIntent, feeLedger, MAX_RECIPIENTS, SUB01_FEE_BPS, SUB01_LABEL, setInitialBuy, parseInitialBuySol, maxInitialBuyLamports,
-  INITIAL_BUY_STATES, refreshIntent, createDevBuy, refreshDevBuy, submitDevBuy, abandonDevBuy, skipDevBuy, devBuyView } from './launch.js';
+  INITIAL_BUY_STATES, refreshIntent, createDevBuy, refreshDevBuy, submitDevBuy, abandonDevBuy, skipDevBuy, devBuyView,
+  createSplit, refreshSplit, submitSplit, abandonSplit, splitView } from './launch.js';
 import { DISTRICTS, PLOTS_PER_DISTRICT, PLOT_IDS, RESERVED_PLOT_IDS, LOOK, FREE_COLORS, NAME, ROOM, DEFAULT_ROOM, PROGRESS, ACCESSORIES, MAX_ACCESSORIES, PETS,
   PET_NAME, TRAITS, DEFAULT_TRAITS, UNLOCKS, TEXT_ITEMS, ITEM_TEXT_MAX, GUESTBOOK, saveResident, residentOf, plotsOf, worldView, roomView, saveRoom,
   unlocksFor, postGuestbook, deleteGuestbook, deskView, validatePlotId, readLook } from './world.js';
@@ -261,6 +262,9 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
       })() : undefined,
       // step 2 of a launch with a dev buy (launch.js devBuyView): status, amount, the latest attempt
       devBuy: (owner || staff) && launch ? devBuyView(db, provider, p) : undefined,
+      // step 2 of a two-step launch (launch.js splitView): 'pending' until tx2 locks the fee split on chain. Public:
+      // the state and the plain line; the owner also gets the latest attempt.
+      split: launch ? splitView(db, provider, p, { owner: owner || staff }) : null,
       ledger: launch ? feeLedger(db, p.id) : null,
       pinnedHash: idea.pinned_hash ?? null, pinnedAt: idea.pinned_at ?? null, ledgerSeq: vote?.seq ?? null,
       // what SUB-01 built against the idea (fidelity.js): the room PC's "Missing from your idea" panel
@@ -501,7 +505,31 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
     abandonIntent(db, p, u.wallet, b.reason === 'rejected' ? 'the wallet rejected the signature request' : 'signature request cancelled');
     return { ok: true };
   });
-  // step 2, the dev buy as its own transaction (launch.js createDevBuy …): the same four calls as the launch, plus skip
+  // step 2 of a two-step launch, the fee split (launch.js createSplit …): the same four calls as the launch.
+  // body.separateBuy: lock the split alone even when the dev buy would fit in the same transaction
+  r.post('/api/projects/:slug/launch/split/transaction', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    const b = await ctx.body();
+    return createSplit(db, cfg, p, u.wallet, { separateBuy: b.separateBuy === true });
+  });
+  r.post('/api/projects/:slug/launch/split/refresh', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    limit('write', u.wallet);
+    return refreshSplit(db, cfg, p, u.wallet);
+  });
+  r.post('/api/projects/:slug/launch/split/signed', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    const b = await ctx.body(64_000);
+    return submitSplit(db, cfg, p, u.wallet, String(b.signed || ''));
+  });
+  r.post('/api/projects/:slug/launch/split/abandon', async (ctx) => {
+    const { p, u } = ownedProject(ctx, ctx.params.slug);
+    const b = await ctx.body();
+    abandonSplit(db, p, u.wallet, b.reason === 'rejected' ? 'the wallet rejected the signature request' : 'signature request cancelled');
+    return { ok: true };
+  });
+  // the dev buy as its own transaction (launch.js createDevBuy …): the same four calls as the launch, plus skip
   r.post('/api/projects/:slug/launch/devbuy/transaction', async (ctx) => {
     const { p, u } = ownedProject(ctx, ctx.params.slug);
     limit('write', u.wallet);
@@ -1003,6 +1031,16 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
         enqueue(db, { type: 'confirm_dev_buy', key: `confirm-buy:${buy.id}:reverify:${now()}`, ideaId: p.idea_id, projectId: p.id, payload: { attemptId: buy.id } });
       });
       return { ok: true, devBuy: buy.id };
+    }
+    // a two-step launch whose fee split is not locked (or was flagged): the chain is read again (launch.js recheckSplit)
+    const sl = !intent && db.get(`SELECT split_state FROM launches WHERE project_id = ? AND split_state IN ('pending','failed','mismatch')`, p.id);
+    if (sl) {
+      db.tx(() => {
+        db.run(`UPDATE launches SET split_state = 'pending' WHERE project_id = ? AND split_state = 'mismatch'`, p.id);
+        audit(db, { actor: `admin:${u.wallet}`, kind: 'admin', ideaId: p.idea_id, projectId: p.id, message: `re-checking the fee split on chain (was ${sl.split_state})` });
+        enqueue(db, { type: 'split_recheck', key: `split-recheck:${p.id}:admin:${now()}`, ideaId: p.idea_id, projectId: p.id, payload: {} });
+      });
+      return { ok: true, split: sl.split_state };
     }
     if (!intent) throw new HttpError(409, 'nothing_to_verify');
     db.tx(() => {

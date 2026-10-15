@@ -66,7 +66,7 @@ async function signAndSubmit(h, owner, slug) {
 }
 
 test('complete flow (MOCK provider): idea -> preview -> approved config -> signed -> verified -> launched', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, ideaId, slug, proj } = await toLaunchPrepared(h);
     const cfg = proj.json.launchConfig;
@@ -273,7 +273,7 @@ test('SUB01_FEE_WALLET missing: the draft is still 80/20, but approval and launc
 });
 
 test('on-chain result that does not match the approved recipients: not launched, admin alerted, no relaunch', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, ideaId, slug } = await toLaunchPrepared(h);
     await signAndSubmit(h, owner, slug);
@@ -418,7 +418,7 @@ test('review #8: non-owners only get preview links for the live version; private
 });
 
 test('dev buy (launch options): owner only, cap, re-prepared config with a new hash, locked by a transaction, recorded by the mock', async () => {
-  const h = await harness({ MAX_INITIAL_BUY_SOL: '2' });
+  const h = await harness({ MAX_INITIAL_BUY_SOL: '2', LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, ideaId, slug, proj } = await toLaunchPrepared(h);
     const put = (c, body) => c.call('PUT', `/api/projects/${slug}/launch/options`, body);
@@ -483,7 +483,7 @@ test('dev buy (launch options): owner only, cap, re-prepared config with a new h
 });
 
 test('dev buy: set at preview_ready it lands in the first configuration; the hard cap is 5 SOL whatever the env says', async () => {
-  const h = await harness({ MAX_INITIAL_BUY_SOL: '50' });
+  const h = await harness({ MAX_INITIAL_BUY_SOL: '50', LAUNCH_SPLIT_TX: '0' });
   try {
     const owner = h.client(user(h.db));
     await owner.signIn();
@@ -513,7 +513,7 @@ test('dev buy: set at preview_ready it lands in the first configuration; the har
 });
 
 test('dev buy guards (single-transaction path): minimum and wallet balance at PUT time; a failed simulation, a coded build error or short funds never store an intent', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     setSetting(h.db, 'mock.devbuy_one_tx', true, 'test');               // the buy fits inside tx1 (a provider that says so)
     const { owner, ideaId, slug } = await toLaunchPrepared(h);
@@ -608,7 +608,7 @@ async function launchedWithBuy(h, sol = 0.01) {
 const devbuy = (c, slug, what, body = {}) => c.call('POST', `/api/projects/${slug}/launch/devbuy/${what}`, body);
 
 test('dev buy step 2 (MOCK): launched first, then the author\'s own second signature: build, resume, cancel, sign, verify, done', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, ideaId, slug } = await launchedWithBuy(h, 0.01);
     // nobody else can build it; nothing to sign before it is built
@@ -658,7 +658,7 @@ test('dev buy step 2 (MOCK): launched first, then the author\'s own second signa
 });
 
 test('dev buy step 2: fails on-chain (price moved) -> try again or skip; a preflight rejection; skip is final; a launch without a buy has no step 2', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, ideaId, slug } = await launchedWithBuy(h, 0.02);
     // the network rejects it on-chain: failed, the launch stays launched, the author may try again
@@ -700,7 +700,7 @@ test('dev buy step 2: fails on-chain (price moved) -> try again or skip; a prefl
 });
 
 test('dev buy step 2: tx1\'s funds check counts the buy that follows; an open earlier tx2 must expire first; a landed one is verified instead; the sweep re-queues', async () => {
-  const h = await harness();
+  const h = await harness({ LAUNCH_SPLIT_TX: '0' });
   try {
     const { owner, slug } = await toLaunchPrepared(h);
     assert.equal((await owner.call('PUT', `/api/projects/${slug}/launch/options`, { initialBuySol: 0.01 })).status, 200);

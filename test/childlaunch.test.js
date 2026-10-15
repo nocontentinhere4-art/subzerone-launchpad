@@ -110,7 +110,7 @@ test('launch block: the split is the author\'s within the limits (SUB-01 >= 20%,
 });
 
 test('child launch (MOCK): one signed message -> SUB-01 build -> the child built from what was signed -> reviewed tx -> launched with the locked 3-way split, registry, city', async () => {
-  const h = await harness(ENV);
+  const h = await harness({ ...ENV, LAUNCH_SPLIT_TX: '0' });
   try {
     const k = await launchpad(h);
     // before the parent is launched, its site does not launch coins
