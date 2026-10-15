@@ -110,6 +110,7 @@ export function loadConfig(env = process.env) {
       // SOLANA_RPC_URL is unset or the public endpoint, the launch path uses Helius. Never logged, never sent to a browser.
       rpcUrl: launchRpc(e('SOLANA_RPC_URL', 'https://api.devnet.solana.com'), e('SOLANA_NETWORK', 'devnet'), e('HELIUS_API_KEY')),
       requireAdminClearance: e('REQUIRE_ADMIN_CLEARANCE', '1') !== '0',
+      eventAuthStatic: e('LAUNCH_EVENT_AUTH_STATIC', '0') === '1',   // pumpfun.js: event authorities written in (old layout)
       confirmTimeoutS: num('LAUNCH_CONFIRM_TIMEOUT_S', 180),
       metadataUploader: e('METADATA_UPLOADER', 'self'),  // self: metadata JSON + image served by this app
       lookupTable: e('LAUNCH_LOOKUP_TABLE'),             // address lookup table with the static launch accounts

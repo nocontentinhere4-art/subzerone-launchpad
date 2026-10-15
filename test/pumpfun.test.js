@@ -283,14 +283,15 @@ test('pump.fun prepare (offline, fixture chain): with a dev buy, tx1 is the Phan
   const built = await p.prepare({ ...launchConfig(10_000_000, signer, sub01), signer: signer.toBase58() }, { devBuyMode: 'second_tx' });
   const e = built.estimate;
   assert.equal(e.simulation.ok, true);
-  assert.deepEqual([e.phantomSafe, e.devBuyMode, e.initialBuyLamports, e.initialBuyTokensBase], [true, 'second_tx', 0, null], 'nothing bought in tx1');
+  assert.deepEqual([e.phantomSafe, e.devBuyMode, e.initialBuyLamports, e.initialBuyTokensBase], [false, 'second_tx', 0, null], 'nothing bought in tx1; the compact layout by default (Phantom support, 2026-10-15)');
   assert.deepEqual([e.networkFeeLamports, e.accountsLamports, e.signerBalanceLamports], [10_000, 15_133_320, 1_000_000_000], 'fee + rent = the simulated balance change');
   assert.deepEqual(e.devBuy, { mode: 'second_tx', requestedLamports: 10_000_000, lamports: 10_000_000, maxLamports: 10_500_000, tokensBase: '10493886257633', quotedAt: 'fresh curve' });
   const tx = web3.VersionedTransaction.deserialize(Buffer.from(built.txBase64, 'base64'));
   assert.equal(tx.message.compiledInstructions.length, 3, 'create_v2 + sharing config + update shares');
   const statics = tx.message.staticAccountKeys.map(String);
-  for (const ea of eventAuthorities()) assert.ok(statics.includes(ea.toBase58()), 'both event authorities are static keys (Phantom-safe)');
-  assert.ok(built.txBytes <= 1232 && built.txBytes > 850, `${built.txBytes} bytes`);
+  // compact by default (Phantom support, 2026-10-15: around 900 bytes): the event authorities come from the table
+  for (const ea of eventAuthorities()) assert.ok(!statics.includes(ea.toBase58()), 'event authorities read from the lookup table');
+  assert.ok(built.txBytes <= 960 && built.txBytes > 800, `${built.txBytes} bytes`);
   assert.deepEqual(p.reviewOf(built.txBase64).programs.filter((x) => x.direct).map((x) => x.name), ['pump.fun (bonding curve)', 'pump.fun fee sharing']);
   assert.equal(await p.balance(signer.toBase58()), 1_000_000_000);
   // the buy inside tx1 does not fit Phantom-safe: a coded error, never the compact layout

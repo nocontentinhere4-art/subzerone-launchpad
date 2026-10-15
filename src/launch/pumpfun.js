@@ -441,7 +441,11 @@ export function makePumpfunProvider(cfg, { connection } = {}) {
       const fitsBytes = (m, limit = MAX_TX_BYTES) => { try { return new web3.VersionedTransaction(m).serialize().length <= limit; } catch { return false; } };
       // the Phantom-safe layout (event authorities written in) always with a buy; without one it is the default and the
       // compact layout only the fallback for a split too large for it
-      let message = compile(phantomSafeTables(tables)), phantomSafe = true;
+      // 2026-10-15 Phantom support (Joey): keep the creation transaction around 900 bytes. The event authorities now
+      // come from the lookup table by default (-62 bytes: ~900 instead of ~960); LAUNCH_EVENT_AUTH_STATIC=1 restores
+      // the layout with them written in (koynlabs/labs-mcp#14), which did not clear the warning on its own
+      const safeFirst = cfg.launch.eventAuthStatic === true;
+      let message = safeFirst ? compile(phantomSafeTables(tables)) : compile(tables), phantomSafe = safeFirst;
       if (buy && !fitsBytes(message, ONE_TX_BUY_LIMIT)) {
         if (!cfg.launch.lookupTable) throw new Error('transaction too large: fee sharing needs LAUNCH_LOOKUP_TABLE (npm run lookup-table)');
         throw new LaunchBuildError('tx_too_large', TOO_LARGE_NOTE);
