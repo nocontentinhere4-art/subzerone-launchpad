@@ -29,6 +29,7 @@ import { rolesView, setRole, requestTakeover, decideTakeover, withdrawTakeover }
 import { mockSigningText } from './launch/mock.js';
 import { startOAuth, finishOAuth, approvePost, xConfigured } from './x.js';
 import { xDonePage, X_DONE_CSP } from './x-done.js';
+import { createPhantomTest, phantomTestPage, phantomTestCsp, VARIANTS as PHANTOM_VARIANTS } from './phantom-test.js';
 import { sub01Market } from './market.js';
 import { coinStatsView } from './coin-stats.js';
 import { brainStatus } from './brain.js';
@@ -61,7 +62,7 @@ const ACTIVE = ['submitted', 'evaluating', 'selected', 'generating', 'preview_re
 /** `chat`: {connect, fetchMind, relayOpts, limits} for tests (the SUB-01 transport and quotas; see chat.js).
  *  `kick`: run an idea's evaluate job in this process right after the submit answers (kick.js); tests that drain the
  *  queue by hand pass false. */
-export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true, buildWatchMs = 1000 }) {
+export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kick = true, buildWatchMs = 1000, phantomTest: phantomTestOpts = {} }) {
   const r = router();
   const limit = rateLimiter();
   const origin = new URL(cfg.publicOrigin);
@@ -896,6 +897,24 @@ export function createApp({ cfg, db, fetchImpl = fetch, chat: chatOpts = {}, kic
   }
 
   // --- admin ----------------------------------------------------------------------------------------------------------
+  // Phantom warning diagnostic (phantom-test.js): admin wallets from ADMIN_WALLETS only. Builds unsigned variants of the
+  // launch transaction for the wallet to SIGN (never send); nothing is stored, simulated or broadcast here.
+  const phantomTest = createPhantomTest(cfg, phantomTestOpts);
+  const envAdmin = (u) => u && u.role === 'admin' && cfg.adminWallets.includes(u.wallet);
+  r.get('/admin/phantom-test', (ctx) => {
+    const nonce = randomBytes(16).toString('base64');
+    const state = !ctx.user ? 'signin' : envAdmin(ctx.user) ? 'admin' : 'forbidden';
+    return ctx.raw(state === 'forbidden' ? 403 : 200, Buffer.from(phantomTestPage({ nonce, state, wallet: ctx.user?.wallet, network: cfg.launch.network })),
+      { 'content-type': 'text/html; charset=utf-8', 'content-security-policy': phantomTestCsp(nonce), 'cache-control': 'no-store', 'x-robots-tag': 'noindex' });
+  });
+  r.post('/api/admin/phantom-test/tx', async (ctx) => {
+    const u = requireAdmin(ctx);
+    if (!cfg.adminWallets.includes(u.wallet)) throw new HttpError(403, 'forbidden', 'only wallets in ADMIN_WALLETS');
+    const b = await ctx.body(1_000);
+    if (b.wallet !== u.wallet) throw new HttpError(403, 'wallet_mismatch', 'connect Phantom with the wallet you signed in with');
+    if (!PHANTOM_VARIANTS[String(b.variant || '').toUpperCase()]) throw new HttpError(400, 'bad_variant', `variant: ${Object.keys(PHANTOM_VARIANTS).join(', ')}`);
+    return phantomTest.build({ variant: b.variant, wallet: u.wallet });
+  });
   r.get('/api/admin/overview', (ctx) => {
     requireAdmin(ctx, ['admin', 'reviewer']);
     const counts = Object.fromEntries(db.all('SELECT status, COUNT(*) n FROM ideas GROUP BY status').map((x) => [x.status, x.n]));
