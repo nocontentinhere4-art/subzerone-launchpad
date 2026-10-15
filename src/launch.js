@@ -1016,7 +1016,9 @@ async function settleSplit(db, provider, project, launch, config) {
     markSplitMismatch(db, project, chain, 'before tx2');
     throw new HttpError(409, 'split_mismatch', `a fee-sharing config already exists on chain and it is not the approved one (${chain.reason || chain.state}); an admin has been alerted`);
   }
-  const old = db.all(`SELECT * FROM split_attempts WHERE project_id = ? AND status IN ('cancelled','expired') AND (error IS NULL OR error NOT LIKE '%[final]%')`, project.id);
+  // only an earlier tx2 that carried the dev buy must be provably dead first (a signed copy landing late would buy
+  // without our record of it); a split-only copy can do no harm: the sharing config exists once, with the same shares
+  const old = db.all(`SELECT * FROM split_attempts WHERE project_id = ? AND status IN ('cancelled','expired') AND with_buy = 1 AND (error IS NULL OR error NOT LIKE '%[final]%')`, project.id);
   for (const a of old) {
     const c = await provider.splitLandCheck(a);
     if (c.state === 'open') throw new HttpError(409, 'previous_open', `the previous fee-split transaction could still land for about ${Math.ceil((c.blocksLeft ?? 150) * 0.4)} more seconds; try again after that`);
@@ -1220,8 +1222,8 @@ export async function recheckSplit(db, cfg, projectId, t = now()) {
   if (chain.state === 'locked') { markSplitLocked(db, project, launch, { source: 'recheck', chain, isMock: provider.isMock }); return { state: 'locked' }; }
   if (chain.state !== 'absent') { markSplitMismatch(db, project, chain, 'recheck'); return { state: 'mismatch', reason: chain.reason }; }
   db.run('UPDATE launches SET split_checked_at = ? WHERE project_id = ?', t, projectId);
-  // a reminder to the author, at most every 6 hours, while nothing is signed
-  if (launch.split_state !== 'awaiting_signature' && (!launch.split_reminded_at || t - launch.split_reminded_at >= 6 * 3_600_000)) {
+  // a reminder to the author, at most every 6 hours, while nothing is signed (a tx2 left waiting for a signature included)
+  if (!launch.split_reminded_at || t - launch.split_reminded_at >= 6 * 3_600_000) {
     db.run('UPDATE launches SET split_reminded_at = ? WHERE project_id = ?', t, projectId);
     note(db, project.idea_id, `Coin created, fee split NOT locked yet. ${splitPendingLine(config)} Open your room's computer to finish.`);
     return { state: 'pending', reminded: true };
